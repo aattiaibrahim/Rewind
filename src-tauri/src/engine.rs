@@ -65,6 +65,8 @@ pub struct Status {
     /// Buffer kept in memory (true) or on disk
     pub in_ram: bool,
     pub buffer_mb: u32,
+    /// Times the watchdog had to restart a frozen capture
+    pub freezes: u32,
 }
 
 #[derive(Clone)]
@@ -83,10 +85,13 @@ struct RamRing {
     segs: Mutex<VecDeque<(u64, Arc<Vec<u8>>)>>,
     cap: Mutex<usize>,
     stop: AtomicBool,
+    /// When the newest finished segment arrived (freeze detection).
+    last_push: Mutex<Instant>,
 }
 
 impl RamRing {
     fn push(&self, seq: u64, data: Vec<u8>) {
+        *self.last_push.lock().unwrap() = Instant::now();
         let mut q = self.segs.lock().unwrap();
         q.push_back((seq, Arc::new(data)));
         let cap = *self.cap.lock().unwrap();
@@ -157,6 +162,8 @@ struct Running {
     child: Child,
     sig: String,
     log: Arc<Mutex<VecDeque<String>>>,
+    started: Instant,
+    dir: PathBuf,
     _audio: Vec<audio::Capture>,
     ram: Option<Arc<RamRing>>,
 }
@@ -527,6 +534,23 @@ pub fn output_size(m: &monitors::Monitor, height: u32) -> (i32, i32) {
     (w, h)
 }
 
+/// Don't judge a capture that has only just started.
+const FREEZE_GRACE: Duration = Duration::from_secs(10);
+/// Segments finish every 2 s; 3 missed in a row means the grabber is stuck.
+const FREEZE_AFTER: Duration = Duration::from_secs(SEG_SECONDS as u64 * 3 + 1);
+
+/// How long ago the running capture last finished a segment.
+fn segment_age(r: &Running) -> Duration {
+    match &r.ram {
+        Some(ring) => ring.last_push.lock().unwrap().elapsed(),
+        None => fs::metadata(r.dir.join("list.txt"))
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .unwrap_or_else(|| r.started.elapsed()),
+    }
+}
+
 fn segs_needed(buffer_seconds: u32) -> u32 {
     buffer_seconds.div_ceil(SEG_SECONDS) + 1
 }
@@ -587,6 +611,20 @@ fn supervise(
                     eprintln!("[rewind] restarting capture: settings or displays/devices changed");
                     stop(cur.take().unwrap())
                 }
+                // Watchdog: ffmpeg is alive but no new video is coming out
+                // (e.g. a UAC prompt / lock screen hung the screen grabber).
+                // Restart it rather than keep re-saving old footage.
+                Ok(None) if r.started.elapsed() > FREEZE_GRACE && segment_age(r) > FREEZE_AFTER => {
+                    let age = segment_age(r).as_secs();
+                    eprintln!("[rewind] capture froze (no new video for {age} s), restarting");
+                    let mut st = status.lock().unwrap();
+                    st.last_error = Some(format!("Capture froze for {age} s and was restarted automatically."));
+                    st.restarts += 1;
+                    st.freezes += 1;
+                    drop(st);
+                    stop(cur.take().unwrap());
+                    retry_at = Instant::now() + Duration::from_secs(1);
+                }
                 _ => {}
             }
         }
@@ -622,6 +660,8 @@ fn supervise(
                                 child: sp.child,
                                 sig: sig.clone(),
                                 log: sp.log,
+                                started: Instant::now(),
+                                dir: gens.lock().unwrap().last().map(|g| g.dir.clone()).unwrap_or_default(),
                                 _audio: sp.audio,
                                 ram: sp.ram,
                             });
@@ -730,6 +770,7 @@ fn spawn(s: &Settings, m: &monitors::Monitor, generation: &Gen) -> Result<Spawne
             segs: Mutex::new(VecDeque::new()),
             cap: Mutex::new(segs_needed(s.buffer_seconds) as usize + 1),
             stop: AtomicBool::new(false),
+            last_push: Mutex::new(Instant::now()),
         });
         let r = ring.clone();
         thread::spawn(move || serve_ram(listener, r));
@@ -884,6 +925,31 @@ mod tests {
     }
 
     #[test]
+    fn watchdog_sees_a_frozen_capture() {
+        // A "capture" that started 20 s ago and whose last segment is 9 s old.
+        let ring = Arc::new(RamRing {
+            segs: Mutex::new(VecDeque::new()),
+            cap: Mutex::new(10),
+            stop: AtomicBool::new(false),
+            last_push: Mutex::new(Instant::now() - Duration::from_secs(9)),
+        });
+        let child = std::process::Command::new("cmd").args(["/c", "exit"]).spawn().unwrap();
+        let r = Running {
+            child,
+            sig: String::new(),
+            log: Arc::new(Mutex::new(VecDeque::new())),
+            started: Instant::now() - Duration::from_secs(20),
+            dir: PathBuf::new(),
+            _audio: Vec::new(),
+            ram: Some(ring.clone()),
+        };
+        assert!(r.started.elapsed() > FREEZE_GRACE && segment_age(&r) > FREEZE_AFTER, "frozen capture must trip the watchdog");
+        // A healthy one (segment just arrived) must not.
+        ring.push(1, vec![0]);
+        assert!(segment_age(&r) < FREEZE_AFTER);
+    }
+
+    #[test]
     fn output_size_keeps_aspect_and_even_numbers() {
         let mon = |w, h| monitors::Monitor { index: 0, name: "d".into(), x: 0, y: 0, width: w, height: h, primary: true };
         assert_eq!(output_size(&mon(1920, 1080), 0), (1920, 1080));
@@ -898,8 +964,12 @@ mod tests {
     #[test]
     fn ram_ring_caps_and_trims_across_generations() {
         let ring = |n: usize| {
-            let r = Arc::new(RamRing { segs: Mutex::new(VecDeque::new()), cap: Mutex::new(n), stop: AtomicBool::new(false) });
-            r
+            Arc::new(RamRing {
+                segs: Mutex::new(VecDeque::new()),
+                cap: Mutex::new(n),
+                stop: AtomicBool::new(false),
+                last_push: Mutex::new(Instant::now()),
+            })
         };
         let (a, b) = (ring(10), ring(10));
         for i in 0..15 {
