@@ -1,0 +1,66 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Rewind",
+  "version": "0.1.0",
+  "identifier": "com.rewind.app",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Rewind",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 960,
+        "minHeight": 620,
+        "center": true,
+        "visible": false,
+        "theme": "Dark",
+        "backgroundColor": "#0E1014"
+      },
+      {
+        "label": "flyout",
+        "title": "Rewind",
+        "url": "index.html",
+        "width": 380,
+        "height": 560,
+        "resizable": false,
+        "decorations": false,
+        "skipTaskbar": true,
+        "alwaysOnTop": true,
+        "visible": false,
+        "shadow": true,
+        "theme": "Dark",
+        "backgroundColor": "#15181E"
+      }
+    ],
+    "security": {
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "resources": {
+      "../vendor/ffmpeg/bin/ffmpeg.exe": "ffmpeg/ffmpeg.exe",
+      "../vendor/ffmpeg/bin/ffprobe.exe": "ffmpeg/ffprobe.exe",
+      "../vendor/ffmpeg/bin/*.dll": "ffmpeg/"
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}
