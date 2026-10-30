@@ -53,8 +53,12 @@
     "resources": {
       "../vendor/ffmpeg/bin/ffmpeg.exe": "ffmpeg/ffmpeg.exe",
       "../vendor/ffmpeg/bin/ffprobe.exe": "ffmpeg/ffprobe.exe",
-      "../vendor/ffmpeg/bin/*.dll": "ffmpeg/"
+      "../vendor/ffmpeg/bin/*.dll": "ffmpeg/",
+      "../vendor/ffmpeg/LICENSE.txt": "ffmpeg/LICENSE.txt",
+      "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md"
     },
+    "publisher": "Rewind",
+    "shortDescription": "Lightweight NVENC replay-buffer clipper",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

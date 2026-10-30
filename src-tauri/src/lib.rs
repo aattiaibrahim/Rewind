@@ -94,6 +94,41 @@ fn apply_hotkeys(app: &AppHandle, save: &str, record: &str) -> Result<(), String
     Ok(())
 }
 
+/// The app icon, with a red "live" dot in the corner while capturing (like OBS).
+fn tray_icon(base: &tauri::image::Image<'_>, live: bool) -> tauri::image::Image<'static> {
+    let (w, h) = (base.width(), base.height());
+    let mut px = base.rgba().to_vec();
+    if live {
+        let size = w.min(h) as f32;
+        let r = size * 0.16; // dot radius
+        let ring = size * 0.05; // dark outline so it reads on any taskbar
+        let (cx, cy) = (w as f32 - r - ring, h as f32 - r - ring);
+        for y in 0..h {
+            for x in 0..w {
+                let d = ((x as f32 + 0.5 - cx).powi(2) + (y as f32 + 0.5 - cy).powi(2)).sqrt();
+                let color = if d <= r {
+                    Some([0xFF, 0x3B, 0x30])
+                } else if d <= r + ring {
+                    Some([0x0E, 0x10, 0x14])
+                } else {
+                    None
+                };
+                if let Some([cr, cg, cb]) = color {
+                    // Soft 1px edge
+                    let edge = (r + ring - d).clamp(0.0, 1.0);
+                    let i = ((y * w + x) * 4) as usize;
+                    let a = edge;
+                    px[i] = (cr as f32 * a + px[i] as f32 * (1.0 - a)) as u8;
+                    px[i + 1] = (cg as f32 * a + px[i + 1] as f32 * (1.0 - a)) as u8;
+                    px[i + 2] = (cb as f32 * a + px[i + 2] as f32 * (1.0 - a)) as u8;
+                    px[i + 3] = (255.0 * a + px[i + 3] as f32 * (1.0 - a)) as u8;
+                }
+            }
+        }
+    }
+    tauri::image::Image::new_owned(px, w, h)
+}
+
 fn apply_autostart(app: &AppHandle, on: bool) {
     let a = app.autolaunch();
     let _ = if on { a.enable() } else { a.disable() };
@@ -259,9 +294,23 @@ async fn compress_clip(app: AppHandle, path: String, target_mb: u32, replace: bo
     edit(app, path, replace, secs, move |p| library::compress(p, target_mb)).await
 }
 
+/// Open Explorer with the file selected (or the folder itself, for a folder).
 #[tauri::command]
-fn reveal_file(path: String) {
-    let _ = std::process::Command::new("explorer").arg(format!("/select,{path}")).spawn();
+fn reveal_file(path: String) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        return Err("That file isn't there anymore.".into());
+    }
+    let mut cmd = std::process::Command::new("explorer");
+    // Explorer wants exactly: /select,"C:\path with spaces\file.mkv"
+    // (Rust's normal quoting wraps the whole thing, which Explorer ignores.)
+    if p.is_dir() {
+        cmd.raw_arg(format!("\"{path}\""));
+    } else {
+        cmd.raw_arg(format!("/select,\"{path}\""));
+    }
+    cmd.spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -300,6 +349,23 @@ fn show_main_window(app: AppHandle) {
 fn hide_flyout(app: AppHandle) {
     if let Some(f) = app.get_webview_window("flyout") {
         let _ = f.hide();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Renders the tray icon with its live dot so it can be looked at.
+    /// Input/output: raw 64x64 RGBA in %TEMP%.
+    #[test]
+    #[ignore]
+    fn tray_dot_preview() {
+        let dir = std::env::temp_dir();
+        let px = std::fs::read(dir.join("rewind_icon.rgba")).unwrap();
+        let base = tauri::image::Image::new_owned(px, 64, 64);
+        let live = super::tray_icon(&base, true);
+        std::fs::write(dir.join("rewind_icon_live.rgba"), live.rgba()).unwrap();
+        let idle = super::tray_icon(&base, false);
+        assert_eq!(idle.rgba(), base.rgba(), "no dot when idle");
     }
 }
 
@@ -411,12 +477,30 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // Push engine status to both windows once a second, and announce
-            // recordings the engine finished on its own (e.g. low disk space).
+            // Push engine status to both windows once a second, announce
+            // recordings the engine finished on its own (e.g. low disk space),
+            // and keep the tray icon's red dot in step with capture.
             let h = handle.clone();
-            thread::spawn(move || loop {
+            let base_icon = app.default_window_icon().cloned().expect("app icon").to_owned();
+            thread::spawn(move || {
+                let mut shown: Option<(bool, bool)> = None;
+                loop {
                 thread::sleep(Duration::from_secs(1));
                 let engine = &h.state::<AppState>().engine;
+                let st = engine.status();
+                let state = (st.running, st.recording);
+                if shown != Some(state) {
+                    shown = Some(state);
+                    if let Some(tray) = h.tray_by_id("main") {
+                        let _ = tray.set_icon(Some(tray_icon(&base_icon, st.running)));
+                        let tip = match state {
+                            (_, true) => "Rewind · Recording",
+                            (true, false) => "Rewind · Replay buffer on",
+                            _ => "Rewind · Paused",
+                        };
+                        let _ = tray.set_tooltip(Some(tip));
+                    }
+                }
                 let (finished, err) = engine.take_finished_recordings();
                 for f in finished {
                     let _ = h.emit("clip-saved", &f);
@@ -425,7 +509,8 @@ pub fn run() {
                     let _ = h.emit("clip-error", e);
                     let _ = h.emit("recording-changed", false);
                 }
-                let _ = h.emit("engine-status", engine.status());
+                let _ = h.emit("engine-status", st);
+                }
             });
 
             let minimized = std::env::args().any(|a| a == "--minimized") && s.start_minimized;
@@ -438,7 +523,13 @@ pub fn run() {
             ("main", WindowEvent::CloseRequested { api, .. }) => {
                 // Closing the window keeps Rewind running in the tray.
                 api.prevent_close();
+                let _ = window.emit("main-hidden", ());
                 let _ = window.hide();
+            }
+            ("main", WindowEvent::Resized(_)) => {
+                if window.is_minimized().unwrap_or(false) {
+                    let _ = window.emit("main-hidden", ());
+                }
             }
             ("flyout", WindowEvent::Focused(false)) => {
                 let _ = window.hide();

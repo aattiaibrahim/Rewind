@@ -136,8 +136,24 @@ export function SettingsView({
           </label>
           <label className="setting">
             <span>
+              Keep the replay buffer in RAM
+              <small>
+                {s.bufferInRam
+                  ? `No SSD wear. Uses about ${bufferEstimateMb(s)} MB of memory while gaming.`
+                  : `Uses about ${bufferEstimateMb(s)} MB on disk and rewrites it constantly.`}
+              </small>
+            </span>
+            <Toggle label="Buffer in RAM" checked={s.bufferInRam} onChange={(v) => set({ bufferInRam: v })} />
+          </label>
+          {s.bufferInRam && bufferEstimateMb(s) > 4000 && (
+            <div className="err-text" style={{ padding: "4px 0" }}>
+              That's a lot of memory for one buffer. Consider a shorter replay, or turn RAM off for very long buffers.
+            </div>
+          )}
+          <label className="setting">
+            <span>
               Replay length
-              <small>About {bufferEstimateMb(s)} MB of disk space while gaming</small>
+              <small>How far back a saved clip reaches</small>
             </span>
             <select className="select" value={s.bufferSeconds} onChange={(e) => set({ bufferSeconds: Number(e.target.value) })}>
               {[15, 30, 60, 120, 180, 300, 600, 1200].map((v) => (

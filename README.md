@@ -2,9 +2,13 @@
 
 A lightweight replay-buffer clipper for Windows that records on your NVIDIA GPU (NVENC), with a built-in trimmer that opens any video on your PC.
 
+**[Download the latest installer](https://github.com/aattiaibrahim/Rewind/releases/latest)**. It needs Windows 10/11 and an NVIDIA GTX 10-series or newer (AV1 needs an RTX 40/50). The installer isn't code-signed yet, so Windows SmartScreen may warn you: click **More info → Run anyway**.
+
 ## What works now
 
 - **Replay buffer on NVENC**: AV1, HEVC or H.264, 15 s to 20 min, constant-quality mode.
+- **Buffer in RAM by default**: no constant SSD writes. A disk mode remains for very long buffers.
+- **Tray icon shows a red dot** while capturing, like OBS.
 - **Save clip hotkey** (default `Alt+F10`). Clips from a detected game go to `Videos\Rewind\<Game>\`; everything else goes to `Videos\Rewind\Desktop\`.
 - **Full recording** (default `Alt+F9`, or the Record buttons). It reuses the same capture, so there's no second encoder. A crash mid-recording is recovered on the next start, and recording stops by itself if the disk drops below 1.5 GB free.
 - **Game detection**: known game exes, game-library installs (Steam, Epic, Riot, Xbox, GOG, Ubisoft, EA, Rockstar, Battle.net) and fullscreen apps. Browsers, Discord, launchers and so on count as Desktop.
@@ -22,11 +26,11 @@ A lightweight replay-buffer clipper for Windows that records on your NVIDIA GPU 
 
 ## Not yet
 
-- RAM buffer option, per-game profiles, per-app audio tracks, the in-game overlay, a multi-track editor (text, merge), HDR tone-mapping, and auto-update.
+- Per-game profiles, per-app audio tracks, the in-game overlay, a multi-track editor (text, merge), HDR tone-mapping, and auto-update.
 
 ## How it works
 
-ffmpeg's `ddagrab` captures the monitor on the GPU and feeds frames straight into NVENC, with no CPU copy. Output goes to 2-second MKV segments in a rolling ring under `%LOCALAPPDATA%\com.rewind.app\buffer`. Saving joins the newest segments without re-encoding (`-c copy`), so it is instant and lossless.
+ffmpeg's `ddagrab` captures the monitor on the GPU and feeds frames straight into NVENC, with no CPU copy. Output goes to 2-second MKV segments in a rolling ring. In RAM mode, ffmpeg streams each finished segment to Rewind over localhost and nothing touches the disk. In disk mode, segments go under `%LOCALAPPDATA%\com.rewind.app\buffer`. Saving joins the newest segments without re-encoding (`-c copy`), so it is instant and lossless.
 
 A supervisor thread (`src-tauri/src/engine.rs`) checks the monitor layout every second. If it changes, or ffmpeg exits, it starts a new capture "generation" on the right monitor. ffmpeg runs in a Windows job object, so it always dies with the app.
 
@@ -57,3 +61,7 @@ pnpm tauri dev
 ```
 
 Build an installer with `pnpm tauri build`. It bundles FFmpeg next to the app.
+
+## License notes
+
+Rewind bundles an LGPL build of FFmpeg. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

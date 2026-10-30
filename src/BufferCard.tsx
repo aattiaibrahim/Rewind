@@ -77,7 +77,11 @@ export function BufferCard({ status, hotkey, recordHotkey }: { status: Status | 
         <div style={{ width: `${bufferOn ? pct : 0}%` }} />
       </div>
       <div className="buffer-meta">
-        {status && bufferOn ? `${fmtDuration(status.bufferedSeconds)} of ${fmtDuration(status.bufferSeconds)} held` : "—"}
+        {status && bufferOn
+          ? `${fmtDuration(status.bufferedSeconds)} of ${fmtDuration(status.bufferSeconds)} held${
+              status.inRam ? ` · ${status.bufferMb} MB RAM` : " · on disk"
+            }`
+          : "—"}
         <br />
         {statusLine(status)}
         {audioLine(status) && (

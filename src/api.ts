@@ -9,6 +9,7 @@ export type Settings = {
   quality: number;
   fps: number;
   bufferSeconds: number;
+  bufferInRam: boolean;
   monitorMode: MonitorMode;
   fixedMonitor: string;
   drawCursor: boolean;
@@ -43,6 +44,8 @@ export type Status = {
   game: string | null;
   recording: boolean;
   recordingSeconds: number;
+  inRam: boolean;
+  bufferMb: number;
 };
 
 export type ClipFile = {

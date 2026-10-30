@@ -21,9 +21,12 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
+use std::io::{ErrorKind, Read};
+use std::net::TcpListener;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 pub const SEG_SECONDS: u32 = 2;
 /// Video starts ~0.12 s before ffmpeg connects to the audio sockets (measured
@@ -59,6 +62,9 @@ pub struct Status {
     /// Set when a recording finishes (incl. auto-stop); the app turns it into an event
     pub finished_recordings: Vec<String>,
     pub recording_error: Option<String>,
+    /// Buffer kept in memory (true) or on disk
+    pub in_ram: bool,
+    pub buffer_mb: u32,
 }
 
 #[derive(Clone)]
@@ -68,6 +74,62 @@ struct Gen {
     height: i32,
     encoder: String,
     fps: u32,
+    /// RAM mode: finished segments live here instead of in `dir`.
+    ram: Option<Arc<RamRing>>,
+}
+
+/// The RAM buffer for one generation: the newest finished segments, in order.
+struct RamRing {
+    segs: Mutex<VecDeque<(u64, Arc<Vec<u8>>)>>,
+    cap: Mutex<usize>,
+    stop: AtomicBool,
+}
+
+impl RamRing {
+    fn push(&self, seq: u64, data: Vec<u8>) {
+        let mut q = self.segs.lock().unwrap();
+        q.push_back((seq, Arc::new(data)));
+        let cap = *self.cap.lock().unwrap();
+        while q.len() > cap {
+            q.pop_front();
+        }
+    }
+    fn bytes(&self) -> usize {
+        self.segs.lock().unwrap().iter().map(|(_, d)| d.len()).sum()
+    }
+}
+
+/// One finished segment, wherever it lives.
+#[derive(Clone)]
+enum Seg {
+    File(PathBuf),
+    Ram(Arc<Vec<u8>>),
+}
+
+#[derive(Clone)]
+struct SegRef {
+    /// Unique and stable for the segment's lifetime.
+    id: String,
+    seg: Seg,
+}
+
+fn segments_of(g: &Gen) -> Vec<SegRef> {
+    match &g.ram {
+        Some(r) => r
+            .segs
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(n, d)| SegRef { id: format!("{}#{n}", g.dir.display()), seg: Seg::Ram(d.clone()) })
+            .collect(),
+        None => read_list(&g.dir)
+            .into_iter()
+            .map(|p| {
+                let m = fs::metadata(&p).and_then(|m| m.modified()).ok();
+                SegRef { id: format!("{}|{:?}", p.display(), m), seg: Seg::File(p) }
+            })
+            .collect(),
+    }
 }
 
 impl Gen {
@@ -81,7 +143,7 @@ struct Recording {
     started: Instant,
     tmp: PathBuf,
     out: PathBuf,
-    seen: HashSet<(PathBuf, Option<SystemTime>)>,
+    seen: HashSet<String>,
     seq: u32,
     last_disk_check: Instant,
 }
@@ -96,6 +158,15 @@ struct Running {
     sig: String,
     log: Arc<Mutex<VecDeque<String>>>,
     _audio: Vec<audio::Capture>,
+    ram: Option<Arc<RamRing>>,
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        if let Some(r) = &self.ram {
+            r.stop.store(true, Ordering::Relaxed);
+        }
+    }
 }
 
 struct Spawned {
@@ -104,6 +175,7 @@ struct Spawned {
     audio: Vec<audio::Capture>,
     labels: Vec<String>,
     audio_error: Option<String>,
+    ram: Option<Arc<RamRing>>,
 }
 
 pub struct Engine {
@@ -187,10 +259,7 @@ impl Engine {
         // Everything already in the buffer is from before "start": skip it.
         let mut seen = HashSet::new();
         for g in self.gens.lock().unwrap().iter() {
-            for p in read_list(&g.dir) {
-                let m = fs::metadata(&p).and_then(|m| m.modified()).ok();
-                seen.insert((p, m));
-            }
+            seen.extend(segments_of(g).into_iter().map(|s| s.id));
         }
         *rec = Some(Recording {
             started: Instant::now(),
@@ -235,18 +304,35 @@ fn check_space(path: &Path, min: u64) -> Result<(), String> {
 
 /// Wait for the segment being written right now, so output includes "now".
 fn wait_for_next_segment(newest: &Gen) {
-    let before = read_list(&newest.dir).last().cloned();
+    let last = || segments_of(newest).last().map(|s| s.id.clone());
+    let before = last();
     let deadline = Instant::now() + Duration::from_millis(SEG_SECONDS as u64 * 1000 + 700);
-    while Instant::now() < deadline && read_list(&newest.dir).last() == before.as_ref() {
+    while Instant::now() < deadline && last() == before {
         thread::sleep(Duration::from_millis(100));
     }
 }
 
-/// Join segments into `out` without re-encoding.
-fn concat(segs: &[PathBuf], out: &Path, scratch: &Path) -> Result<(), String> {
+/// Join segments into `out` without re-encoding. RAM segments are written
+/// next to `out` only for the second this takes, then removed.
+fn concat(segs: &[Seg], out: &Path, scratch: &Path) -> Result<(), String> {
+    let parent = out.parent().ok_or("Bad output path")?;
+    fs::create_dir_all(parent).map_err(|e| format!("Can't create clip folder: {e}"))?;
     let stamp = chrono::Local::now().format("%H%M%S%f");
+    let staging = parent.join(format!(".rewind-save-{stamp}"));
+    let mut paths = Vec::with_capacity(segs.len());
+    for (i, s) in segs.iter().enumerate() {
+        match s {
+            Seg::File(p) => paths.push(p.clone()),
+            Seg::Ram(d) => {
+                fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
+                let p = staging.join(format!("{i:06}.mkv"));
+                fs::write(&p, d.as_slice()).map_err(|e| e.to_string())?;
+                paths.push(p);
+            }
+        }
+    }
     let list_path = scratch.join(format!("concat_{stamp}.txt"));
-    let body: String = segs
+    let body: String = paths
         .iter()
         .map(|p| {
             let s = p.to_string_lossy().replace('\\', "/").replace('\'', r"'\''");
@@ -255,15 +341,13 @@ fn concat(segs: &[PathBuf], out: &Path, scratch: &Path) -> Result<(), String> {
         .collect();
     fs::create_dir_all(scratch).map_err(|e| e.to_string())?;
     fs::write(&list_path, body).map_err(|e| e.to_string())?;
-    if let Some(parent) = out.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("Can't create clip folder: {e}"))?;
-    }
     let mut args = ffmpeg::args(&["-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i"]);
     args.push(list_path.clone().into());
     args.extend(ffmpeg::args(&["-map", "0", "-c", "copy"]));
     args.push(out.into());
     let result = ffmpeg::run("ffmpeg", &args);
     let _ = fs::remove_file(&list_path);
+    let _ = fs::remove_dir_all(&staging);
     if result.is_err() {
         let _ = fs::remove_file(out);
     }
@@ -282,8 +366,8 @@ fn read_list(dir: &Path) -> Vec<PathBuf> {
 
 /// The newest `max` finished segments, reaching back into older generations
 /// only while they have the same resolution/codec (so they join cleanly).
-fn collect_segments(gens: &[Gen], max: usize) -> Vec<PathBuf> {
-    let mut out: Vec<PathBuf> = Vec::new();
+fn collect_segments(gens: &[Gen], max: usize) -> Vec<Seg> {
+    let mut out: Vec<Seg> = Vec::new();
     let Some(newest) = gens.last() else {
         return out;
     };
@@ -291,7 +375,7 @@ fn collect_segments(gens: &[Gen], max: usize) -> Vec<PathBuf> {
         if g.key() != newest.key() {
             break;
         }
-        let mut segs = read_list(&g.dir);
+        let mut segs: Vec<Seg> = segments_of(g).into_iter().map(|s| s.seg).collect();
         segs.append(&mut out);
         out = segs;
         if out.len() >= max {
@@ -308,14 +392,58 @@ fn collect_segments(gens: &[Gen], max: usize) -> Vec<PathBuf> {
 /// File names carry order and format: 000012_1920x1080_av1_60.mkv
 fn copy_new_segments(rec: &mut Recording, gens: &[Gen]) {
     for g in gens {
-        for p in read_list(&g.dir) {
-            let m = fs::metadata(&p).and_then(|m| m.modified()).ok();
-            if rec.seen.insert((p.clone(), m)) {
+        for s in segments_of(g) {
+            if rec.seen.insert(s.id) {
                 let dest = rec.tmp.join(format!("{:06}_{}.mkv", rec.seq, g.key()));
-                if fs::copy(&p, &dest).is_ok() {
+                let ok = match &s.seg {
+                    Seg::File(p) => fs::copy(p, &dest).is_ok(),
+                    Seg::Ram(d) => fs::write(&dest, d.as_slice()).is_ok(),
+                };
+                if ok {
                     rec.seq += 1;
                 }
             }
+        }
+    }
+}
+
+/// Keep at most `cap` RAM segments across the joinable generations, and free
+/// generations that can't be joined to the newest one anyway.
+fn trim_ram(gens: &[Gen], cap: usize) {
+    let Some(newest) = gens.last() else { return };
+    let mut kept = 0usize;
+    for g in gens.iter().rev() {
+        let Some(r) = &g.ram else { continue };
+        let mut q = r.segs.lock().unwrap();
+        if g.key() != newest.key() {
+            q.clear();
+            continue;
+        }
+        let room = cap.saturating_sub(kept);
+        while q.len() > room {
+            q.pop_front();
+        }
+        kept += q.len();
+    }
+}
+
+/// Receive segments from ffmpeg: each segment arrives as one TCP connection.
+fn serve_ram(listener: TcpListener, ring: Arc<RamRing>) {
+    let _ = listener.set_nonblocking(true);
+    let mut seq = 0u64;
+    while !ring.stop.load(Ordering::Relaxed) {
+        match listener.accept() {
+            Ok((mut sock, _)) => {
+                let _ = sock.set_nonblocking(false);
+                let mut buf = Vec::with_capacity(4 << 20);
+                // An interrupted segment errors out here and is dropped.
+                if sock.read_to_end(&mut buf).is_ok() && !buf.is_empty() {
+                    ring.push(seq, buf);
+                    seq += 1;
+                }
+            }
+            Err(e) if e.kind() == ErrorKind::WouldBlock => thread::sleep(Duration::from_millis(20)),
+            Err(_) => break,
         }
     }
 }
@@ -355,7 +483,8 @@ pub fn finalize(tmp: &Path, out: &Path, scratch: &Path) -> Result<Vec<String>, S
             let stem = out.file_stem().unwrap_or_default().to_string_lossy();
             out.with_file_name(format!("{stem} (part {}).mkv", i + 1))
         };
-        concat(g, &target, scratch)?;
+        let segs: Vec<Seg> = g.iter().cloned().map(Seg::File).collect();
+        concat(&segs, &target, scratch)?;
         saved.push(target.to_string_lossy().into_owned());
     }
     let _ = fs::remove_dir_all(tmp);
@@ -413,7 +542,8 @@ fn supervise(
         let devices = if s.desktop_audio || s.mic_enabled { audio::default_devices() } else { (None, None) };
         // Anything in here changing means "restart capture" (incl. a new default headset).
         let sig = format!(
-            "{:?}|{:?}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{:?}",
+            "{}|{:?}|{:?}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{:?}",
+            s.buffer_in_ram,
             mons,
             picked.as_ref().map(|m| m.index),
             s.encoder,
@@ -454,15 +584,17 @@ fn supervise(
             match picked {
                 Some(m) => {
                     gen_no += 1;
-                    let generation = Gen {
+                    let mut generation = Gen {
                         dir: root.join(format!("gen_{gen_no:04}")),
                         width: m.width,
                         height: m.height,
                         encoder: s.encoder.clone(),
                         fps: s.fps,
+                        ram: None,
                     };
                     match spawn(&s, &m, &generation) {
                         Ok(sp) => {
+                            generation.ram = sp.ram.clone();
                             let mut g = gens.lock().unwrap();
                             g.push(generation);
                             while g.len() > 4 {
@@ -476,7 +608,13 @@ fn supervise(
                             st.height = m.height;
                             st.audio = sp.labels;
                             st.audio_error = sp.audio_error;
-                            cur = Some(Running { child: sp.child, sig: sig.clone(), log: sp.log, _audio: sp.audio });
+                            cur = Some(Running {
+                                child: sp.child,
+                                sig: sig.clone(),
+                                log: sp.log,
+                                _audio: sp.audio,
+                                ram: sp.ram,
+                            });
                         }
                         Err(e) => {
                             status.lock().unwrap().last_error = Some(e);
@@ -514,12 +652,16 @@ fn supervise(
         }
 
         {
+            let g = gens.lock().unwrap();
+            trim_ram(&g, segs_needed(s.buffer_seconds) as usize + 1);
             let buffered = if cur.is_some() {
-                let n = collect_segments(&gens.lock().unwrap(), usize::MAX).len() as u32;
+                let n = collect_segments(&g, usize::MAX).len() as u32;
                 (n * SEG_SECONDS).min(s.buffer_seconds)
             } else {
                 0
             };
+            let ram_bytes: usize = g.iter().filter_map(|x| x.ram.as_ref()).map(|r| r.bytes()).sum();
+            drop(g);
             let game = games::foreground_game();
             let mut st = status.lock().unwrap();
             st.enabled = s.buffer_enabled;
@@ -531,6 +673,8 @@ fn supervise(
             st.game = game;
             st.recording = rec.lock().unwrap().is_some();
             st.recording_seconds = rec_secs;
+            st.in_ram = s.buffer_in_ram;
+            st.buffer_mb = (ram_bytes / (1024 * 1024)) as u32;
             if !st.running {
                 st.monitor = None;
                 st.audio.clear();
@@ -567,7 +711,23 @@ fn supervise(
 }
 
 fn spawn(s: &Settings, m: &monitors::Monitor, generation: &Gen) -> Result<Spawned, String> {
-    fs::create_dir_all(&generation.dir).map_err(|e| e.to_string())?;
+    // RAM mode: ffmpeg sends each finished segment to us over localhost,
+    // so the replay buffer never touches the disk.
+    let ram = if s.buffer_in_ram {
+        let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
+        let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+        let ring = Arc::new(RamRing {
+            segs: Mutex::new(VecDeque::new()),
+            cap: Mutex::new(segs_needed(s.buffer_seconds) as usize + 1),
+            stop: AtomicBool::new(false),
+        });
+        let r = ring.clone();
+        thread::spawn(move || serve_ram(listener, r));
+        Some((ring, port))
+    } else {
+        fs::create_dir_all(&generation.dir).map_err(|e| e.to_string())?;
+        None
+    };
 
     // Audio first, so its sockets are listening when ffmpeg connects.
     let mut caps: Vec<(audio::Capture, &str, &str, String)> = Vec::new();
@@ -610,8 +770,10 @@ fn spawn(s: &Settings, m: &monitors::Monitor, generation: &Gen) -> Result<Spawne
     let list_size = (per + 2).to_string();
 
     let mut cmd = ffmpeg::cmd("ffmpeg");
-    cmd.current_dir(&generation.dir)
-        .args(["-hide_banner", "-loglevel", "warning", "-f", "lavfi", "-i", &src]);
+    if ram.is_none() {
+        cmd.current_dir(&generation.dir);
+    }
+    cmd.args(["-hide_banner", "-loglevel", "warning", "-f", "lavfi", "-i", &src]);
     for (c, _, _, _) in &caps {
         // Raw PCM with a known format: skip ffmpeg's multi-second stream probing.
         cmd.args(["-probesize", "32", "-analyzeduration", "0"])
@@ -633,10 +795,17 @@ fn spawn(s: &Settings, m: &monitors::Monitor, generation: &Gen) -> Result<Spawne
     cmd.args(["-c:v", codec, "-preset", "p4", "-tune", "hq", "-rc", "vbr", "-cq", &cq, "-b:v", "0"])
         .args(["-g", &gop])
         .args(["-f", "segment", "-segment_time", &seg, "-segment_format", "matroska"])
-        .args(["-segment_wrap", &wrap, "-segment_list", "list.txt"])
-        .args(["-segment_list_size", &list_size, "-segment_list_type", "flat"])
-        .args(["-reset_timestamps", "1", "seg_%03d.mkv"])
-        .stdin(Stdio::piped())
+        .args(["-reset_timestamps", "1"]);
+    match &ram {
+        Some((_, port)) => {
+            cmd.arg(format!("tcp://127.0.0.1:{port}/seg_%05d.mkv"));
+        }
+        None => {
+            cmd.args(["-segment_wrap", &wrap, "-segment_list", "list.txt"])
+                .args(["-segment_list_size", &list_size, "-segment_list_type", "flat", "seg_%03d.mkv"]);
+        }
+    }
+    cmd.stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(|e| format!("Could not start ffmpeg: {e}"))?;
@@ -662,6 +831,7 @@ fn spawn(s: &Settings, m: &monitors::Monitor, generation: &Gen) -> Result<Spawne
         audio: caps.into_iter().map(|(c, _, _, _)| c).collect(),
         labels,
         audio_error: if audio_errors.is_empty() { None } else { Some(audio_errors.join(" · ")) },
+        ram: ram.map(|(r, _)| r),
     })
 }
 
@@ -686,7 +856,43 @@ mod tests {
     use super::*;
 
     fn mk_gen(dir: &Path, w: i32) -> Gen {
-        Gen { dir: dir.to_path_buf(), width: w, height: 1080, encoder: "av1".into(), fps: 60 }
+        Gen { dir: dir.to_path_buf(), width: w, height: 1080, encoder: "av1".into(), fps: 60, ram: None }
+    }
+
+    fn file_name(s: &Seg) -> String {
+        match s {
+            Seg::File(p) => p.file_name().unwrap().to_string_lossy().into_owned(),
+            Seg::Ram(_) => "<ram>".into(),
+        }
+    }
+
+    #[test]
+    fn ram_ring_caps_and_trims_across_generations() {
+        let ring = |n: usize| {
+            let r = Arc::new(RamRing { segs: Mutex::new(VecDeque::new()), cap: Mutex::new(n), stop: AtomicBool::new(false) });
+            r
+        };
+        let (a, b) = (ring(10), ring(10));
+        for i in 0..15 {
+            a.push(i, vec![0u8; 100]);
+        }
+        assert_eq!(a.segs.lock().unwrap().len(), 10, "ring keeps only its cap");
+        for i in 0..6 {
+            b.push(i, vec![0u8; 100]);
+        }
+        let mut g1 = mk_gen(Path::new("g1"), 1920);
+        g1.ram = Some(a.clone());
+        let mut g2 = mk_gen(Path::new("g2"), 1920);
+        g2.ram = Some(b.clone());
+        trim_ram(&[g1.clone(), g2.clone()], 8);
+        assert_eq!(b.segs.lock().unwrap().len(), 6, "newest generation kept whole");
+        assert_eq!(a.segs.lock().unwrap().len(), 2, "older one trimmed to fit");
+        assert_eq!(collect_segments(&[g1.clone(), g2.clone()], usize::MAX).len(), 8);
+        // A different-format generation in front frees the old ones.
+        let mut g3 = mk_gen(Path::new("g3"), 2560);
+        g3.ram = Some(ring(10));
+        trim_ram(&[g1, g2, g3], 8);
+        assert_eq!(a.segs.lock().unwrap().len() + b.segs.lock().unwrap().len(), 0);
     }
 
     #[test]
@@ -700,11 +906,11 @@ mod tests {
         // a is 1440 wide (different format), b and c are 1920.
         let gens = vec![mk_gen(&a, 1440), mk_gen(&b, 1920), mk_gen(&c, 1920)];
         let all = collect_segments(&gens, usize::MAX);
-        let names: Vec<String> = all.iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        let names: Vec<String> = all.iter().map(file_name).collect();
         assert_eq!(names, ["y1", "y2", "y3", "z1"]);
         let two = collect_segments(&gens, 2);
         assert_eq!(two.len(), 2);
-        assert!(two[1].ends_with("z1"));
+        assert_eq!(file_name(&two[1]), "z1");
         let _ = fs::remove_dir_all(&base);
     }
 
@@ -712,11 +918,26 @@ mod tests {
     /// Run with: cargo test live_ -- --ignored --nocapture
     #[test]
     #[ignore]
-    fn live_capture_clip_recording_and_recovery() {
+    fn live_ram_buffer() {
+        live_run(true);
+    }
+
+    #[test]
+    #[ignore]
+    fn live_disk_buffer() {
+        live_run(false);
+    }
+
+    fn live_run(in_ram: bool) {
         crate::ffmpeg::init(None);
-        let base = std::env::temp_dir().join(format!("rewind-test-live-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("rewind-test-live-{in_ram}-{}", std::process::id()));
         let clips = base.join("clips");
-        let s = Settings { clips_dir: clips.to_string_lossy().into(), buffer_seconds: 20, ..Default::default() };
+        let s = Settings {
+            clips_dir: clips.to_string_lossy().into(),
+            buffer_seconds: 20,
+            buffer_in_ram: in_ram,
+            ..Default::default()
+        };
         let engine = Engine::start(Arc::new(Mutex::new(s)), base.join("buffer"));
         let probe = |p: &Path| crate::library::probe(&p.to_string_lossy()).unwrap();
 
@@ -758,8 +979,18 @@ mod tests {
         let crashed = clips.join("Desktop").join(format!("{RECORDING_DIR_PREFIX}crash"));
         fs::create_dir_all(&crashed).unwrap();
         let g = engine.gens.lock().unwrap().last().cloned().unwrap();
-        for (i, seg) in read_list(&g.dir).iter().take(3).enumerate() {
-            fs::copy(seg, crashed.join(format!("{i:06}_{}.mkv", g.key()))).unwrap();
+        for (i, s) in segments_of(&g).iter().take(3).enumerate() {
+            let dest = crashed.join(format!("{i:06}_{}.mkv", g.key()));
+            match &s.seg {
+                Seg::File(p) => fs::copy(p, &dest).map(|_| ()).unwrap(),
+                Seg::Ram(d) => fs::write(&dest, d.as_slice()).unwrap(),
+            }
+        }
+        // RAM mode must not have written the buffer to disk.
+        if in_ram {
+            let on_disk = fs::read_dir(base.join("buffer")).map(|d| d.count()).unwrap_or(0);
+            println!("RAM mode: {on_disk} items in buffer folder, {} MB in memory", engine.status().buffer_mb);
+            assert_eq!(on_disk, 0, "RAM buffer wrote to disk");
         }
         let recovered = recover_recordings(&clips, &base.join("scratch"));
         assert_eq!(recovered.len(), 1);

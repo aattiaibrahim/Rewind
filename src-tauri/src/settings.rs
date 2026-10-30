@@ -11,6 +11,8 @@ pub struct Settings {
     pub quality: u32,
     pub fps: u32,
     pub buffer_seconds: u32,
+    /// Keep the replay buffer in memory (no SSD writes) instead of on disk
+    pub buffer_in_ram: bool,
     /// "primary" | "cursor" | "fixed"
     pub monitor_mode: String,
     /// Device name like \\.\DISPLAY1, used when monitor_mode == "fixed"
@@ -42,6 +44,7 @@ impl Default for Settings {
             quality: 24,
             fps: 60,
             buffer_seconds: 120,
+            buffer_in_ram: true,
             monitor_mode: "primary".into(),
             fixed_monitor: String::new(),
             draw_cursor: true,

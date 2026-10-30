@@ -1,4 +1,5 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ClipFile, codecLabel, errText, fmtSize, fmtTime, Probe, Settings } from "./api";
 
@@ -67,6 +68,18 @@ export function Studio({
       v.play();
     } else v.pause();
   }, [range]);
+
+  // Minimized, hidden to the tray, or covered: pause right where it is.
+  useEffect(() => {
+    const pause = () => video.current?.pause();
+    const onVis = () => document.hidden && pause();
+    document.addEventListener("visibilitychange", onVis);
+    const un = listen("main-hidden", pause);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      un.then((f) => f());
+    };
+  }, []);
 
   // Keyboard: Space play, I / O set points, arrows step.
   useEffect(() => {
