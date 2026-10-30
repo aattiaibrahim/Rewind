@@ -58,7 +58,10 @@ Download **$exeName** below and run it. Already have Rewind? It updates itself.
 Windows SmartScreen may warn because the app isn't code-signed yet: click **More info → Run anyway**.
 "@ | Set-Content $notesFile
 
+& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "package-streamdeck.ps1")
+$plugin = "streamdeck\dist\Rewind.streamDeckPlugin"
+
 Write-Host "Publishing $tag..."
-gh release create $tag $exe $latest --repo $repo --title "Rewind $version" --notes-file $notesFile --latest
+gh release create $tag $exe $latest $plugin --repo $repo --title "Rewind $version" --notes-file $notesFile --latest
 Remove-Item $notesFile
 Write-Host "Done: https://github.com/$repo/releases/tag/$tag"

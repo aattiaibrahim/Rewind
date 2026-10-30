@@ -1,0 +1,59 @@
+{
+  "UUID": "com.rewind.clipper",
+  "Name": "Rewind",
+  "Author": "Rewind",
+  "Description": "Control Rewind from your Stream Deck: save clips, record, pause the replay buffer and switch clip quality.",
+  "URL": "https://github.com/aattiaibrahim/Rewind",
+  "Version": "1.0.0.0",
+  "SDKVersion": 2,
+  "CodePath": "plugin.html",
+  "Icon": "imgs/plugin",
+  "Category": "Rewind",
+  "CategoryIcon": "imgs/category",
+  "Software": { "MinimumVersion": "6.5" },
+  "OS": [{ "Platform": "windows", "MinimumVersion": "10" }],
+  "Actions": [
+    {
+      "UUID": "com.rewind.clipper.save",
+      "Name": "Save Clip",
+      "Tooltip": "Save the last moments from Rewind's replay buffer",
+      "Icon": "imgs/action-save",
+      "PropertyInspectorPath": "pi.html",
+      "SupportedInMultiActions": true,
+      "States": [{ "Image": "imgs/key-save", "TitleAlignment": "bottom", "FontSize": "11" }]
+    },
+    {
+      "UUID": "com.rewind.clipper.record",
+      "Name": "Record",
+      "Tooltip": "Start or stop a full recording",
+      "Icon": "imgs/action-record",
+      "DisableAutomaticStates": true,
+      "SupportedInMultiActions": true,
+      "States": [
+        { "Image": "imgs/key-record", "TitleAlignment": "bottom", "FontSize": "11" },
+        { "Image": "imgs/key-record-on", "TitleAlignment": "bottom", "FontSize": "12" }
+      ]
+    },
+    {
+      "UUID": "com.rewind.clipper.buffer",
+      "Name": "Replay Buffer",
+      "Tooltip": "Pause or resume the replay buffer",
+      "Icon": "imgs/action-buffer",
+      "DisableAutomaticStates": true,
+      "SupportedInMultiActions": true,
+      "States": [
+        { "Image": "imgs/key-buffer-off", "TitleAlignment": "bottom", "FontSize": "11" },
+        { "Image": "imgs/key-buffer-on", "TitleAlignment": "bottom", "FontSize": "11" }
+      ]
+    },
+    {
+      "UUID": "com.rewind.clipper.quality",
+      "Name": "Clip Quality",
+      "Tooltip": "Switch clip resolution and quality (set per button)",
+      "Icon": "imgs/action-quality",
+      "PropertyInspectorPath": "pi.html",
+      "SupportedInMultiActions": true,
+      "States": [{ "Image": "imgs/key-quality", "TitleAlignment": "bottom", "FontSize": "11" }]
+    }
+  ]
+}

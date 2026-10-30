@@ -8,6 +8,7 @@ export type Settings = {
   encoder: Encoder;
   quality: number;
   fps: number;
+  outputHeight: number;
   bufferSeconds: number;
   bufferInRam: boolean;
   monitorMode: MonitorMode;

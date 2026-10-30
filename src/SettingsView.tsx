@@ -1,4 +1,5 @@
 import { open } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useEffect, useState } from "react";
 import { api, bufferEstimateMb, errText, Monitor, Settings } from "./api";
 import { useUpdate } from "./hooks";
@@ -19,6 +20,13 @@ function hotkeyFrom(e: React.KeyboardEvent): string | null {
   if (!mods.length && !/^F\d+$/.test(key)) return null;
   return [...mods, key].join("+");
 }
+
+const QUALITY_PRESETS: [string, number][] = [
+  ["Small", 30],
+  ["Balanced", 26],
+  ["High", 22],
+  ["Max", 18],
+];
 
 function HotkeyInput({ value, label, onPick }: { value: string; label: string; onPick: (hk: string) => void }) {
   const [listening, setListening] = useState(false);
@@ -97,6 +105,17 @@ export function SettingsView({
 
   const set = (p: Partial<Settings>) => update(p).catch((e) => onError(String(e)));
   const s = settings;
+  const screen =
+    (s.monitorMode === "fixed" && monitors.find((m) => m.name === s.fixedMonitor)) ||
+    monitors.find((m) => m.primary) ||
+    monitors[0];
+  const screenH = screen?.height ?? 0;
+  const resolutionHint =
+    s.outputHeight === 0 || s.outputHeight === screenH
+      ? "Full screen resolution, captured entirely on the GPU."
+      : screenH && s.outputHeight > screenH
+        ? "Upscaled: no extra detail and bigger files, but YouTube gives 1440p+ uploads better quality."
+        : "Scaled down: smaller files, and about 1–5% CPU for the resize.";
 
   const pickFolder = async () => {
     const dir = await open({ directory: true, title: "Where should clips be saved?", defaultPath: s.clipsDir });
@@ -159,7 +178,40 @@ export function SettingsView({
           </label>
           <label className="setting">
             <span>
-              Quality: CQ {s.quality}
+              Clip resolution
+              <small>{resolutionHint}</small>
+            </span>
+            <select className="select" value={s.outputHeight} onChange={(e) => set({ outputHeight: Number(e.target.value) })}>
+              <option value={0}>Same as screen{screenH ? ` (${screenH}p)` : ""}</option>
+              {[2160, 1440, 1080, 720].map((h) => (
+                <option key={h} value={h}>
+                  {h === 2160 ? "4K (2160p)" : `${h}p`}
+                  {screenH && h > screenH ? " · upscaled" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="setting">
+            <span>
+              Quality
+              <small>Higher means sharper but bigger files. Fine-tune with the slider (CQ {s.quality}).</small>
+            </span>
+            <div className="row" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
+              {QUALITY_PRESETS.map(([label, cq]) => (
+                <button
+                  key={label}
+                  className={`chip ${s.quality === cq ? "on" : ""}`}
+                  style={{ height: 30 }}
+                  onClick={() => set({ quality: cq })}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <label className="setting">
+            <span>
+              Fine-tune: CQ {s.quality}
               <small>Lower = sharper and bigger. 20–26 is a good range.</small>
             </span>
             <input
@@ -210,6 +262,35 @@ export function SettingsView({
               ))}
             </select>
           </label>
+        </section>
+
+        <section className="group">
+          <h2>Stream Deck &amp; other tools</h2>
+          <div className="setting">
+            <span>
+              Rewind plugin for Stream Deck
+              <small>Buttons for Save clip, Record (lights up red), Replay buffer and Quality.</small>
+            </span>
+            <button
+              className="btn small"
+              onClick={() =>
+                openUrl("https://github.com/aattiaibrahim/Rewind/releases/latest/download/Rewind.streamDeckPlugin").catch((e) =>
+                  onError(errText(e)),
+                )
+              }
+            >
+              Get plugin
+            </button>
+          </div>
+          <div className="setting">
+            <span>
+              Without the plugin
+              <small>
+                Stream Deck "Hotkey" action: {s.hotkey} saves a clip, {s.recordHotkey} records. Or run{" "}
+                <code>Rewind.exe --save-clip</code>, <code>--toggle-record</code> or <code>--toggle-buffer</code>.
+              </small>
+            </span>
+          </div>
         </section>
 
         <section className="group">

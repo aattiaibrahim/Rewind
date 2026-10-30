@@ -34,6 +34,20 @@ ffmpeg's `ddagrab` captures the monitor on the GPU and feeds frames straight int
 
 A supervisor thread (`src-tauri/src/engine.rs`) checks the monitor layout every second. If it changes, or ffmpeg exits, it starts a new capture "generation" on the right monitor. ffmpeg runs in a Windows job object, so it always dies with the app.
 
+## Stream Deck and other tools
+
+- **Stream Deck plugin**: download `Rewind.streamDeckPlugin` from the [latest release](https://github.com/aattiaibrahim/Rewind/releases/latest) and double-click it. It has four actions:
+  - **Save Clip**: full buffer or a set length per key.
+  - **Record**: turns red and shows the timer.
+  - **Replay Buffer**: on/off.
+  - **Clip Quality**: switches resolution and quality per key, e.g. "1080p High" or "4K Max".
+- **No plugin needed**: Stream Deck's built-in *Hotkey* action works with `Alt+F10` / `Alt+F9`, or run `Rewind.exe --save-clip [seconds]`, `--toggle-record` or `--toggle-buffer`.
+- **Local API** (127.0.0.1:52371 only, header `X-Rewind: 1` required): `GET /status`, `POST /save?seconds=30`, `POST /record/toggle`, `POST /buffer/toggle`, `POST /quality?height=1080&cq=22`.
+
+## Quality
+
+Clip resolution can be **same as screen** (captured fully on the GPU), 4K, 1440p, 1080p or 720p. A different size is resized on the CPU, at about 1–5% CPU. Quality presets are Small / Balanced / High / Max, with a CQ slider for fine-tuning.
+
 ## Safety
 
 - An edit only replaces the original after the new file is checked: it must be non-empty, readable and about the right length. The original goes to the Recycle Bin, never straight to deletion.

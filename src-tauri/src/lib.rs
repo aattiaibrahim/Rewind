@@ -1,4 +1,5 @@
 mod audio;
+mod control;
 mod engine;
 mod ffmpeg;
 mod games;
@@ -414,7 +415,12 @@ mod tests {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // `Rewind.exe --save-clip` etc. control the running copy; a plain launch shows it.
+            if !control::handle_args(app, &args) {
+                show_main(app);
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -477,6 +483,7 @@ pub fn run() {
 
             app.manage(updater::Updates::default());
             updater::start(handle.clone());
+            control::start(handle.clone());
 
             if let Err(e) = apply_hotkeys(&handle, &s.hotkey, &s.record_hotkey) {
                 eprintln!("{e}");
@@ -557,7 +564,10 @@ pub fn run() {
                 }
             });
 
-            let minimized = std::env::args().any(|a| a == "--minimized") && s.start_minimized;
+            // Launched by a command (e.g. Stream Deck) while not running: start
+            // quietly in the tray. There's nothing buffered yet to save.
+            let by_command = std::env::args().any(|a| a.starts_with("--") && a != "--minimized");
+            let minimized = by_command || (std::env::args().any(|a| a == "--minimized") && s.start_minimized);
             if !minimized {
                 show_main(&handle);
             }

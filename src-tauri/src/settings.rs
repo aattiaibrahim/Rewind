@@ -10,6 +10,8 @@ pub struct Settings {
     /// NVENC constant-quality value (lower = better, bigger files)
     pub quality: u32,
     pub fps: u32,
+    /// Clip height: 0 = same as the monitor, else 720 / 1080 / 1440 / 2160
+    pub output_height: u32,
     pub buffer_seconds: u32,
     /// Keep the replay buffer in memory (no SSD writes) instead of on disk
     pub buffer_in_ram: bool,
@@ -45,6 +47,7 @@ impl Default for Settings {
             encoder: "av1".into(),
             quality: 24,
             fps: 60,
+            output_height: 0,
             buffer_seconds: 120,
             buffer_in_ram: true,
             monitor_mode: "primary".into(),
@@ -80,6 +83,9 @@ impl Settings {
         self.quality = self.quality.clamp(10, 45);
         self.fps = self.fps.clamp(15, 240);
         self.buffer_seconds = self.buffer_seconds.clamp(5, 1800);
+        if ![0, 720, 1080, 1440, 2160].contains(&self.output_height) {
+            self.output_height = 0;
+        }
         if self.hotkey.trim().is_empty() {
             self.hotkey = d.hotkey;
         }

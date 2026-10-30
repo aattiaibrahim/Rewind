@@ -1,0 +1,87 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Rewind settings</title>
+<style>
+  body { margin: 0; padding: 8px 10px; background: #2d2d2d; color: #d8d8d8; font: 12px "Segoe UI", sans-serif; }
+  .row { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
+  label { width: 92px; flex-shrink: 0; color: #969696; }
+  select { flex: 1; height: 26px; background: #3d3d3d; color: #d8d8d8; border: 1px solid #555; border-radius: 3px; padding: 0 6px; }
+  .hint { color: #8a8a8a; font-size: 11px; line-height: 1.5; margin: 6px 0 0 102px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+  <div id="save" hidden>
+    <div class="row">
+      <label for="seconds">Clip length</label>
+      <select id="seconds">
+        <option value="0">Full replay buffer</option>
+        <option value="15">Last 15 seconds</option>
+        <option value="30">Last 30 seconds</option>
+        <option value="60">Last 1 minute</option>
+        <option value="120">Last 2 minutes</option>
+        <option value="300">Last 5 minutes</option>
+      </select>
+    </div>
+    <div class="hint">Make several keys with different lengths if you like.</div>
+  </div>
+
+  <div id="quality" hidden>
+    <div class="row">
+      <label for="height">Resolution</label>
+      <select id="height">
+        <option value="keep">Don't change</option>
+        <option value="0">Same as screen</option>
+        <option value="2160">4K (2160p)</option>
+        <option value="1440">1440p</option>
+        <option value="1080">1080p</option>
+        <option value="720">720p</option>
+      </select>
+    </div>
+    <div class="row">
+      <label for="cq">Quality</label>
+      <select id="cq">
+        <option value="keep">Don't change</option>
+        <option value="30">Small files</option>
+        <option value="26">Balanced</option>
+        <option value="22">High</option>
+        <option value="18">Max</option>
+      </select>
+    </div>
+    <div class="hint">Pressing the key switches Rewind to these settings. Capture restarts for a second.</div>
+  </div>
+
+<script>
+  let ws, ctx, settings = {};
+  // eslint-disable-next-line no-unused-vars
+  function connectElgatoStreamDeckSocket(port, uuid, registerEvent, info, actionInfo) {
+    ctx = uuid;
+    const a = JSON.parse(actionInfo);
+    settings = (a.payload && a.payload.settings) || {};
+    const kind = a.action.split(".").pop();
+    document.getElementById(kind) && (document.getElementById(kind).hidden = false);
+    for (const id of ["seconds", "height", "cq"]) {
+      const el = document.getElementById(id);
+      if (settings[id] !== undefined) el.value = String(settings[id]);
+      el.addEventListener("change", () => {
+        settings[id] = el.value;
+        ws.send(JSON.stringify({ event: "setSettings", context: ctx, payload: settings }));
+      });
+    }
+    // Defaults for a fresh Quality key, so it does something useful right away.
+    if (kind === "quality" && settings.height === undefined && settings.cq === undefined) {
+      settings = { height: "1080", cq: "22" };
+      document.getElementById("height").value = "1080";
+      document.getElementById("cq").value = "22";
+    }
+    ws = new WebSocket("ws://127.0.0.1:" + port);
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ event: registerEvent, uuid }));
+      if (kind === "quality") ws.send(JSON.stringify({ event: "setSettings", context: ctx, payload: settings }));
+    };
+  }
+</script>
+</body>
+</html>

@@ -25,3 +25,6 @@ dist-ssr
 
 # FFmpeg binaries (fetch with scripts/get-ffmpeg.ps1)
 vendor/
+
+# Built Stream Deck package
+streamdeck/dist/

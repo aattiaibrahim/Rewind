@@ -516,6 +516,17 @@ pub fn recover_recordings(clips_dir: &Path, scratch: &Path) -> Vec<String> {
     saved
 }
 
+/// Clip size for a monitor: same as the monitor, or scaled to `height`
+/// keeping the aspect ratio (even numbers, as encoders need).
+pub fn output_size(m: &monitors::Monitor, height: u32) -> (i32, i32) {
+    if height == 0 || height as i32 == m.height || m.height <= 0 {
+        return (m.width, m.height);
+    }
+    let h = height as i32;
+    let w = ((m.width as f64 * h as f64 / m.height as f64) / 2.0).round() as i32 * 2;
+    (w, h)
+}
+
 fn segs_needed(buffer_seconds: u32) -> u32 {
     buffer_seconds.div_ceil(SEG_SECONDS) + 1
 }
@@ -550,7 +561,7 @@ fn supervise(
             s.quality,
             s.fps,
             s.draw_cursor,
-            s.buffer_seconds,
+            s.buffer_seconds * 10_000 + s.output_height,
             s.desktop_audio,
             s.mic_enabled,
             s.mic_mono,
@@ -586,8 +597,8 @@ fn supervise(
                     gen_no += 1;
                     let mut generation = Gen {
                         dir: root.join(format!("gen_{gen_no:04}")),
-                        width: m.width,
-                        height: m.height,
+                        width: output_size(&m, s.output_height).0,
+                        height: output_size(&m, s.output_height).1,
                         encoder: s.encoder.clone(),
                         fps: s.fps,
                         ram: None,
@@ -604,8 +615,7 @@ fn supervise(
                             drop(g);
                             let mut st = status.lock().unwrap();
                             st.monitor = Some(m.label());
-                            st.width = m.width;
-                            st.height = m.height;
+                            (st.width, st.height) = output_size(&m, s.output_height);
                             st.audio = sp.labels;
                             st.audio_error = sp.audio_error;
                             cur = Some(Running {
@@ -757,12 +767,19 @@ fn spawn(s: &Settings, m: &monitors::Monitor, generation: &Gen) -> Result<Spawne
         "hevc" => "hevc_nvenc",
         _ => "av1_nvenc",
     };
-    let src = format!(
+    let mut src = format!(
         "ddagrab=output_idx={}:framerate={}:draw_mouse={}",
         m.index,
         s.fps,
         if s.draw_cursor { 1 } else { 0 }
     );
+    let (w, h) = output_size(m, s.output_height);
+    if (w, h) != (m.width, m.height) {
+        // Native size stays 100% on the GPU. Other sizes are scaled on the CPU
+        // (about 1-5% of a modern CPU): this FFmpeg's GPU scalers can't take
+        // desktop-capture frames.
+        src.push_str(&format!(",hwdownload,format=bgra,scale={w}:{h}:flags=bicubic,format=nv12"));
+    }
     let gop = (s.fps * SEG_SECONDS).to_string();
     let cq = s.quality.to_string();
     let seg = SEG_SECONDS.to_string();
@@ -864,6 +881,18 @@ mod tests {
             Seg::File(p) => p.file_name().unwrap().to_string_lossy().into_owned(),
             Seg::Ram(_) => "<ram>".into(),
         }
+    }
+
+    #[test]
+    fn output_size_keeps_aspect_and_even_numbers() {
+        let mon = |w, h| monitors::Monitor { index: 0, name: "d".into(), x: 0, y: 0, width: w, height: h, primary: true };
+        assert_eq!(output_size(&mon(1920, 1080), 0), (1920, 1080));
+        assert_eq!(output_size(&mon(1920, 1080), 1080), (1920, 1080));
+        assert_eq!(output_size(&mon(1920, 1080), 720), (1280, 720));
+        assert_eq!(output_size(&mon(1920, 1080), 2160), (3840, 2160));
+        assert_eq!(output_size(&mon(3840, 2160), 1440), (2560, 1440));
+        assert_eq!(output_size(&mon(3440, 1440), 1080), (2580, 1080)); // ultrawide
+        assert_eq!(output_size(&mon(1366, 768), 720), (1280, 720));
     }
 
     #[test]
