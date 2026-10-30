@@ -5,6 +5,7 @@ mod ffmpeg;
 mod games;
 mod library;
 mod monitors;
+mod native;
 mod settings;
 mod updater;
 
