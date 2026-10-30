@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Rewind",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "com.rewind.app",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -47,9 +47,17 @@
       }
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhFNzA0MjU5MzM1OEYxQTUKUldTbDhWZ3pXVUp3amhpZ1hTdVQvMU83TU9QMXNKYW5KNlc4UmtkbjJFR0pmSmg5c0dvZyt2amoK",
+      "endpoints": ["https://github.com/aattiaibrahim/Rewind/releases/latest/download/latest.json"],
+      "windows": { "installMode": "passive" }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
     "resources": {
       "../vendor/ffmpeg/bin/ffmpeg.exe": "ffmpeg/ffmpeg.exe",
       "../vendor/ffmpeg/bin/ffprobe.exe": "ffmpeg/ffprobe.exe",

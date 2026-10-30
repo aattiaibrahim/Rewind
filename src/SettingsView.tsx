@@ -1,6 +1,7 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
-import { api, bufferEstimateMb, Monitor, Settings } from "./api";
+import { api, bufferEstimateMb, errText, Monitor, Settings } from "./api";
+import { useUpdate } from "./hooks";
 
 function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
   return (
@@ -59,6 +60,36 @@ export function SettingsView({
 }) {
   const [monitors, setMonitors] = useState<Monitor[]>([]);
   const [mics, setMics] = useState<string[]>([]);
+  const upd = useUpdate();
+  const [checking, setChecking] = useState(false);
+  const checkNow = async () => {
+    setChecking(true);
+    try {
+      await api.checkForUpdates();
+    } catch (e) {
+      onError(errText(e));
+    } finally {
+      setChecking(false);
+    }
+  };
+  const updateLine = (() => {
+    switch (upd?.stage) {
+      case "checking":
+        return "Checking…";
+      case "downloading":
+        return `Downloading ${upd.version}…`;
+      case "ready":
+        return `Version ${upd.version} is ready. It installs when Rewind restarts.`;
+      case "available":
+        return `Version ${upd.version} is available.`;
+      case "up-to-date":
+        return "You're up to date.";
+      case "error":
+        return `Couldn't check: ${upd.error}`;
+      default:
+        return "Checks GitHub after launch and every 6 hours.";
+    }
+  })();
   useEffect(() => {
     api.listMonitors().then(setMonitors).catch(() => {});
     api.listAudioInputs().then(setMics).catch(() => {});
@@ -89,6 +120,22 @@ export function SettingsView({
             </span>
             <Toggle label="Start in tray" checked={s.startMinimized} onChange={(v) => set({ startMinimized: v })} />
           </label>
+          <label className="setting">
+            <span>
+              Update automatically
+              <small>Downloads in the background. Never installs during a recording or while a game is open.</small>
+            </span>
+            <Toggle label="Update automatically" checked={s.autoUpdate} onChange={(v) => set({ autoUpdate: v })} />
+          </label>
+          <div className="setting">
+            <span>
+              Version {upd?.current ?? "…"}
+              <small>{updateLine}</small>
+            </span>
+            <button className="btn small" disabled={checking || upd?.stage === "downloading"} onClick={checkNow}>
+              {checking ? "Checking…" : "Check now"}
+            </button>
+          </div>
           <label className="setting">
             <span>Replay buffer</span>
             <Toggle label="Replay buffer on" checked={s.bufferEnabled} onChange={(v) => set({ bufferEnabled: v })} />

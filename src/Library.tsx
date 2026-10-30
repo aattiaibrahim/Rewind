@@ -13,7 +13,22 @@ function dayLabel(ms: number) {
   return d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
 }
 
-function ClipCard({ clip, onOpen, onToast }: { clip: ClipFile; onOpen: () => void; onToast: (t: string, err?: boolean) => void }) {
+function containerLabel(path: string) {
+  const ext = path.split(".").pop()?.toUpperCase() ?? "";
+  return ext === "M4V" ? "MP4" : ext;
+}
+
+function ClipCard({
+  clip,
+  onOpen,
+  onToast,
+  onChanged,
+}: {
+  clip: ClipFile;
+  onOpen: () => void;
+  onToast: (t: string, err?: boolean) => void;
+  onChanged: () => void;
+}) {
   const thumb = useThumb(clip.path, clip.modified);
   const [info, setInfo] = useState<Probe | null>(null);
   useEffect(() => {
@@ -28,7 +43,8 @@ function ClipCard({ clip, onOpen, onToast }: { clip: ClipFile; onOpen: () => voi
     onToast("Remuxing to MP4…");
     try {
       const out = await api.remuxMp4(clip.path);
-      onToast(`Saved ${out.split("\\").pop()}`);
+      onToast(`Saved ${out.split("\\").pop()} (same video, new MP4 container)`);
+      onChanged();
     } catch (err) {
       onToast(errText(err), true);
     }
@@ -38,7 +54,11 @@ function ClipCard({ clip, onOpen, onToast }: { clip: ClipFile; onOpen: () => voi
     <button className="card" onClick={onOpen} title={clip.path}>
       <div className="thumb">
         {thumb && <img src={thumb} alt="" loading="lazy" />}
-        {info && <span className="badge tl">{codecLabel(info.codec)}</span>}
+        {info && (
+          <span className="badge tl" title="Video codec · file container">
+            {codecLabel(info.codec)} · {containerLabel(clip.path)}
+          </span>
+        )}
         {info && <span className="badge br">{fmtDuration(info.duration)}</span>}
         <div className="card-actions">
           {!isMp4 && (
@@ -71,11 +91,13 @@ export function Library({
   clips,
   onOpen,
   onToast,
+  onChanged,
   hotkey,
 }: {
   clips: ClipFile[] | null;
   onOpen: (path: string) => void;
   onToast: (t: string, err?: boolean) => void;
+  onChanged: () => void;
   hotkey: string;
 }) {
   const [folder, setFolder] = useState("All");
@@ -161,7 +183,7 @@ export function Library({
             <div className="label">{g.day}</div>
             <div className="grid">
               {g.items.map((c) => (
-                <ClipCard key={c.path} clip={c} onOpen={() => onOpen(c.path)} onToast={onToast} />
+                <ClipCard key={c.path} clip={c} onOpen={() => onOpen(c.path)} onToast={onToast} onChanged={onChanged} />
               ))}
             </div>
           </section>

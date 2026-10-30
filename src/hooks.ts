@@ -1,6 +1,20 @@
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useState } from "react";
-import { api, ClipFile, Settings, Status } from "./api";
+import { api, ClipFile, Settings, Status, UpdateState } from "./api";
+
+export function useUpdate() {
+  const [u, setU] = useState<UpdateState | null>(null);
+  useEffect(() => {
+    api.getUpdateState().then(setU).catch(() => {});
+    const un = listen<UpdateState>("update-state", (e) =>
+      setU((prev) => ({ ...e.payload, current: prev?.current || e.payload.current })),
+    );
+    return () => {
+      un.then((f) => f());
+    };
+  }, []);
+  return u;
+}
 
 export function useStatus() {
   const [status, setStatus] = useState<Status | null>(null);

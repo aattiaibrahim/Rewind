@@ -170,6 +170,12 @@ h1 { margin: 0; font-family: var(--display); font-size: 28px; font-weight: 600; 
 .switch { width: 40px; height: 22px; accent-color: var(--accent); }
 input[type="range"] { accent-color: var(--accent); width: 160px; }
 
+.update-banner {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px;
+  margin: 14px 28px 0; padding: 10px 14px; border-radius: 10px; font-size: 13px;
+  background: rgba(198, 244, 50, 0.08); border: 1px solid rgba(198, 244, 50, 0.35);
+}
+
 /* ---------- toast ---------- */
 .toasts { position: fixed; right: 20px; bottom: 20px; display: flex; flex-direction: column; gap: 10px; z-index: 50; }
 .toast {

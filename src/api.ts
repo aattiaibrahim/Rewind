@@ -17,6 +17,7 @@ export type Settings = {
   recordHotkey: string;
   bufferEnabled: boolean;
   launchOnStartup: boolean;
+  autoUpdate: boolean;
   startMinimized: boolean;
   keepOriginalAfterRemux: boolean;
   replaceOriginalOnEdit: boolean;
@@ -46,6 +47,14 @@ export type Status = {
   recordingSeconds: number;
   inRam: boolean;
   bufferMb: number;
+};
+
+export type UpdateState = {
+  current: string;
+  stage: "idle" | "checking" | "available" | "downloading" | "ready" | "up-to-date" | "error" | "";
+  version: string | null;
+  notes: string | null;
+  error: string | null;
 };
 
 export type ClipFile = {
@@ -135,6 +144,9 @@ export const api = {
   openInStudio: (path: string) => invoke<void>("open_in_studio", { path }),
   showMain: () => invoke<void>("show_main_window"),
   hideFlyout: () => invoke<void>("hide_flyout"),
+  getUpdateState: () => invoke<UpdateState>("get_update_state"),
+  checkForUpdates: () => invoke<string | null>("check_for_updates"),
+  installUpdate: () => invoke<void>("install_update"),
 };
 
 export const VIDEO_EXTENSIONS = ["mkv", "mp4", "mov", "webm", "m4v", "avi", "ts", "flv"];

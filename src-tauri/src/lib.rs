@@ -5,6 +5,7 @@ mod games;
 mod library;
 mod monitors;
 mod settings;
+mod updater;
 
 use settings::Settings;
 use std::path::PathBuf;
@@ -19,9 +20,9 @@ use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 pub struct AppState {
-    settings: Arc<Mutex<Settings>>,
+    pub(crate) settings: Arc<Mutex<Settings>>,
     settings_path: PathBuf,
-    engine: engine::Engine,
+    pub(crate) engine: engine::Engine,
     thumbs_dir: PathBuf,
     flyout_hidden_at: Mutex<Instant>,
 }
@@ -346,6 +347,26 @@ fn show_main_window(app: AppHandle) {
 }
 
 #[tauri::command]
+fn get_update_state(app: AppHandle) -> updater::UpdateState {
+    updater::state(&app)
+}
+
+#[tauri::command]
+async fn check_for_updates(app: AppHandle) -> Result<Option<String>, String> {
+    let auto = settings_of(&app).auto_update;
+    updater::check(&app, auto).await
+}
+
+/// Download (if needed) and install now. Rewind restarts on the new version.
+#[tauri::command]
+async fn install_update(app: AppHandle) -> Result<(), String> {
+    if !updater::has_ready_update(&app) {
+        updater::check(&app, true).await?;
+    }
+    updater::install(&app)
+}
+
+#[tauri::command]
 fn hide_flyout(app: AppHandle) {
     if let Some(f) = app.get_webview_window("flyout") {
         let _ = f.hide();
@@ -377,6 +398,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--minimized"]),
@@ -433,6 +455,9 @@ pub fn run() {
                     }
                 });
             }
+
+            app.manage(updater::Updates::default());
+            updater::start(handle.clone());
 
             if let Err(e) = apply_hotkeys(&handle, &s.hotkey, &s.record_hotkey) {
                 eprintln!("{e}");
@@ -559,11 +584,18 @@ pub fn run() {
             open_in_studio,
             show_main_window,
             hide_flyout,
+            get_update_state,
+            check_for_updates,
+            install_update,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Rewind")
         .run(|app, event| {
             if let RunEvent::Exit = event {
+                // A downloaded update installs on quit (after the engine stops).
+                if settings_of(app).auto_update && updater::has_ready_update(app) {
+                    let _ = updater::install(app);
+                }
                 // Finishes an active recording before quitting.
                 app.state::<AppState>().engine.shutdown();
             }

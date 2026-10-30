@@ -23,6 +23,8 @@ pub struct Settings {
     pub record_hotkey: String,
     pub buffer_enabled: bool,
     pub launch_on_startup: bool,
+    /// Download updates in the background and install them when safe
+    pub auto_update: bool,
     pub start_minimized: bool,
     pub keep_original_after_remux: bool,
     /// Trims / exports replace the file you edited (original goes to the Recycle Bin)
@@ -52,6 +54,7 @@ impl Default for Settings {
             record_hotkey: "Alt+F9".into(),
             buffer_enabled: true,
             launch_on_startup: false,
+            auto_update: true,
             start_minimized: true,
             keep_original_after_remux: true,
             replace_original_on_edit: false,

@@ -4,7 +4,8 @@ import "./App.css";
 import { api } from "./api";
 import logo from "./logo.svg";
 import { BufferCard } from "./BufferCard";
-import { useClips, useSettings, useStatus } from "./hooks";
+import { useClips, useSettings, useStatus, useUpdate } from "./hooks";
+import { errText } from "./api";
 import { Library } from "./Library";
 import { SettingsView } from "./SettingsView";
 import { Studio } from "./Studio";
@@ -20,6 +21,21 @@ export default function App() {
   const status = useStatus();
   const [settings, update] = useSettings();
   const [clips, refresh] = useClips();
+  const upd = useUpdate();
+  const [installing, setInstalling] = useState(false);
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  const showBanner =
+    upd && (upd.stage === "ready" || upd.stage === "available") && upd.version && dismissed !== upd.version;
+  const installNow = async () => {
+    if (status?.recording && !confirm("A recording is running. Rewind will save it, then restart to update. Continue?")) return;
+    setInstalling(true);
+    try {
+      await api.installUpdate();
+    } catch (e) {
+      toast(errText(e), true);
+      setInstalling(false);
+    }
+  };
 
   const toast = useCallback((text: string, err = false, sub?: string, path?: string) => {
     const id = nextId.current++;
@@ -65,8 +81,33 @@ export default function App() {
         <BufferCard status={status} hotkey={settings?.hotkey ?? "Alt+F10"} recordHotkey={settings?.recordHotkey ?? "Alt+F9"} />
       </nav>
       <main className="main">
+        {showBanner && (
+          <div className="update-banner" role="status">
+            <span>
+              <strong>Rewind {upd!.version}</strong>{" "}
+              {upd!.stage === "ready" ? "is downloaded and ready." : "is available."}{" "}
+              {upd!.stage === "ready" && (
+                <span className="muted">It also installs by itself the next time Rewind closes.</span>
+              )}
+            </span>
+            <span className="row">
+              <button className="btn small" onClick={() => setDismissed(upd!.version)}>
+                Later
+              </button>
+              <button className="btn small primary" disabled={installing} onClick={installNow}>
+                {installing ? "Updating…" : "Restart to update"}
+              </button>
+            </span>
+          </div>
+        )}
         {view === "clips" && (
-          <Library clips={clips} onOpen={openInStudio} onToast={(t, e) => toast(t, e)} hotkey={settings?.hotkey ?? "Alt+F10"} />
+          <Library
+            clips={clips}
+            onOpen={openInStudio}
+            onToast={(t, e) => toast(t, e)}
+            onChanged={refresh}
+            hotkey={settings?.hotkey ?? "Alt+F10"}
+          />
         )}
         {view === "studio" && (
           <Studio
