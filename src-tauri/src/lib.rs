@@ -1,12 +1,14 @@
 mod audio;
 mod engine;
 mod ffmpeg;
+mod games;
 mod library;
 mod monitors;
 mod settings;
 
 use settings::Settings;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -14,7 +16,7 @@ use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, RunEvent, WindowEvent};
 use tauri_plugin_autostart::ManagerExt;
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 pub struct AppState {
     settings: Arc<Mutex<Settings>>,
@@ -28,15 +30,23 @@ fn settings_of(app: &AppHandle) -> Settings {
     app.state::<AppState>().settings.lock().unwrap().clone()
 }
 
-fn clip_path(s: &Settings) -> PathBuf {
-    let app = monitors::foreground_app().unwrap_or_else(|| "Desktop".into());
+/// Clips folder/<Game or Desktop>/<Game or Desktop> <label><timestamp>.mkv
+fn output_path(s: &Settings, label: &str) -> PathBuf {
+    let folder = games::clip_folder();
     let ts = chrono::Local::now().format("%Y-%m-%d %H-%M-%S");
-    PathBuf::from(&s.clips_dir).join(&app).join(format!("{app} {ts}.mkv"))
+    let dir = PathBuf::from(&s.clips_dir).join(&folder);
+    let mut p = dir.join(format!("{folder} {label}{ts}.mkv"));
+    let mut n = 2;
+    while p.exists() {
+        p = dir.join(format!("{folder} {label}{ts} ({n}).mkv"));
+        n += 1;
+    }
+    p
 }
 
 fn save_now(app: &AppHandle, seconds: Option<u32>) -> Result<String, String> {
     let s = settings_of(app);
-    let out = clip_path(&s);
+    let out = output_path(&s, "");
     app.state::<AppState>()
         .engine
         .save_clip(seconds.unwrap_or(s.buffer_seconds), &out)?;
@@ -45,20 +55,43 @@ fn save_now(app: &AppHandle, seconds: Option<u32>) -> Result<String, String> {
     Ok(path)
 }
 
-/// Hotkey / tray save: runs in the background and reports through events.
-fn save_in_background(app: &AppHandle, seconds: Option<u32>) {
+/// Start or stop a recording. Returns the saved file when stopping.
+fn toggle_record_now(app: &AppHandle) -> Result<Option<String>, String> {
+    let st = app.state::<AppState>();
+    if st.engine.is_recording() {
+        let files = st.engine.stop_recording()?;
+        for f in &files {
+            let _ = app.emit("clip-saved", f);
+        }
+        let _ = app.emit("recording-changed", false);
+        Ok(files.into_iter().next())
+    } else {
+        let out = output_path(&settings_of(app), "Recording ");
+        st.engine.start_recording(&out)?;
+        let _ = app.emit("recording-changed", true);
+        Ok(None)
+    }
+}
+
+fn in_background(app: &AppHandle, job: fn(&AppHandle) -> Result<(), String>) {
     let app = app.clone();
     thread::spawn(move || {
-        if let Err(e) = save_now(&app, seconds) {
+        if let Err(e) = job(&app) {
             let _ = app.emit("clip-error", e);
         }
     });
 }
 
-fn apply_hotkey(app: &AppHandle, hotkey: &str) -> Result<(), String> {
+/// Register both hotkeys; on failure the previous ones are restored.
+fn apply_hotkeys(app: &AppHandle, save: &str, record: &str) -> Result<(), String> {
+    if Shortcut::from_str(save).ok() == Shortcut::from_str(record).ok() {
+        return Err("The clip and record hotkeys can't be the same.".into());
+    }
     let gs = app.global_shortcut();
     let _ = gs.unregister_all();
-    gs.register(hotkey).map_err(|e| format!("Couldn't use hotkey \"{hotkey}\": {e}"))
+    gs.register(save).map_err(|e| format!("Couldn't use hotkey \"{save}\": {e}"))?;
+    gs.register(record).map_err(|e| format!("Couldn't use hotkey \"{record}\": {e}"))?;
+    Ok(())
 }
 
 fn apply_autostart(app: &AppHandle, on: bool) {
@@ -106,15 +139,23 @@ fn get_settings(app: AppHandle) -> Settings {
 
 #[tauri::command]
 fn set_settings(app: AppHandle, settings: Settings) -> Result<(), String> {
+    let settings = settings.sanitized();
     let st = app.state::<AppState>();
     let old = st.settings.lock().unwrap().clone();
+    if old.hotkey != settings.hotkey || old.record_hotkey != settings.record_hotkey {
+        if let Err(e) = apply_hotkeys(&app, &settings.hotkey, &settings.record_hotkey) {
+            let _ = apply_hotkeys(&app, &old.hotkey, &old.record_hotkey);
+            return Err(e);
+        }
+    }
+    if old.clips_dir != settings.clips_dir {
+        std::fs::create_dir_all(&settings.clips_dir)
+            .map_err(|e| format!("Can't use that clips folder: {e}"))?;
+    }
     settings::save(&st.settings_path, &settings)?;
     *st.settings.lock().unwrap() = settings.clone();
     if old.launch_on_startup != settings.launch_on_startup {
         apply_autostart(&app, settings.launch_on_startup);
-    }
-    if old.hotkey != settings.hotkey {
-        apply_hotkey(&app, &settings.hotkey)?;
     }
     let _ = app.emit("settings-changed", &settings);
     Ok(())
@@ -136,8 +177,18 @@ fn list_monitors() -> Vec<monitors::Monitor> {
 }
 
 #[tauri::command]
+fn list_audio_inputs() -> Vec<String> {
+    audio::input_devices()
+}
+
+#[tauri::command]
 async fn save_clip(app: AppHandle, seconds: Option<u32>) -> Result<String, String> {
     blocking(move || save_now(&app, seconds)).await
+}
+
+#[tauri::command]
+async fn toggle_recording(app: AppHandle) -> Result<Option<String>, String> {
+    blocking(move || toggle_record_now(&app)).await
 }
 
 #[tauri::command]
@@ -163,11 +214,12 @@ async fn remux_mp4(app: AppHandle, path: String) -> Result<String, String> {
     blocking(move || library::remux_mp4(&path, keep)).await
 }
 
-/// Run an edit; if `replace`, swap the result in for the original.
+/// Run an edit; if `replace`, swap the checked result in for the original.
 async fn edit(
     app: AppHandle,
     path: String,
     replace: bool,
+    expected_secs: Option<f64>,
     f: impl FnOnce(&str) -> Result<String, String> + Send + 'static,
 ) -> Result<String, String> {
     let original = path.clone();
@@ -176,7 +228,7 @@ async fn edit(
         return Ok(out);
     }
     let o = original.clone();
-    let final_path = blocking(move || library::replace_original(&o, &out)).await?;
+    let final_path = blocking(move || library::replace_original(&o, &out, expected_secs)).await?;
     // Keep an imported file in the list even if its extension changed.
     let mut s = settings_of(&app);
     if let Some(p) = s.external_files.iter_mut().find(|p| **p == original) {
@@ -186,24 +238,25 @@ async fn edit(
     Ok(final_path)
 }
 
+fn duration_of(path: &str) -> Option<f64> {
+    library::probe(path).ok().map(|p| p.duration).filter(|d| *d > 0.0)
+}
+
 #[tauri::command]
 async fn trim_clip(app: AppHandle, path: String, start: f64, end: f64, exact: bool, replace: bool) -> Result<String, String> {
-    edit(app, path, replace, move |p| library::trim(p, start, end, exact)).await
+    edit(app, path, replace, Some(end - start), move |p| library::trim(p, start, end, exact)).await
 }
 
 #[tauri::command]
 async fn export_h264(app: AppHandle, path: String, replace: bool) -> Result<String, String> {
-    edit(app, path, replace, library::export_h264).await
+    let secs = duration_of(&path);
+    edit(app, path, replace, secs, library::export_h264).await
 }
 
 #[tauri::command]
 async fn compress_clip(app: AppHandle, path: String, target_mb: u32, replace: bool) -> Result<String, String> {
-    edit(app, path, replace, move |p| library::compress(p, target_mb)).await
-}
-
-#[tauri::command]
-fn list_audio_inputs() -> Vec<String> {
-    audio::input_devices()
+    let secs = duration_of(&path);
+    edit(app, path, replace, secs, move |p| library::compress(p, target_mb)).await
 }
 
 #[tauri::command]
@@ -264,9 +317,15 @@ pub fn run() {
         ))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, event| {
-                    if event.state() == ShortcutState::Pressed {
-                        save_in_background(app, None);
+                .with_handler(|app, shortcut, event| {
+                    if event.state() != ShortcutState::Pressed {
+                        return;
+                    }
+                    let s = settings_of(app);
+                    if Shortcut::from_str(&s.record_hotkey).ok().as_ref() == Some(shortcut) {
+                        in_background(app, |a| toggle_record_now(a).map(|_| ()));
+                    } else {
+                        in_background(app, |a| save_now(a, None).map(|_| ()));
                     }
                 })
                 .build(),
@@ -287,6 +346,8 @@ pub fn run() {
             let _ = settings::save(&settings_path, &s);
 
             let local = app.path().app_local_data_dir()?;
+            let scratch_dir = local.join("scratch");
+            let _ = std::fs::create_dir_all(&scratch_dir);
             let shared = Arc::new(Mutex::new(s.clone()));
             let engine = engine::Engine::start(shared.clone(), local.join("buffer"));
             app.manage(AppState {
@@ -297,25 +358,37 @@ pub fn run() {
                 flyout_hidden_at: Mutex::new(Instant::now() - Duration::from_secs(5)),
             });
 
-            if let Err(e) = apply_hotkey(&handle, &s.hotkey) {
+            // A recording interrupted by a crash or power cut is rebuilt from its pieces.
+            {
+                let (h, clips, scratch) = (handle.clone(), PathBuf::from(&s.clips_dir), scratch_dir);
+                thread::spawn(move || {
+                    for f in engine::recover_recordings(&clips, &scratch) {
+                        let _ = h.emit("clip-saved", &f);
+                    }
+                });
+            }
+
+            if let Err(e) = apply_hotkeys(&handle, &s.hotkey, &s.record_hotkey) {
                 eprintln!("{e}");
             }
             apply_autostart(&handle, s.launch_on_startup);
 
             // Tray icon: left click opens the flyout, right click shows the menu.
             let save = MenuItem::with_id(app, "save", "Save clip", true, None::<&str>)?;
+            let record = MenuItem::with_id(app, "record", "Start / stop recording", true, None::<&str>)?;
             let open = MenuItem::with_id(app, "open", "Open Rewind", true, None::<&str>)?;
             let toggle = MenuItem::with_id(app, "toggle", "Pause / resume buffer", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit Rewind", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
-            let menu = Menu::with_items(app, &[&save, &open, &toggle, &sep, &quit])?;
+            let menu = Menu::with_items(app, &[&save, &record, &open, &toggle, &sep, &quit])?;
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().cloned().expect("app icon"))
                 .tooltip("Rewind")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, e| match e.id.as_ref() {
-                    "save" => save_in_background(app, None),
+                    "save" => in_background(app, |a| save_now(a, None).map(|_| ())),
+                    "record" => in_background(app, |a| toggle_record_now(a).map(|_| ())),
                     "open" => show_main(app),
                     "toggle" => {
                         let mut s = settings_of(app);
@@ -338,11 +411,21 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // Push engine status to both windows once a second.
+            // Push engine status to both windows once a second, and announce
+            // recordings the engine finished on its own (e.g. low disk space).
             let h = handle.clone();
             thread::spawn(move || loop {
                 thread::sleep(Duration::from_secs(1));
-                let _ = h.emit("engine-status", h.state::<AppState>().engine.status());
+                let engine = &h.state::<AppState>().engine;
+                let (finished, err) = engine.take_finished_recordings();
+                for f in finished {
+                    let _ = h.emit("clip-saved", &f);
+                }
+                if let Some(e) = err {
+                    let _ = h.emit("clip-error", e);
+                    let _ = h.emit("recording-changed", false);
+                }
+                let _ = h.emit("engine-status", engine.status());
             });
 
             let minimized = std::env::args().any(|a| a == "--minimized") && s.start_minimized;
@@ -371,6 +454,7 @@ pub fn run() {
             list_monitors,
             list_audio_inputs,
             save_clip,
+            toggle_recording,
             list_clips,
             probe_file,
             thumbnail,
@@ -389,6 +473,7 @@ pub fn run() {
         .expect("error while building Rewind")
         .run(|app, event| {
             if let RunEvent::Exit = event {
+                // Finishes an active recording before quitting.
                 app.state::<AppState>().engine.shutdown();
             }
         });

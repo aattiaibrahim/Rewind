@@ -1,17 +1,10 @@
-//! Monitor list (in the same order ffmpeg's ddagrab uses) and the foreground app.
+﻿//! Monitor list, in the same order ffmpeg's ddagrab uses.
 
 use serde::Serialize;
-use std::path::Path;
 
-use windows::Win32::Foundation::{CloseHandle, POINT};
+use windows::Win32::Foundation::POINT;
 use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1};
-use windows::Win32::System::Threading::{
-    OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
-};
-use windows::Win32::UI::WindowsAndMessaging::{
-    GetCursorPos, GetForegroundWindow, GetWindowThreadProcessId,
-};
-use windows::core::PWSTR;
+use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -85,47 +78,4 @@ pub fn pick(mode: &str, fixed: &str, mons: &[Monitor]) -> Option<Monitor> {
         "fixed" => mons.iter().find(|m| m.name == fixed).cloned().or_else(primary),
         _ => primary(),
     }
-}
-
-/// A folder-friendly name for the app in front (e.g. "VALORANT"), or "Desktop".
-pub fn foreground_app() -> Option<String> {
-    const DESKTOP: &[&str] = &[
-        "explorer",
-        "rewind",
-        "searchhost",
-        "shellexperiencehost",
-        "startmenuexperiencehost",
-        "applicationframehost",
-        "lockapp",
-    ];
-    let path = unsafe {
-        let hwnd = GetForegroundWindow();
-        if hwnd.0.is_null() {
-            return None;
-        }
-        let mut pid = 0u32;
-        GetWindowThreadProcessId(hwnd, Some(&mut pid));
-        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
-        let mut buf = [0u16; 520];
-        let mut len = buf.len() as u32;
-        let r = QueryFullProcessImageNameW(h, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len);
-        let _ = CloseHandle(h);
-        r.ok()?;
-        String::from_utf16_lossy(&buf[..len as usize])
-    };
-    let stem = Path::new(&path).file_stem()?.to_string_lossy().to_string();
-    if DESKTOP.contains(&stem.to_lowercase().as_str()) {
-        return Some("Desktop".into());
-    }
-    let mut name = stem;
-    for suffix in ["-Win64-Shipping", "-Win64", "_x64", "64", "-Shipping"] {
-        if let Some(s) = name.strip_suffix(suffix) {
-            name = s.to_string();
-        }
-    }
-    let clean: String = name
-        .chars()
-        .filter(|c| !r#"<>:"/\|?*"#.contains(*c))
-        .collect();
-    if clean.trim().is_empty() { None } else { Some(clean.trim().to_string()) }
 }

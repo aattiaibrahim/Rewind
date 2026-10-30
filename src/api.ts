@@ -13,6 +13,7 @@ export type Settings = {
   fixedMonitor: string;
   drawCursor: boolean;
   hotkey: string;
+  recordHotkey: string;
   bufferEnabled: boolean;
   launchOnStartup: boolean;
   startMinimized: boolean;
@@ -39,6 +40,9 @@ export type Status = {
   lastError: string | null;
   audio: string[];
   audioError: string | null;
+  game: string | null;
+  recording: boolean;
+  recordingSeconds: number;
 };
 
 export type ClipFile = {
@@ -95,6 +99,7 @@ export const api = {
   restartCapture: () => invoke<void>("restart_capture"),
   listMonitors: () => invoke<Monitor[]>("list_monitors"),
   saveClip: (seconds?: number) => invoke<string>("save_clip", { seconds: seconds ?? null }),
+  toggleRecording: () => invoke<string | null>("toggle_recording"),
   listClips: () => invoke<ClipFile[]>("list_clips"),
   probe: (path: string, key = "") => {
     const k = path + key;

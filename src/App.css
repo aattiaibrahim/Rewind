@@ -39,6 +39,11 @@ button:disabled { cursor: default; opacity: 0.5; }
 .btn:hover:not(:disabled) { background: var(--raised); }
 .btn.primary { background: var(--accent); color: var(--on-accent); border-color: transparent; font-weight: 600; }
 .btn.primary:hover:not(:disabled) { filter: brightness(1.08); background: var(--accent); }
+.btn.rec-on { border-color: rgba(255, 92, 92, 0.6); color: #ffb3b3; }
+.rec-dot { width: 9px; height: 9px; border-radius: 50%; background: #ff5c5c; flex-shrink: 0; }
+.rec-dot.on { animation: rec-pulse 1.2s ease-in-out infinite; }
+@keyframes rec-pulse { 50% { opacity: 0.3; } }
+@media (prefers-reduced-motion: reduce) { .rec-dot.on { animation: none; } }
 .btn.block { width: 100%; justify-content: flex-start; height: 40px; }
 .btn.small { height: 30px; padding: 0 10px; font-size: 12px; }
 .chip {

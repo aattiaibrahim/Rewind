@@ -62,7 +62,7 @@ export default function App() {
           </button>
         ))}
         <div className="nav-spacer" />
-        <BufferCard status={status} hotkey={settings?.hotkey ?? "Alt+F10"} />
+        <BufferCard status={status} hotkey={settings?.hotkey ?? "Alt+F10"} recordHotkey={settings?.recordHotkey ?? "Alt+F9"} />
       </nav>
       <main className="main">
         {view === "clips" && (

@@ -19,6 +19,35 @@ function hotkeyFrom(e: React.KeyboardEvent): string | null {
   return [...mods, key].join("+");
 }
 
+function HotkeyInput({ value, label, onPick }: { value: string; label: string; onPick: (hk: string) => void }) {
+  const [listening, setListening] = useState(false);
+  return (
+    <div className="setting">
+      <span>
+        {label}
+        <small>{listening ? "Press the keys now… (Esc to cancel)" : "Click, then press a combo"}</small>
+      </span>
+      <input
+        className="text-input"
+        aria-label={label}
+        readOnly
+        value={listening ? "…" : value}
+        onFocus={() => setListening(true)}
+        onBlur={() => setListening(false)}
+        onKeyDown={(e) => {
+          e.preventDefault();
+          if (e.key === "Escape") return (e.target as HTMLInputElement).blur();
+          const hk = hotkeyFrom(e);
+          if (hk) {
+            onPick(hk);
+            (e.target as HTMLInputElement).blur();
+          }
+        }}
+      />
+    </div>
+  );
+}
+
 export function SettingsView({
   settings,
   update,
@@ -30,7 +59,6 @@ export function SettingsView({
 }) {
   const [monitors, setMonitors] = useState<Monitor[]>([]);
   const [mics, setMics] = useState<string[]>([]);
-  const [listening, setListening] = useState(false);
   useEffect(() => {
     api.listMonitors().then(setMonitors).catch(() => {});
     api.listAudioInputs().then(setMics).catch(() => {});
@@ -65,29 +93,8 @@ export function SettingsView({
             <span>Replay buffer</span>
             <Toggle label="Replay buffer on" checked={s.bufferEnabled} onChange={(v) => set({ bufferEnabled: v })} />
           </label>
-          <div className="setting">
-            <span>
-              Save clip hotkey
-              <small>{listening ? "Press the keys now… (Esc to cancel)" : "Click, then press a combo"}</small>
-            </span>
-            <input
-              className="text-input"
-              aria-label="Save clip hotkey"
-              readOnly
-              value={listening ? "…" : s.hotkey}
-              onFocus={() => setListening(true)}
-              onBlur={() => setListening(false)}
-              onKeyDown={(e) => {
-                e.preventDefault();
-                if (e.key === "Escape") return (e.target as HTMLInputElement).blur();
-                const hk = hotkeyFrom(e);
-                if (hk) {
-                  set({ hotkey: hk });
-                  (e.target as HTMLInputElement).blur();
-                }
-              }}
-            />
-          </div>
+          <HotkeyInput label="Save clip hotkey" value={s.hotkey} onPick={(hk) => set({ hotkey: hk })} />
+          <HotkeyInput label="Start / stop recording hotkey" value={s.recordHotkey} onPick={(hk) => set({ recordHotkey: hk })} />
         </section>
 
         <section className="group">
@@ -249,6 +256,12 @@ export function SettingsView({
                 Change…
               </button>
             </div>
+          </div>
+          <div className="setting">
+            <span>
+              Folders
+              <small>Clips from a detected game go in a folder named after it. Everything else goes in “Desktop”.</small>
+            </span>
           </div>
           <div className="setting">
             <span>

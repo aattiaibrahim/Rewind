@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api, ClipFile, errText, fmtDuration, Settings } from "./api";
-import { statusLine } from "./BufferCard";
+import { audioLine, folderLine, RecordButton, statusLine } from "./BufferCard";
 import { useClips, useSettings, useStatus, useThumb } from "./hooks";
 
 function MiniClip({ clip }: { clip: ClipFile }) {
@@ -26,7 +26,7 @@ export function Flyout() {
   const [busy, setBusy] = useState<number | null>(null);
   const [msg, setMsg] = useState<{ text: string; err?: boolean } | null>(null);
 
-  const on = !!status?.running;
+  const on = !!status?.running && !!status?.enabled;
   const full = settings?.bufferSeconds ?? 120;
   const pct = status?.bufferSeconds ? (status.bufferedSeconds / status.bufferSeconds) * 100 : 0;
 
@@ -75,6 +75,8 @@ export function Flyout() {
         <div className="buffer-meta">
           {status ? `${fmtDuration(status.bufferedSeconds)} of ${fmtDuration(status.bufferSeconds)} held · ` : ""}
           {statusLine(status)}
+          <br />
+          {audioLine(status) ?? ""} · {folderLine(status)}
         </div>
         <div className="save-row" style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}>
           {options.map((sec, i) => (
@@ -88,6 +90,7 @@ export function Flyout() {
             </button>
           ))}
         </div>
+        <RecordButton status={status} hotkey={settings?.recordHotkey ?? "Alt+F9"} />
         {msg && <div className={msg.err ? "err-text" : "buffer-meta"}>{msg.text}</div>}
       </div>
 

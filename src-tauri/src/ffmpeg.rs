@@ -16,6 +16,8 @@ use windows::Win32::System::JobObjects::{
 use windows::core::PCWSTR;
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+/// Games always win CPU time over capture and exports.
+const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
 
 static DIR: OnceLock<PathBuf> = OnceLock::new();
 static JOB: OnceLock<usize> = OnceLock::new();
@@ -34,11 +36,25 @@ pub fn exe(name: &str) -> PathBuf {
     DIR.get().cloned().unwrap_or_default().join(format!("{name}.exe"))
 }
 
-/// A command with no console window popping up.
+/// A command with no console window, at below-normal CPU priority.
 pub fn cmd(name: &str) -> Command {
     let mut c = Command::new(exe(name));
-    c.creation_flags(CREATE_NO_WINDOW);
+    c.creation_flags(CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS);
     c
+}
+
+/// Free space on the drive holding `path`, in bytes.
+pub fn free_bytes(path: &std::path::Path) -> Option<u64> {
+    use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+    use windows::core::HSTRING;
+    // Walk up to a folder that exists (the clips folder may not be created yet).
+    let mut p = path.to_path_buf();
+    while !p.exists() {
+        p = p.parent()?.to_path_buf();
+    }
+    let mut free = 0u64;
+    unsafe { GetDiskFreeSpaceExW(&HSTRING::from(p.as_os_str()), Some(&mut free), None, None).ok()? };
+    Some(free)
 }
 
 /// Turn string literals into an argument list that can also hold paths.
