@@ -138,6 +138,7 @@ fn status_json(app: &AppHandle) -> String {
         "encoder": s.encoder,
         "fps": s.fps,
         "game": st.game,
+        "engine": st.engine,
         "restarts": st.restarts,
         "freezes": st.freezes,
         "lastError": st.last_error,

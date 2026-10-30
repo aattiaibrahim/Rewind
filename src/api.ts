@@ -11,6 +11,7 @@ export type Settings = {
   outputHeight: number;
   bufferSeconds: number;
   bufferInRam: boolean;
+  captureEngine: "native" | "ffmpeg";
   monitorMode: MonitorMode;
   fixedMonitor: string;
   drawCursor: boolean;
@@ -48,6 +49,7 @@ export type Status = {
   recordingSeconds: number;
   inRam: boolean;
   bufferMb: number;
+  engine: "native" | "ffmpeg";
 };
 
 export type UpdateState = {

@@ -13,7 +13,7 @@
 //! (Win+P, a monitor plugged in, a resolution change) or ffmpeg dies, it starts
 //! a fresh "generation" on the right monitor, so capture never stays black.
 
-use crate::{audio, ffmpeg, games, monitors, settings::Settings};
+use crate::{audio, ffmpeg, games, monitors, native, settings::Settings};
 use serde::Serialize;
 use std::collections::{HashSet, VecDeque};
 use std::fs;
@@ -67,6 +67,8 @@ pub struct Status {
     pub buffer_mb: u32,
     /// Times the watchdog had to restart a frozen capture
     pub freezes: u32,
+    /// "native" (WGC + NVENC) or "ffmpeg" (compatibility)
+    pub engine: String,
 }
 
 #[derive(Clone)]
@@ -189,9 +191,39 @@ pub struct Engine {
     status: Arc<Mutex<Status>>,
     gens: Arc<Mutex<Vec<Gen>>>,
     rec: Arc<Mutex<Option<Recording>>>,
+    native: Arc<Mutex<NativeState>>,
     tx: Mutex<Sender<Cmd>>,
     buffer_root: PathBuf,
 }
+
+/// The native engine (WGC + NVENC, see native/): the running pipeline, the
+/// buffers clips are cut from, and a recording in progress.
+#[derive(Default)]
+struct NativeState {
+    run: Option<NativeRun>,
+    /// Buffers of this run and earlier compatible runs, oldest first.
+    runs: Vec<Arc<native::pipeline::Buffers>>,
+    rec: Option<NativeRec>,
+    failures: u32,
+}
+
+struct NativeRun {
+    p: native::pipeline::Pipeline,
+    sig: String,
+    started: Instant,
+    recording_part: Option<u32>,
+}
+
+struct NativeRec {
+    tmp: PathBuf,
+    out: PathBuf,
+    started: Instant,
+    next_part: u32,
+    last_disk_check: Instant,
+}
+
+/// Native capture is skipped for the session after this many failed starts.
+const NATIVE_MAX_FAILURES: u32 = 3;
 
 impl Engine {
     pub fn start(settings: Arc<Mutex<Settings>>, buffer_root: PathBuf) -> Engine {
@@ -201,9 +233,10 @@ impl Engine {
         let status = Arc::new(Mutex::new(Status::default()));
         let gens = Arc::new(Mutex::new(Vec::new()));
         let rec = Arc::new(Mutex::new(None));
-        let (s, g, r, root) = (status.clone(), gens.clone(), rec.clone(), buffer_root.clone());
-        thread::spawn(move || supervise(settings, s, g, r, root, rx));
-        Engine { status, gens, rec, tx: Mutex::new(tx), buffer_root }
+        let native = Arc::new(Mutex::new(NativeState::default()));
+        let (s, g, r, n, root) = (status.clone(), gens.clone(), rec.clone(), native.clone(), buffer_root.clone());
+        thread::spawn(move || supervise(settings, s, g, r, n, root, rx));
+        Engine { status, gens, rec, native, tx: Mutex::new(tx), buffer_root }
     }
 
     pub fn status(&self) -> Status {
@@ -222,9 +255,11 @@ impl Engine {
 
     /// Stop ffmpeg cleanly before the app exits (finishing any recording first).
     pub fn shutdown(&self) {
-        if self.rec.lock().unwrap().is_some() {
+        if self.is_recording() {
             let _ = self.stop_recording();
         }
+        // Stop the native pipeline (joins its capture thread).
+        self.native.lock().unwrap().run = None;
         let (done_tx, done_rx) = channel();
         if self.tx.lock().unwrap().send(Cmd::Shutdown(done_tx)).is_ok() {
             let _ = done_rx.recv_timeout(Duration::from_secs(4));
@@ -234,6 +269,10 @@ impl Engine {
     /// Write the last `seconds` of the buffer to `out` (an .mkv path).
     pub fn save_clip(&self, seconds: u32, out: &Path) -> Result<(), String> {
         check_space(out, MIN_FREE_FOR_CLIP)?;
+        let native_runs = self.native.lock().unwrap().runs.clone();
+        if !native_runs.is_empty() {
+            return native::pipeline::save(&native_runs, seconds, out, &self.buffer_root);
+        }
         let gens = self.gens.lock().unwrap().clone();
         let newest = gens.last().ok_or("The replay buffer isn't running yet.")?;
         wait_for_next_segment(newest);
@@ -247,13 +286,12 @@ impl Engine {
     }
 
     pub fn is_recording(&self) -> bool {
-        self.rec.lock().unwrap().is_some()
+        self.rec.lock().unwrap().is_some() || self.native.lock().unwrap().rec.is_some()
     }
 
     /// Start a full recording that will be saved to `out`.
     pub fn start_recording(&self, out: &Path) -> Result<(), String> {
-        let mut rec = self.rec.lock().unwrap();
-        if rec.is_some() {
+        if self.is_recording() {
             return Err("Already recording.".into());
         }
         check_space(out, MIN_FREE_FOR_RECORDING)?;
@@ -263,6 +301,25 @@ impl Engine {
             .ok_or("Bad recording path")?
             .join(format!("{RECORDING_DIR_PREFIX}{stamp}"));
         fs::create_dir_all(&tmp).map_err(|e| format!("Can't create the recording folder: {e}"))?;
+
+        // Native engine: the running pipeline streams straight into `tmp`.
+        {
+            let mut n = self.native.lock().unwrap();
+            if n.run.is_some() || !n.runs.is_empty() {
+                let mut rec = NativeRec { tmp: tmp.clone(), out: out.to_path_buf(), started: Instant::now(), next_part: 0, last_disk_check: Instant::now() };
+                if let Some(run) = n.run.as_mut() {
+                    run.p.begin_recording(&tmp, rec.next_part)?;
+                    run.recording_part = Some(rec.next_part);
+                    rec.next_part += 1;
+                }
+                n.rec = Some(rec);
+                drop(n);
+                self.restart_if_idle();
+                return Ok(());
+            }
+        }
+
+        let mut rec = self.rec.lock().unwrap();
         // Everything already in the buffer is from before "start": skip it.
         let mut seen = HashSet::new();
         for g in self.gens.lock().unwrap().iter() {
@@ -283,6 +340,21 @@ impl Engine {
 
     /// Stop recording and join the pieces. Returns the saved file(s).
     pub fn stop_recording(&self) -> Result<Vec<String>, String> {
+        let native_rec = {
+            let mut n = self.native.lock().unwrap();
+            let rec = n.rec.take();
+            if rec.is_some()
+                && let Some(run) = n.run.as_mut()
+                && run.recording_part.take().is_some()
+            {
+                run.p.end_recording();
+            }
+            rec
+        };
+        if let Some(rec) = native_rec {
+            native::pipeline::mux_recording_parts(&rec.tmp);
+            return finalize(&rec.tmp, &rec.out, &self.buffer_root);
+        }
         if let Some(newest) = self.gens.lock().unwrap().last().cloned() {
             wait_for_next_segment(&newest);
         }
@@ -321,6 +393,12 @@ fn wait_for_next_segment(newest: &Gen) {
 
 /// Join segments into `out` without re-encoding. RAM segments are written
 /// next to `out` only for the second this takes, then removed.
+/// Join finished video files (same format) into `out` without re-encoding.
+pub fn concat_files(files: &[PathBuf], out: &Path, scratch: &Path) -> Result<(), String> {
+    let segs: Vec<Seg> = files.iter().cloned().map(Seg::File).collect();
+    concat(&segs, out, scratch)
+}
+
 fn concat(segs: &[Seg], out: &Path, scratch: &Path) -> Result<(), String> {
     let parent = out.parent().ok_or("Bad output path")?;
     fs::create_dir_all(parent).map_err(|e| format!("Can't create clip folder: {e}"))?;
@@ -516,6 +594,8 @@ pub fn recover_recordings(clips_dir: &Path, scratch: &Path) -> Vec<String> {
     for (parent, name, dir) in dirs {
         let stamp = name.trim_start_matches(RECORDING_DIR_PREFIX);
         let out = parent.join(format!("Recovered recording {stamp}.mkv"));
+        // Native recordings leave raw parts: turn them into MKVs first.
+        native::pipeline::mux_recording_parts(&dir);
         if let Ok(files) = finalize(&dir, &out, scratch) {
             saved.extend(files);
         }
@@ -555,11 +635,163 @@ fn segs_needed(buffer_seconds: u32) -> u32 {
     buffer_seconds.div_ceil(SEG_SECONDS) + 1
 }
 
+/// What the native engine reports back for the status panel.
+struct NativeTick {
+    running: bool,
+    buffered: u32,
+    ram_mb: u32,
+    rec_secs: Option<u32>,
+}
+
+/// One supervisor step for the native engine.
+#[allow(clippy::too_many_arguments)]
+fn supervise_native(
+    s: &Settings,
+    picked: Option<&monitors::Monitor>,
+    sig: &str,
+    want: bool,
+    native: &Arc<Mutex<NativeState>>,
+    status: &Arc<Mutex<Status>>,
+    root: &Path,
+    retry_at: &mut Instant,
+) -> NativeTick {
+    // 1. Is the running pipeline still healthy and still what's wanted?
+    {
+        let mut n = native.lock().unwrap();
+        if let Some(run) = n.run.as_ref() {
+            let problem: Option<Option<String>> = if !want {
+                Some(None)
+            } else if run.sig != sig {
+                eprintln!("[rewind] restarting native capture: settings or displays/devices changed");
+                Some(None)
+            } else if let Some(e) = run.p.failed() {
+                Some(Some(format!("Capture restarted: {e}")))
+            } else if run.started.elapsed() > FREEZE_GRACE && run.p.frame_age() > Duration::from_secs(3) {
+                Some(Some("Capture froze and was restarted automatically.".into()))
+            } else {
+                None
+            };
+            if let Some(err) = problem {
+                let run = n.run.take();
+                drop(n);
+                drop(run); // stops the thread; an open recording part is closed
+                if let Some(e) = err {
+                    eprintln!("[rewind] native capture: {e}");
+                    let mut st = status.lock().unwrap();
+                    st.last_error = Some(e);
+                    st.restarts += 1;
+                    *retry_at = Instant::now() + Duration::from_secs(1);
+                }
+            }
+        }
+    }
+
+    // 2. Start one if needed.
+    let need_start = want && Instant::now() >= *retry_at && native.lock().unwrap().run.is_none();
+    if need_start && let Some(m) = picked {
+        let (w, h) = output_size(m, s.output_height);
+        let key = format!("{w}x{h}_{}_{}", s.encoder, s.fps);
+        match native::pipeline::Pipeline::start(s, m, w as u32, h as u32, key.clone()) {
+            Ok(p) => {
+                let mut n = native.lock().unwrap();
+                n.failures = 0;
+                if n.runs.last().is_some_and(|b| b.key != key) {
+                    n.runs.clear(); // different format: older footage can't be joined
+                }
+                n.runs.push(p.buffers.clone());
+                while n.runs.len() > 3 {
+                    n.runs.remove(0);
+                }
+                let mut st = status.lock().unwrap();
+                st.monitor = Some(m.label());
+                (st.width, st.height) = (w, h);
+                st.audio = p.labels.clone();
+                st.audio_error = p.audio_error.clone();
+                drop(st);
+                n.run = Some(NativeRun { p, sig: sig.to_string(), started: Instant::now(), recording_part: None });
+            }
+            Err(e) => {
+                let mut n = native.lock().unwrap();
+                n.failures += 1;
+                let msg = if n.failures >= NATIVE_MAX_FAILURES {
+                    format!("Native capture couldn't start ({e}). Using compatibility capture instead.")
+                } else {
+                    format!("Native capture couldn't start: {e}")
+                };
+                eprintln!("[rewind] {msg}");
+                status.lock().unwrap().last_error = Some(msg);
+                *retry_at = Instant::now() + Duration::from_secs(2);
+            }
+        }
+    }
+
+    // 3. Recording: a fresh pipeline joins a recording in progress as a new
+    //    part; stop it automatically when the disk runs low.
+    let mut n = native.lock().unwrap();
+    let mut auto_stop: Option<String> = None;
+    let NativeState { run, rec, .. } = &mut *n;
+    if let Some(rec) = rec.as_mut() {
+        if let Some(run) = run.as_mut()
+            && run.recording_part.is_none()
+            && run.p.begin_recording(&rec.tmp, rec.next_part).is_ok()
+        {
+            run.recording_part = Some(rec.next_part);
+            rec.next_part += 1;
+        }
+        if rec.last_disk_check.elapsed() > Duration::from_secs(5) {
+            rec.last_disk_check = Instant::now();
+            if let Err(e) = check_space(&rec.tmp, MIN_FREE_FOR_RECORDING) {
+                auto_stop = Some(format!("Recording stopped: {e}"));
+            }
+        }
+    }
+    if let Some(why) = auto_stop {
+        let r = n.rec.take().unwrap();
+        if let Some(run) = n.run.as_mut()
+            && run.recording_part.take().is_some()
+        {
+            run.p.end_recording();
+        }
+        drop(n);
+        native::pipeline::mux_recording_parts(&r.tmp);
+        let result = finalize(&r.tmp, &r.out, root);
+        let mut st = status.lock().unwrap();
+        if let Ok(files) = result {
+            st.finished_recordings.extend(files);
+        }
+        st.recording_error = Some(why);
+        n = native.lock().unwrap();
+    }
+
+    // 4. Numbers for the status panel.
+    let newest_key = n.runs.last().map(|b| b.key.clone());
+    let mut frames = 0usize;
+    let mut bytes = 0usize;
+    let mut fps = s.fps.max(1);
+    for b in n.runs.iter().rev() {
+        let v = b.video.lock().unwrap();
+        bytes += v.packets.iter().map(|p| p.data.len()).sum::<usize>();
+        if Some(&b.key) == newest_key.as_ref() {
+            frames += v.packets.len();
+            fps = v.fps.max(1);
+        }
+        drop(v);
+        bytes += b.audio.iter().map(|t| t.ring.lock().unwrap().bytes()).sum::<usize>();
+    }
+    NativeTick {
+        running: n.run.is_some(),
+        buffered: ((frames as u32) / fps).min(s.buffer_seconds),
+        ram_mb: (bytes / (1024 * 1024)) as u32,
+        rec_secs: n.rec.as_ref().map(|r| r.started.elapsed().as_secs() as u32),
+    }
+}
+
 fn supervise(
     settings: Arc<Mutex<Settings>>,
     status: Arc<Mutex<Status>>,
     gens: Arc<Mutex<Vec<Gen>>>,
     rec: Arc<Mutex<Option<Recording>>>,
+    native: Arc<Mutex<NativeState>>,
     root: PathBuf,
     rx: Receiver<Cmd>,
 ) {
@@ -569,7 +801,8 @@ fn supervise(
 
     loop {
         let s = settings.lock().unwrap().clone();
-        let recording = rec.lock().unwrap().is_some();
+        let use_native = s.capture_engine == "native" && native.lock().unwrap().failures < NATIVE_MAX_FAILURES;
+        let recording = rec.lock().unwrap().is_some() || native.lock().unwrap().rec.is_some();
         // A recording keeps capture running even if the replay buffer is paused.
         let want = s.buffer_enabled || recording;
         let mons = monitors::list();
@@ -593,7 +826,22 @@ fn supervise(
             devices,
         );
 
-        if let Some(r) = cur.as_mut() {
+        // Native engine (default): run it and skip the FFmpeg engine entirely.
+        let native_tick = if use_native {
+            if let Some(r) = cur.take() {
+                stop(r);
+            }
+            Some(supervise_native(&s, picked.as_ref(), &sig, want, &native, &status, &root, &mut retry_at))
+        } else {
+            let mut n = native.lock().unwrap();
+            if n.run.is_some() || !n.runs.is_empty() {
+                n.run = None;
+                n.runs.clear();
+            }
+            None
+        };
+
+        if !use_native && let Some(r) = cur.as_mut() {
             match r.child.try_wait() {
                 Ok(Some(code)) => {
                     let log = r.log.lock().unwrap();
@@ -629,7 +877,7 @@ fn supervise(
             }
         }
 
-        if cur.is_none() && want && Instant::now() >= retry_at {
+        if !use_native && cur.is_none() && want && Instant::now() >= retry_at {
             match picked {
                 Some(m) => {
                     gen_no += 1;
@@ -715,16 +963,30 @@ fn supervise(
             let game = games::foreground_game();
             let mut st = status.lock().unwrap();
             st.enabled = s.buffer_enabled;
-            st.running = cur.is_some();
             st.encoder = s.encoder.clone();
             st.fps = s.fps;
             st.buffer_seconds = s.buffer_seconds;
-            st.buffered_seconds = buffered;
             st.game = game;
-            st.recording = rec.lock().unwrap().is_some();
-            st.recording_seconds = rec_secs;
-            st.in_ram = s.buffer_in_ram;
-            st.buffer_mb = (ram_bytes / (1024 * 1024)) as u32;
+            match &native_tick {
+                Some(t) => {
+                    st.running = t.running;
+                    st.buffered_seconds = t.buffered;
+                    st.recording = t.rec_secs.is_some();
+                    st.recording_seconds = t.rec_secs.unwrap_or(0);
+                    st.in_ram = true;
+                    st.buffer_mb = t.ram_mb;
+                    st.engine = "native".into();
+                }
+                None => {
+                    st.running = cur.is_some();
+                    st.buffered_seconds = buffered;
+                    st.recording = rec.lock().unwrap().is_some();
+                    st.recording_seconds = rec_secs;
+                    st.in_ram = s.buffer_in_ram;
+                    st.buffer_mb = (ram_bytes / (1024 * 1024)) as u32;
+                    st.engine = "ffmpeg".into();
+                }
+            }
             if !st.running {
                 st.monitor = None;
                 st.audio.clear();
@@ -745,6 +1007,7 @@ fn supervise(
                 if let Some(r) = cur.take() {
                     stop(r);
                 }
+                native.lock().unwrap().run = None;
                 let _ = fs::remove_dir_all(&root);
                 let _ = done.send(());
                 return;
@@ -1017,24 +1280,31 @@ mod tests {
     /// Run with: cargo test live_ -- --ignored --nocapture
     #[test]
     #[ignore]
-    fn live_ram_buffer() {
-        live_run(true);
+    fn live_native() {
+        live_run("native", true);
     }
 
     #[test]
     #[ignore]
-    fn live_disk_buffer() {
-        live_run(false);
+    fn live_ffmpeg_ram_buffer() {
+        live_run("ffmpeg", true);
     }
 
-    fn live_run(in_ram: bool) {
+    #[test]
+    #[ignore]
+    fn live_ffmpeg_disk_buffer() {
+        live_run("ffmpeg", false);
+    }
+
+    fn live_run(engine_kind: &str, in_ram: bool) {
         crate::ffmpeg::init(None);
-        let base = std::env::temp_dir().join(format!("rewind-test-live-{in_ram}-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("rewind-test-live-{engine_kind}-{in_ram}-{}", std::process::id()));
         let clips = base.join("clips");
         let s = Settings {
             clips_dir: clips.to_string_lossy().into(),
             buffer_seconds: 20,
             buffer_in_ram: in_ram,
+            capture_engine: engine_kind.into(),
             ..Default::default()
         };
         let engine = Engine::start(Arc::new(Mutex::new(s)), base.join("buffer"));
@@ -1047,7 +1317,8 @@ mod tests {
             thread::sleep(Duration::from_millis(250));
         }
         let st = engine.status();
-        println!("capturing {:?} {}x{} audio={:?} err={:?}", st.monitor, st.width, st.height, st.audio, st.audio_error);
+        println!("[{}] capturing {:?} {}x{} audio={:?} err={:?}", st.engine, st.monitor, st.width, st.height, st.audio, st.audio_error);
+        assert_eq!(st.engine, engine_kind, "ran on the wrong engine: {:?}", st.last_error);
 
         // 2. Save a 6 s clip.
         let clip = clips.join("Desktop").join("clip.mkv");
@@ -1068,34 +1339,51 @@ mod tests {
         assert_eq!(files.len(), 1);
         let r = probe(Path::new(&files[0]));
         println!("recording: {:.2}s", r.duration);
-        assert!((6.0..=11.5).contains(&r.duration), "recording length {}", r.duration);
+        // Never shorter than the time recorded (it may start up to ~1 s early).
+        assert!((7.0..=11.5).contains(&r.duration), "recording length {}", r.duration);
         assert!(engine.stop_recording().is_err(), "no double stop");
         let leftovers = fs::read_dir(clips.join("Desktop")).unwrap().flatten()
             .filter(|e| e.file_name().to_string_lossy().starts_with(RECORDING_DIR_PREFIX)).count();
         assert_eq!(leftovers, 0, "temp recording folder cleaned up");
 
-        // 4. A crashed recording (pieces left behind) is recovered.
-        let crashed = clips.join("Desktop").join(format!("{RECORDING_DIR_PREFIX}crash"));
-        fs::create_dir_all(&crashed).unwrap();
-        let g = engine.gens.lock().unwrap().last().cloned().unwrap();
-        for (i, s) in segments_of(&g).iter().take(3).enumerate() {
-            let dest = crashed.join(format!("{i:06}_{}.mkv", g.key()));
-            match &s.seg {
-                Seg::File(p) => fs::copy(p, &dest).map(|_| ()).unwrap(),
-                Seg::Ram(d) => fs::write(&dest, d.as_slice()).unwrap(),
-            }
-        }
-        // RAM mode must not have written the buffer to disk.
+        // RAM buffers must not have written the buffer to disk.
         if in_ram {
             let on_disk = fs::read_dir(base.join("buffer")).map(|d| d.count()).unwrap_or(0);
             println!("RAM mode: {on_disk} items in buffer folder, {} MB in memory", engine.status().buffer_mb);
             assert_eq!(on_disk, 0, "RAM buffer wrote to disk");
         }
+
+        // 4. A crashed recording (pieces left behind) is recovered.
+        let crashed = clips.join("Desktop").join(format!("{RECORDING_DIR_PREFIX}crash"));
+        fs::create_dir_all(&crashed).unwrap();
+        let expect = if engine_kind == "native" {
+            // Start a recording, then "crash": abandon it without finishing.
+            engine.start_recording(&crashed.with_extension("mkv")).unwrap();
+            let tmp = engine.native.lock().unwrap().rec.as_ref().unwrap().tmp.clone();
+            thread::sleep(Duration::from_secs(4));
+            let mut n = engine.native.lock().unwrap();
+            n.rec = None;
+            n.run = None; // the pipeline closes its files as the app would on exit
+            drop(n);
+            fs::remove_dir_all(&crashed).unwrap();
+            fs::rename(&tmp, &crashed).unwrap();
+            3.0..=5.5
+        } else {
+            let g = engine.gens.lock().unwrap().last().cloned().unwrap();
+            for (i, s) in segments_of(&g).iter().take(3).enumerate() {
+                let dest = crashed.join(format!("{i:06}_{}.mkv", g.key()));
+                match &s.seg {
+                    Seg::File(p) => fs::copy(p, &dest).map(|_| ()).unwrap(),
+                    Seg::Ram(d) => fs::write(&dest, d.as_slice()).unwrap(),
+                }
+            }
+            5.0..=6.5
+        };
         let recovered = recover_recordings(&clips, &base.join("scratch"));
         assert_eq!(recovered.len(), 1);
         let rv = probe(Path::new(&recovered[0]));
-        println!("recovered: {:.2}s", rv.duration);
-        assert!((5.0..=6.5).contains(&rv.duration));
+        println!("recovered: {:.2}s, {} audio tracks", rv.duration, rv.audio_tracks);
+        assert!(expect.contains(&rv.duration), "recovered length {}", rv.duration);
         assert!(!crashed.exists());
 
         engine.shutdown();

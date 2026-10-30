@@ -3,6 +3,10 @@
 
 pub mod capture;
 pub mod gpu;
+pub mod nvenc;
+pub mod pipeline;
+#[rustfmt::skip]
+mod nvenc_sys;
 
 #[cfg(test)]
 mod tests {
@@ -38,6 +42,115 @@ mod tests {
             f.resize(f.len() + (row - w * 3) as usize, 0);
         }
         std::fs::write(path, f).unwrap();
+    }
+
+    /// Full native pipeline: buffer ~16 s, then save the last 12 s (for the
+    /// flash + click sync check, which runs alongside).
+    /// cargo test native_pipeline -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn native_pipeline_saves_synced_clip() {
+        crate::ffmpeg::init(None);
+        let s = crate::settings::Settings { buffer_seconds: 30, ..Default::default() };
+        let m = crate::monitors::list().into_iter().find(|m| m.primary).unwrap();
+        let (w, h) = crate::engine::output_size(&m, s.output_height);
+        let cpu0 = cpu_time();
+        let t = Instant::now();
+        let p = pipeline::Pipeline::start(&s, &m, w as u32, h as u32, "test".into()).expect("pipeline");
+        println!("pipeline up in {:?}; audio: {:?} {:?}", t.elapsed(), p.labels, p.audio_error);
+        std::thread::sleep(Duration::from_secs(16));
+        assert!(p.failed().is_none(), "{:?}", p.failed());
+        assert!(p.frame_age() < Duration::from_millis(100), "frames stopped");
+        let frames = p.buffers.video.lock().unwrap().packets.len();
+        let cpu = cpu_time() - cpu0;
+        println!("{frames} frames buffered in 16 s; process CPU {:.2} s ({:.1}% of one core)", cpu, cpu / 16.0 * 100.0);
+        let out = std::env::temp_dir().join("rewind-native-sync.mkv");
+        let t = Instant::now();
+        pipeline::save(&[p.buffers.clone()], 12, &out, &std::env::temp_dir()).expect("save");
+        println!("saved in {:?} -> {}", t.elapsed(), out.display());
+        let info = crate::library::probe(&out.to_string_lossy()).unwrap();
+        println!("clip: {}x{} {} {:.2}s, {} audio tracks", info.width, info.height, info.codec, info.duration, info.audio_tracks);
+        assert!((12.0..=13.2).contains(&info.duration), "{}", info.duration);
+        assert_eq!(info.audio_tracks as usize, p.buffers.audio.len());
+    }
+
+    fn cpu_time() -> f64 {
+        use windows::Win32::Foundation::FILETIME;
+        use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
+        let (mut a, mut b, mut k, mut u) = (FILETIME::default(), FILETIME::default(), FILETIME::default(), FILETIME::default());
+        unsafe { GetProcessTimes(GetCurrentProcess(), &mut a, &mut b, &mut k, &mut u).unwrap() };
+        let t = |f: FILETIME| ((f.dwHighDateTime as u64) << 32 | f.dwLowDateTime as u64) as f64 / 1e7;
+        t(k) + t(u)
+    }
+
+    /// Capture → GPU convert → NVENC, then FFmpeg reads the result back.
+    /// cargo test native_encode -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn native_encode_all_codecs_and_sizes() {
+        crate::ffmpeg::init(None);
+        let (adapter, hmon, name) = gpu::find_output(&primary()).expect("output");
+        let g = gpu::Gpu::new(&adapter, name).unwrap();
+        let cap = capture::Capture::start(&g, hmon, true).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        let (src, w, h) = {
+            let l = cap.latest.lock().unwrap();
+            (l.texture.clone(), l.width, l.height)
+        };
+        let dir = std::env::temp_dir().join("rewind-native-encode");
+        let _ = std::fs::create_dir_all(&dir);
+        for (codec, ow, oh) in [
+            (nvenc::Codec::Av1, w, h),
+            (nvenc::Codec::Av1, 1280, 720),
+            (nvenc::Codec::Av1, 3840, 2160),
+            (nvenc::Codec::Hevc, w, h),
+            (nvenc::Codec::H264, w, h),
+        ] {
+            let fps = 60;
+            let conv = gpu::Converter::new(&g, w, h, ow, oh, fps).expect("converter");
+            let mut enc = nvenc::Encoder::new(
+                &g,
+                nvenc::EncoderConfig { codec, width: ow, height: oh, fps, quality: 24, gop: fps },
+            )
+            .expect("encoder");
+            let mut bytes = Vec::new();
+            let mut keys = 0;
+            let t = Instant::now();
+            for i in 0..120 {
+                conv.convert(&src, enc.next_input()).unwrap();
+                let p = enc.encode(i == 0).unwrap();
+                if p.key {
+                    keys += 1;
+                }
+                bytes.extend_from_slice(&p.data);
+            }
+            let per_frame = t.elapsed() / 120;
+            let raw = dir.join(format!("{codec:?}_{oh}.{}", codec.raw_format()));
+            std::fs::write(&raw, &bytes).unwrap();
+            let mkv = raw.with_extension("mkv");
+            let mut args = crate::ffmpeg::args(&["-hide_banner", "-loglevel", "error", "-y", "-r", "60", "-f", codec.raw_format(), "-i"]);
+            args.push(raw.clone().into());
+            args.extend(crate::ffmpeg::args(&["-c", "copy"]));
+            args.push(mkv.clone().into());
+            crate::ffmpeg::run("ffmpeg", &args).expect("mux");
+            let p = crate::library::probe(&mkv.to_string_lossy()).unwrap();
+            println!(
+                "{codec:?} {ow}x{oh}: {per_frame:?}/frame, {keys} keyframes, {} KB -> probe {}x{} {} {:.2}s",
+                bytes.len() / 1024, p.width, p.height, p.codec, p.duration
+            );
+            assert_eq!((p.width as u32, p.height as u32), (ow, oh));
+            assert_eq!(keys, 2, "keyframe every second");
+            assert!((p.duration - 2.0).abs() < 0.1);
+            if codec == nvenc::Codec::Av1 && ow == w {
+                let png = dir.join("frame.png");
+                let mut a = crate::ffmpeg::args(&["-hide_banner", "-loglevel", "error", "-y", "-i"]);
+                a.push(mkv.clone().into());
+                a.extend(crate::ffmpeg::args(&["-frames:v", "1", "-vf", "scale=960:-2"]));
+                a.push(png.clone().into());
+                crate::ffmpeg::run("ffmpeg", &a).unwrap();
+                println!("decoded frame: {}", png.display());
+            }
+        }
     }
 
     /// cargo test native_capture -- --ignored --nocapture

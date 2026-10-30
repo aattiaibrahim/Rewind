@@ -15,6 +15,8 @@ pub struct Settings {
     pub buffer_seconds: u32,
     /// Keep the replay buffer in memory (no SSD writes) instead of on disk
     pub buffer_in_ram: bool,
+    /// "native" (Windows Graphics Capture + NVENC, default) or "ffmpeg" (compatibility)
+    pub capture_engine: String,
     /// "primary" | "cursor" | "fixed"
     pub monitor_mode: String,
     /// Device name like \\.\DISPLAY1, used when monitor_mode == "fixed"
@@ -50,6 +52,7 @@ impl Default for Settings {
             output_height: 0,
             buffer_seconds: 120,
             buffer_in_ram: true,
+            capture_engine: "native".into(),
             monitor_mode: "primary".into(),
             fixed_monitor: String::new(),
             draw_cursor: true,
@@ -76,6 +79,9 @@ impl Settings {
         let d = Settings::default();
         if !["av1", "hevc", "h264"].contains(&self.encoder.as_str()) {
             self.encoder = d.encoder;
+        }
+        if !["native", "ffmpeg"].contains(&self.capture_engine.as_str()) {
+            self.capture_engine = d.capture_engine.clone();
         }
         if !["primary", "cursor", "fixed"].contains(&self.monitor_mode.as_str()) {
             self.monitor_mode = d.monitor_mode;

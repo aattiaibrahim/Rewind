@@ -39,6 +39,8 @@ impl Drop for Capture {
 }
 
 type Queue = Arc<Mutex<VecDeque<f32>>>;
+/// Audio chunks with the moment Windows captured their first sample.
+type Chunks = Arc<Mutex<VecDeque<(Instant, Vec<f32>)>>>;
 
 /// Names of the current default output and input devices (to notice headset swaps).
 pub fn default_devices() -> (Option<String>, Option<String>) {
@@ -58,6 +60,21 @@ pub fn input_devices() -> Vec<String> {
 
 /// `delay` seconds of silence are sent first, shifting this track later in time.
 pub fn start(src: Source, delay: f64) -> Result<Capture, String> {
+    let (stop, queue, rate, channels, device) = open(src, None)?;
+    let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
+    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+    {
+        let (stop, queue) = (stop.clone(), queue.clone());
+        thread::spawn(move || pump(listener, queue, rate, channels as usize, delay, stop));
+    }
+    Ok(Capture { stop, rate, channels, url: format!("tcp://127.0.0.1:{port}"), device })
+}
+
+type Opened = (Arc<AtomicBool>, Queue, u32, u16, String);
+
+/// Open the device on its own thread (cpal streams must stay on one thread).
+/// With `chunks`, audio arrives timestamped there instead of in the queue.
+fn open(src: Source, chunks: Option<Chunks>) -> Result<Opened, String> {
     let stop = Arc::new(AtomicBool::new(false));
     let queue: Queue = Arc::new(Mutex::new(VecDeque::new()));
     let (tx, rx) = mpsc::channel::<Result<(u32, u16, String), String>>();
@@ -65,7 +82,7 @@ pub fn start(src: Source, delay: f64) -> Result<Capture, String> {
     // The cpal stream has to stay on the thread that made it.
     {
         let (stop, queue) = (stop.clone(), queue.clone());
-        thread::spawn(move || match open_stream(&src, queue) {
+        thread::spawn(move || match open_stream(&src, queue, chunks) {
             Ok((stream, rate, ch, name)) => {
                 let _ = tx.send(Ok((rate, ch, name)));
                 while !stop.load(Ordering::Relaxed) {
@@ -81,17 +98,10 @@ pub fn start(src: Source, delay: f64) -> Result<Capture, String> {
     let (rate, channels, device) = rx
         .recv_timeout(Duration::from_secs(5))
         .map_err(|_| "The audio device didn't respond.".to_string())??;
-
-    let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
-    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
-    {
-        let (stop, queue) = (stop.clone(), queue.clone());
-        thread::spawn(move || pump(listener, queue, rate, channels as usize, delay, stop));
-    }
-    Ok(Capture { stop, rate, channels, url: format!("tcp://127.0.0.1:{port}"), device })
+    Ok((stop, queue, rate, channels, device))
 }
 
-fn open_stream(src: &Source, q: Queue) -> Result<(cpal::Stream, u32, u16, String), String> {
+fn open_stream(src: &Source, q: Queue, chunks: Option<Chunks>) -> Result<(cpal::Stream, u32, u16, String), String> {
     let host = cpal::default_host();
     let (dev, cfg, mono) = match src {
         Source::Desktop => {
@@ -121,10 +131,10 @@ fn open_stream(src: &Source, q: Queue) -> Result<(cpal::Stream, u32, u16, String
 
     // On WASAPI, an input stream on an output device is loopback capture.
     let stream = match cfg.sample_format() {
-        SampleFormat::F32 => build::<f32>(&dev, &config, in_ch, mono, q, max),
-        SampleFormat::I16 => build::<i16>(&dev, &config, in_ch, mono, q, max),
-        SampleFormat::I32 => build::<i32>(&dev, &config, in_ch, mono, q, max),
-        SampleFormat::U16 => build::<u16>(&dev, &config, in_ch, mono, q, max),
+        SampleFormat::F32 => build::<f32>(&dev, &config, in_ch, mono, q, chunks, max),
+        SampleFormat::I16 => build::<i16>(&dev, &config, in_ch, mono, q, chunks, max),
+        SampleFormat::I32 => build::<i32>(&dev, &config, in_ch, mono, q, chunks, max),
+        SampleFormat::U16 => build::<u16>(&dev, &config, in_ch, mono, q, chunks, max),
         f => Err(format!("Unsupported audio format {f:?}")),
     }?;
     stream.play().map_err(|e| e.to_string())?;
@@ -137,6 +147,7 @@ fn build<T>(
     in_ch: usize,
     mono: bool,
     q: Queue,
+    chunks: Option<Chunks>,
     max: usize,
 ) -> Result<cpal::Stream, String>
 where
@@ -145,7 +156,27 @@ where
 {
     dev.build_input_stream(
         config,
-        move |data: &[T], _: &cpal::InputCallbackInfo| {
+        move |data: &[T], info: &cpal::InputCallbackInfo| {
+            if let Some(chunks) = &chunks {
+                // WASAPI reports when this buffer was captured (QPC-based, the
+                // same clock as the video). Convert that to our clock.
+                let ts = info.timestamp();
+                let delay = ts.callback.duration_since(&ts.capture).unwrap_or_default();
+                let at = Instant::now().checked_sub(delay).unwrap_or_else(Instant::now);
+                let samples: Vec<f32> = if mono && in_ch > 1 {
+                    data.chunks(in_ch)
+                        .map(|f| f.iter().map(|&x| f32::from_sample(x)).sum::<f32>() / in_ch as f32)
+                        .collect()
+                } else {
+                    data.iter().map(|&x| f32::from_sample(x)).collect()
+                };
+                let mut c = chunks.lock().unwrap();
+                c.push_back((at, samples));
+                while c.len() > 400 {
+                    c.pop_front(); // nobody is reading: don't grow forever
+                }
+                return;
+            }
             let mut q = q.lock().unwrap();
             if mono && in_ch > 1 {
                 for frame in data.chunks(in_ch) {
@@ -188,12 +219,24 @@ fn pump(listener: TcpListener, q: Queue, rate: u32, ch: usize, delay: f64, stop:
     if sock.write_all(&lead).is_err() {
         return;
     }
+    let mut bytes: Vec<u8> = Vec::new();
+    pace(&q, rate, ch, &stop, Instant::now(), |frames| {
+        bytes.clear();
+        for s in frames {
+            bytes.extend_from_slice(&s.to_le_bytes());
+        }
+        sock.write_all(&bytes).is_ok()
+    });
+}
 
-    let t0 = Instant::now();
+/// Emit exactly `rate` frames per second of wall time from `t0` on: sample k
+/// always means time t0 + k/rate. Gaps (silent loopback) become zeros; if the
+/// device runs ahead of the clock, the oldest audio is dropped to resync.
+fn pace(q: &Queue, rate: u32, ch: usize, stop: &AtomicBool, t0: Instant, mut emit: impl FnMut(&[f32]) -> bool) {
     let cushion = rate as u64 / 10; // stay 100 ms behind real time to absorb device jitter
     let backlog = rate as usize * 3 / 10;
     let mut written: u64 = 0;
-    let mut buf: Vec<u8> = Vec::with_capacity(rate as usize * ch * 4 / 10);
+    let mut buf: Vec<f32> = Vec::with_capacity(rate as usize * ch / 10);
     while !stop.load(Ordering::Relaxed) {
         thread::sleep(Duration::from_millis(10));
         let due = (t0.elapsed().as_secs_f64() * rate as f64) as u64;
@@ -206,19 +249,153 @@ fn pump(listener: TcpListener, q: Queue, rate: u32, ch: usize, delay: f64, stop:
             let mut q = q.lock().unwrap();
             let avail = q.len() / ch;
             if avail > need + backlog {
-                // The device got ahead of the clock; drop the oldest audio to resync.
                 let drop_frames = avail - need - cushion as usize;
                 q.drain(..drop_frames * ch);
             }
             let take = need.min(q.len() / ch);
-            for s in q.drain(..take * ch) {
-                buf.extend_from_slice(&s.to_le_bytes());
-            }
-            buf.resize(buf.len() + (need - take) * ch * 4, 0); // silence
+            buf.extend(q.drain(..take * ch));
+            buf.resize(need * ch, 0.0); // silence
         }
-        if sock.write_all(&buf).is_err() {
+        if !emit(&buf) {
             return;
         }
         written += need as u64;
+    }
+}
+
+/// Audio kept in memory for the native engine. Frame k (counting from the
+/// very first) is the sound at `start + k / rate` on the shared clock.
+pub struct AudioRing {
+    pub rate: u32,
+    pub channels: u16,
+    pub start: Instant,
+    /// Absolute frame number of the oldest frame still held.
+    base: u64,
+    data: VecDeque<f32>,
+    max_frames: usize,
+}
+
+impl AudioRing {
+    fn push(&mut self, frames: &[f32]) {
+        self.data.extend(frames.iter().copied());
+        self.trim();
+    }
+    fn push_silence(&mut self, frames: usize) {
+        self.data.resize(self.data.len() + frames * self.channels as usize, 0.0);
+        self.trim();
+    }
+    fn trim(&mut self) {
+        let ch = self.channels as usize;
+        let excess = (self.data.len() / ch).saturating_sub(self.max_frames);
+        if excess > 0 {
+            self.data.drain(..excess * ch);
+            self.base += excess as u64;
+        }
+    }
+    /// Absolute frame number the next sample will get.
+    fn head(&self) -> i64 {
+        (self.base + (self.data.len() / self.channels as usize) as u64) as i64
+    }
+    fn frame_at(&self, t: Instant) -> i64 {
+        if t >= self.start {
+            ((t - self.start).as_secs_f64() * self.rate as f64).round() as i64
+        } else {
+            -(((self.start - t).as_secs_f64() * self.rate as f64).round() as i64)
+        }
+    }
+
+    /// `frames` frames starting at time `from` (zeros where nothing is held).
+    pub fn slice(&self, from: Instant, frames: usize) -> Vec<f32> {
+        let ch = self.channels as usize;
+        let mut out = vec![0f32; frames * ch];
+        let first = if from >= self.start {
+            ((from - self.start).as_secs_f64() * self.rate as f64).round() as i64
+        } else {
+            -(((self.start - from).as_secs_f64() * self.rate as f64).round() as i64)
+        };
+        let held_from = self.base as i64;
+        let held_to = held_from + (self.data.len() / ch) as i64;
+        for i in 0..frames as i64 {
+            let abs = first + i;
+            if abs >= held_from && abs < held_to {
+                let src = ((abs - held_from) as usize) * ch;
+                out[i as usize * ch..][..ch].copy_from_slice(&self.data.range(src..src + ch).copied().collect::<Vec<_>>());
+            }
+        }
+        out
+    }
+
+    pub fn bytes(&self) -> usize {
+        self.data.len() * 4
+    }
+
+    /// Time of the newest frame held.
+    pub fn end_time(&self) -> Instant {
+        let frames = self.base + (self.data.len() / self.channels as usize) as u64;
+        self.start + Duration::from_secs_f64(frames as f64 / self.rate as f64)
+    }
+}
+
+/// Capture into an in-memory ring (native engine) holding `seconds` of audio.
+pub fn start_ring(src: Source, seconds: u32) -> Result<(Capture, Arc<Mutex<AudioRing>>), String> {
+    let t0 = Instant::now();
+    let chunks: Chunks = Arc::new(Mutex::new(VecDeque::new()));
+    let (stop, _queue, rate, channels, device) = open(src, Some(chunks.clone()))?;
+    let ring = Arc::new(Mutex::new(AudioRing {
+        rate,
+        channels,
+        start: t0,
+        base: 0,
+        data: VecDeque::new(),
+        max_frames: rate as usize * seconds as usize,
+    }));
+    {
+        let (stop, ring) = (stop.clone(), ring.clone());
+        thread::spawn(move || place(&chunks, &ring, &stop));
+    }
+    Ok((Capture { stop, rate, channels, url: String::new(), device }, ring))
+}
+
+/// Put each chunk at the exact spot its capture time says. Tiny timestamp
+/// jitter (< 3 ms) is smoothed so back-to-back chunks join seamlessly; real
+/// gaps (silent loopback) stay silent; overlaps are trimmed. Audio therefore
+/// can't drift against the video, however long Rewind runs.
+fn place(chunks: &Chunks, ring: &Arc<Mutex<AudioRing>>, stop: &AtomicBool) {
+    let (rate, ch) = {
+        let r = ring.lock().unwrap();
+        (r.rate, r.channels as usize)
+    };
+    let tolerance = (rate as i64 * 3) / 1000;
+    // During silence, keep the ring current up to this far behind "now".
+    let idle_lag = Duration::from_millis(250);
+    while !stop.load(Ordering::Relaxed) {
+        thread::sleep(Duration::from_millis(5));
+        let batch: Vec<(Instant, Vec<f32>)> = chunks.lock().unwrap().drain(..).collect();
+        let mut r = ring.lock().unwrap();
+        for (at, samples) in batch {
+            let frames = samples.len() / ch;
+            let mut idx = r.frame_at(at);
+            let head = r.head();
+            if (idx - head).abs() <= tolerance {
+                idx = head; // continuous with what we already have
+            }
+            let mut data = &samples[..];
+            if idx < head {
+                let skip = (head - idx) as usize;
+                if skip >= frames {
+                    continue; // entirely before what we hold already
+                }
+                data = &samples[skip * ch..];
+            } else if idx > head {
+                let gap = (idx - head) as usize;
+                r.push_silence(gap);
+            }
+            r.push(data);
+        }
+        let now_idx = r.frame_at(Instant::now().checked_sub(idle_lag).unwrap_or_else(Instant::now));
+        let head = r.head();
+        if now_idx > head {
+            r.push_silence((now_idx - head) as usize);
+        }
     }
 }

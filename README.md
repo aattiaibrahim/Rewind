@@ -28,7 +28,21 @@ A lightweight replay-buffer clipper for Windows that records on your NVIDIA GPU 
 
 - Per-game profiles, per-app audio tracks, the in-game overlay, a multi-track editor (text, merge), HDR tone-mapping, and auto-update.
 
-## How it works
+## How it works (native engine, default)
+
+The pipeline works the same way OBS's does. Everything stays on the NVIDIA GPU, and audio and video share one clock:
+
+1. **Windows Graphics Capture** hands Rewind each frame as a texture on the GPU that drives the monitor.
+2. **The D3D11 Video Processor** converts and resizes it to NV12 on the GPU, at any output size including 4K and 720p.
+3. **NVENC, called directly** (`src-tauri/src/native/nvenc.rs`), encodes AV1/HEVC/H.264 with constant quality and a keyframe every second.
+4. Encoded packets go into a **RAM ring**, stamped on the shared high-precision clock (QPC).
+5. **WASAPI audio** chunks carry Windows' own capture timestamps and go into RAM rings at their exact time on the same clock. Saving cuts video and audio for the same time window, so sync is built in (measured within about ±5 ms) and can't drift.
+
+Measured on an RTX 5080 at 1080p60: about 2.5 ms of GPU encode per frame, about 3% of one CPU core for the whole capture, and a 12 s clip saved in under 1 s. Recordings stream to disk as they go, so a crash leaves parts that are recovered on the next start.
+
+If the native engine can't start (no NVIDIA GPU, driver problem), Rewind falls back to the FFmpeg engine below. It can also be picked under **Settings → Display & capture → Capture engine**.
+
+## How it works (compatibility engine)
 
 ffmpeg's `ddagrab` captures the monitor on the GPU and feeds frames straight into NVENC, with no CPU copy. Output goes to 2-second MKV segments in a rolling ring. In RAM mode, ffmpeg streams each finished segment to Rewind over localhost and nothing touches the disk. In disk mode, segments go under `%LOCALAPPDATA%\com.rewind.app\buffer`. Saving joins the newest segments without re-encoding (`-c copy`), so it is instant and lossless.
 

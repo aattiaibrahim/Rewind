@@ -11,6 +11,10 @@ Rewind's installer includes FFmpeg (`ffmpeg.exe`, `ffprobe.exe` and its shared l
 
 FFmpeg is a trademark of Fabrice Bellard, originator of the FFmpeg project. Rewind is not affiliated with or endorsed by the FFmpeg project.
 
+## NVIDIA Video Codec SDK header (nvEncodeAPI.h)
+
+`src-tauri/nvenc/nvEncodeAPI.h` (from FFmpeg's nv-codec-headers) and the Rust bindings generated from it (`src-tauri/src/native/nvenc_sys.rs`) are © NVIDIA Corporation under the MIT license, as stated at the top of the header. Rewind loads NVIDIA's encoder from the installed graphics driver (`nvEncodeAPI64.dll`) and does not redistribute it.
+
 ## Rust and JavaScript dependencies
 
 Rewind is built with Tauri, React, cpal, the `windows` crate and other open-source libraries under MIT, Apache-2.0 and similar licenses. See `src-tauri/Cargo.lock` and `pnpm-lock.yaml` for the full list.

@@ -7,16 +7,23 @@ $header = Join-Path $root "src-tauri\nvenc\nvEncodeAPI.h"
 $out = Join-Path $root "src-tauri\src\native\nvenc_sys.rs"
 if (-not $env:LIBCLANG_PATH) { $env:LIBCLANG_PATH = "C:\Program Files\LLVM\bin" }
 
+# Clang needs the C runtime headers from the Windows SDK and MSVC.
+$sdk = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\Include" -Directory | Sort-Object Name -Descending | Select-Object -First 1
+$msvc = Get-ChildItem "${env:ProgramFiles(x86)}\Microsoft Visual Studio\*\*\VC\Tools\MSVC\*\include", "$env:ProgramFiles\Microsoft Visual Studio\*\*\VC\Tools\MSVC\*\include" -Directory -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
+if (-not $sdk -or -not $msvc) { throw "Windows SDK or MSVC headers not found" }
+$inc = @("-isystem", "$($msvc.FullName)")
+foreach ($sub in "ucrt", "um", "shared") { $inc += @("-isystem", (Join-Path $sdk.FullName $sub)) }
+
 $tmp = New-TemporaryFile
-# -U_WIN32 keeps the header from pulling in <windows.h>: it then declares GUID
-# itself, and all D3D handles are plain pointers, which is all the API needs.
+# The allowlist keeps only NVENC's own types (plus GUID) out of <windows.h>.
 & bindgen $header -o $tmp `
     --allowlist-type "_?NV_ENC.*|NV_ENCODE_API_FUNCTION_LIST|_?NVENCSTATUS|GUID|_GUID|NV_ENC_INPUT_PTR|NV_ENC_OUTPUT_PTR|NV_ENC_REGISTERED_PTR" `
     --allowlist-function "NvEncodeAPI.*" `
     --allowlist-var "NV_ENC.*|NVENC.*" `
+    --blocklist-item "NV_ENC_\w+_GUID|NVENCAPI_VERSION" `
     --default-enum-style consts --no-prepend-enum-name `
     --no-layout-tests --no-doc-comments --use-core `
-    -- -U_WIN32 -U_WIN64 -x c
+    -- -x c -DWIN32_LEAN_AND_MEAN @inc
 if ($LASTEXITCODE -ne 0) { throw "bindgen failed" }
 $body = Get-Content $tmp -Raw
 Remove-Item $tmp
@@ -31,7 +38,7 @@ $sb = New-Object Text.StringBuilder
 [void]$sb.AppendLine("#![allow(non_camel_case_types, non_snake_case, non_upper_case_globals, dead_code, clippy::all)]")
 [void]$sb.AppendLine("pub const NVENCAPI_VERSION: u32 = 0x{0:X};" -f $api)
 # Struct versions: NVENCAPI_STRUCT_VERSION(n) [| (1u<<31)]
-foreach ($m in [regex]::Matches($h, '#define\s+(NV_ENC_\w+_VER)\s+\(?\s*NVENCAPI_STRUCT_VERSION\((\d+)\)\s*(\|\s*\(\s*1u?\s*<<\s*31\s*\))?')) {
+foreach ($m in [regex]::Matches($h, '#define\s+(NV_\w+_VER)\s+\(?\s*NVENCAPI_STRUCT_VERSION\((\d+)\)\s*(\|\s*\(\s*1u?\s*<<\s*31\s*\))?')) {
     $v = [uint64]$api -bor ([uint64][int]$m.Groups[2].Value -shl 16) -bor ([uint64]0x7 -shl 28)
     if ($m.Groups[3].Success) { $v = $v -bor ([uint64]1 -shl 31) }
     [void]$sb.AppendLine("pub const $($m.Groups[1].Value): u32 = 0x{0:X};" -f $v)

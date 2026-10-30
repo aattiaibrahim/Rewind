@@ -29,7 +29,7 @@ export function installDevMock() {
   const bin: Clip[] = [];
   const settings = {
     clipsDir: "C:\\Users\\you\\Videos\\Rewind", encoder: "av1", quality: 24, fps: 60, bufferSeconds: 120,
-    bufferInRam: true, monitorMode: "primary", fixedMonitor: "", drawCursor: true, hotkey: "Alt+F10",
+    bufferInRam: true, captureEngine: "native", monitorMode: "primary", fixedMonitor: "", drawCursor: true, hotkey: "Alt+F10",
     recordHotkey: "Alt+F9", bufferEnabled: true, launchOnStartup: false, autoUpdate: true, startMinimized: true,
     keepOriginalAfterRemux: true, replaceOriginalOnEdit: false, externalFiles: [], desktopAudio: true,
     micEnabled: true, micMono: true, micDevice: "",
@@ -38,7 +38,7 @@ export function installDevMock() {
     enabled: true, running: true, monitor: "Display 1 · 1920×1080", width: 1920, height: 1080, encoder: "av1",
     fps: 60, bufferedSeconds: 120, bufferSeconds: 120, restarts: 0, lastError: null,
     audio: ["Desktop: Headphones", "Mic (mono): USB Mic"], audioError: null, game: null, recording: false,
-    recordingSeconds: 0, inRam: true, bufferMb: 410,
+    recordingSeconds: 0, inRam: true, bufferMb: 410, engine: "native",
   };
   const listeners = new Map<string, number[]>();
   const callbacks = new Map<number, (e: unknown) => void>();

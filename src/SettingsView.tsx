@@ -340,6 +340,24 @@ export function SettingsView({
           <h2>Display &amp; capture</h2>
           <label className="setting">
             <span>
+              Capture engine
+              <small>
+                {s.captureEngine === "native"
+                  ? "Captures and encodes entirely on your NVIDIA GPU, with audio and video on one clock."
+                  : "Older FFmpeg-based capture. Use only if Native gives you trouble."}
+              </small>
+            </span>
+            <select
+              className="select"
+              value={s.captureEngine}
+              onChange={(e) => set({ captureEngine: e.target.value as Settings["captureEngine"] })}
+            >
+              <option value="native">Native (recommended)</option>
+              <option value="ffmpeg">Compatibility</option>
+            </select>
+          </label>
+          <label className="setting">
+            <span>
               Which monitor
               <small>Re-picked automatically after Win+P or plugging in a screen</small>
             </span>
