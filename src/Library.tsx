@@ -1,5 +1,5 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ClipFile, codecLabel, errText, fmtDuration, fmtSize, Probe, VIDEO_EXTENSIONS } from "./api";
 import { useThumb } from "./hooks";
 
@@ -20,12 +20,18 @@ function containerLabel(path: string) {
 
 function ClipCard({
   clip,
-  onOpen,
+  selected,
+  onClick,
+  onToggle,
+  onDelete,
   onToast,
   onChanged,
 }: {
   clip: ClipFile;
-  onOpen: () => void;
+  selected: boolean;
+  onClick: (e: React.MouseEvent) => void;
+  onToggle: (e: React.MouseEvent) => void;
+  onDelete: () => void;
   onToast: (t: string, err?: boolean) => void;
   onChanged: () => void;
 }) {
@@ -51,11 +57,24 @@ function ClipCard({
   };
 
   return (
-    <button className="card" onClick={onOpen} title={clip.path}>
+    <button className={`card ${selected ? "selected" : ""}`} onClick={onClick} title={clip.path}>
       <div className="thumb">
         {thumb && <img src={thumb} alt="" loading="lazy" />}
+        <span
+          className={`check ${selected ? "on" : ""}`}
+          role="checkbox"
+          aria-checked={selected}
+          aria-label={`Select ${clip.name}`}
+          tabIndex={0}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggle(e);
+          }}
+        >
+          {selected ? "✓" : ""}
+        </span>
         {info && (
-          <span className="badge tl" title="Video codec · file container">
+          <span className="badge bl" title="Video codec · file container">
             {codecLabel(info.codec)} · {containerLabel(clip.path)}
           </span>
         )}
@@ -71,11 +90,22 @@ function ClipCard({
             tabIndex={0}
             onClick={(e) => {
               e.stopPropagation();
-              api.reveal(clip.path);
+              api.reveal(clip.path).catch((err) => onToast(errText(err), true));
             }}
             title="Show in Explorer"
           >
             Show
+          </span>
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
+            title="Move to the Recycle Bin"
+          >
+            Delete
           </span>
         </div>
       </div>
@@ -92,16 +122,21 @@ export function Library({
   onOpen,
   onToast,
   onChanged,
+  onDelete,
   hotkey,
 }: {
   clips: ClipFile[] | null;
   onOpen: (path: string) => void;
   onToast: (t: string, err?: boolean) => void;
   onChanged: () => void;
+  /** Asks for confirmation, then deletes. Resolves true if deleted. */
+  onDelete: (paths: string[]) => Promise<boolean>;
   hotkey: string;
 }) {
   const [folder, setFolder] = useState("All");
   const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const anchor = useRef<string | null>(null);
 
   const folders = useMemo(() => {
     const set = new Set((clips ?? []).map((c) => c.folder));
@@ -122,6 +157,70 @@ export function Library({
     return out;
   }, [clips, folder, query]);
 
+  const visible = useMemo(() => groups.flatMap((g) => g.items.map((c) => c.path)), [groups]);
+
+  // Drop selections that disappeared (deleted, filtered out).
+  useEffect(() => {
+    setSelected((s) => {
+      const keep = new Set([...s].filter((p) => visible.includes(p)));
+      return keep.size === s.size ? s : keep;
+    });
+  }, [visible]);
+
+  const selecting = selected.size > 0;
+
+  const toggle = useCallback((path: string) => {
+    setSelected((s) => {
+      const n = new Set(s);
+      if (n.has(path)) n.delete(path);
+      else n.add(path);
+      return n;
+    });
+    anchor.current = path;
+  }, []);
+
+  const selectRange = useCallback(
+    (path: string) => {
+      const from = anchor.current ? visible.indexOf(anchor.current) : -1;
+      const to = visible.indexOf(path);
+      if (from < 0 || to < 0) return toggle(path);
+      const [a, b] = from < to ? [from, to] : [to, from];
+      setSelected((s) => new Set([...s, ...visible.slice(a, b + 1)]));
+    },
+    [visible, toggle],
+  );
+
+  const clickCard = (path: string) => (e: React.MouseEvent) => {
+    if (e.shiftKey) selectRange(path);
+    else if (e.ctrlKey || e.metaKey || selecting) toggle(path);
+    else onOpen(path);
+  };
+
+  const deleteSelected = useCallback(async () => {
+    if (!selected.size) return;
+    if (await onDelete([...selected])) setSelected(new Set());
+  }, [selected, onDelete]);
+
+  // Delete removes the selection, Ctrl+A selects everything shown, Esc clears.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+      if (document.querySelector(".modal-backdrop")) return;
+      if (e.key === "Delete" && selected.size) {
+        e.preventDefault();
+        deleteSelected();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a" && visible.length) {
+        e.preventDefault();
+        setSelected(new Set(visible));
+      } else if (e.key === "Escape" && selected.size) {
+        setSelected(new Set());
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selected, visible, deleteSelected]);
+
   const openAny = async () => {
     const picked = await open({
       multiple: true,
@@ -138,8 +237,10 @@ export function Library({
     }
   };
 
+  const selectedBytes = (clips ?? []).filter((c) => selected.has(c.path)).reduce((n, c) => n + c.size, 0);
+
   return (
-    <div className="page">
+    <div className={`page ${selecting ? "selecting" : ""}`}>
       <div className="toolbar">
         <h1 style={{ flex: 1 }}>Clips</h1>
         <label className="search">
@@ -152,14 +253,36 @@ export function Library({
           Open any video…
         </button>
       </div>
-      {folders.length > 1 && (
-        <div className="chips">
-          {folders.map((f) => (
-            <button key={f} className={`chip ${f === folder ? "on" : ""}`} onClick={() => setFolder(f)}>
-              {f}
-            </button>
-          ))}
+
+      {selecting ? (
+        <div className="select-bar" role="toolbar" aria-label="Selected clips">
+          <strong style={{ fontSize: 13, padding: "0 6px" }}>
+            {selected.size} selected <span className="muted">· {fmtSize(selectedBytes)}</span>
+          </strong>
+          <span style={{ flex: 1 }} />
+          <button className="btn small" onClick={() => setSelected(new Set(visible))}>
+            Select all ({visible.length})
+          </button>
+          <button className="btn small" onClick={() => setSelected(new Set())}>
+            Clear
+          </button>
+          <button className="btn small danger" onClick={deleteSelected}>
+            Delete {selected.size}
+          </button>
         </div>
+      ) : (
+        folders.length > 1 && (
+          <div className="chips">
+            {folders.map((f) => (
+              <button key={f} className={`chip ${f === folder ? "on" : ""}`} onClick={() => setFolder(f)}>
+                {f}
+              </button>
+            ))}
+            <span className="muted" style={{ fontSize: 12, alignSelf: "center", marginLeft: "auto" }}>
+              Tip: Ctrl+click or Shift+click to select several
+            </span>
+          </div>
+        )
       )}
 
       {clips === null ? null : clips.length === 0 ? (
@@ -178,16 +301,44 @@ export function Library({
           <strong>Nothing matches</strong>
         </div>
       ) : (
-        groups.map((g) => (
-          <section key={g.day} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <div className="label">{g.day}</div>
-            <div className="grid">
-              {g.items.map((c) => (
-                <ClipCard key={c.path} clip={c} onOpen={() => onOpen(c.path)} onToast={onToast} onChanged={onChanged} />
-              ))}
-            </div>
-          </section>
-        ))
+        groups.map((g) => {
+          const allInDay = g.items.every((c) => selected.has(c.path));
+          return (
+            <section key={g.day} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div className="row" style={{ gap: 12 }}>
+                <div className="label">{g.day}</div>
+                {selecting && (
+                  <button
+                    className="btn small"
+                    onClick={() =>
+                      setSelected((s) => {
+                        const n = new Set(s);
+                        g.items.forEach((c) => (allInDay ? n.delete(c.path) : n.add(c.path)));
+                        return n;
+                      })
+                    }
+                  >
+                    {allInDay ? "Unselect day" : "Select day"}
+                  </button>
+                )}
+              </div>
+              <div className="grid">
+                {g.items.map((c) => (
+                  <ClipCard
+                    key={c.path}
+                    clip={c}
+                    selected={selected.has(c.path)}
+                    onClick={clickCard(c.path)}
+                    onToggle={(e) => (e.shiftKey ? selectRange(c.path) : toggle(c.path))}
+                    onDelete={() => onDelete(selected.has(c.path) ? [...selected] : [c.path])}
+                    onToast={onToast}
+                    onChanged={onChanged}
+                  />
+                ))}
+              </div>
+            </section>
+          );
+        })
       )}
     </div>
   );

@@ -56,10 +56,12 @@ export function useClips() {
     refresh();
     const a = listen("clip-saved", refresh);
     const b = listen("settings-changed", refresh);
+    const c = listen("clips-changed", refresh);
     window.addEventListener("focus", refresh);
     return () => {
       a.then((f) => f());
       b.then((f) => f());
+      c.then((f) => f());
       window.removeEventListener("focus", refresh);
     };
   }, [refresh]);

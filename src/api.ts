@@ -57,6 +57,8 @@ export type UpdateState = {
   error: string | null;
 };
 
+export type DeleteResult = { deleted: string[]; failed: [string, string][] };
+
 export type ClipFile = {
   path: string;
   name: string;
@@ -139,6 +141,8 @@ export const api = {
     invoke<string>("compress_clip", { path, targetMb, replace }),
   listAudioInputs: () => invoke<string[]>("list_audio_inputs"),
   reveal: (path: string) => invoke<void>("reveal_file", { path }),
+  deleteClips: (paths: string[]) => invoke<DeleteResult>("delete_clips", { paths }),
+  restoreClips: (paths: string[]) => invoke<number>("restore_clips", { paths }),
   addExternal: (paths: string[]) => invoke<void>("add_external_files", { paths }),
   removeExternal: (path: string) => invoke<void>("remove_external_file", { path }),
   openInStudio: (path: string) => invoke<void>("open_in_studio", { path }),

@@ -287,6 +287,90 @@ fn verify_output(edited: &Path, expected_secs: Option<f64>) -> Result<(), String
     Ok(())
 }
 
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteResult {
+    pub deleted: Vec<String>,
+    /// (path, reason)
+    pub failed: Vec<(String, String)>,
+}
+
+/// Only videos that are actually in the library can be deleted: inside the
+/// clips folder, or a file the user opened from elsewhere.
+fn deletable(path: &Path, clips_dir: &Path, external: &[String]) -> Result<(), String> {
+    if !is_video(path) {
+        return Err("Not a video file".into());
+    }
+    let inside = match (path.canonicalize(), clips_dir.canonicalize()) {
+        (Ok(p), Ok(c)) => p.starts_with(c),
+        _ => false,
+    };
+    let listed = external.iter().any(|e| Path::new(e) == path);
+    if inside || listed { Ok(()) } else { Err("Not part of your Rewind library".into()) }
+}
+
+/// Move clips to the Recycle Bin (one batch, so Windows can restore them together).
+pub fn delete_clips(paths: &[String], clips_dir: &Path, external: &[String]) -> DeleteResult {
+    let mut res = DeleteResult::default();
+    let mut ok: Vec<PathBuf> = Vec::new();
+    for p in paths {
+        let path = Path::new(p);
+        if !path.exists() {
+            res.deleted.push(p.clone()); // already gone: treat as done
+            continue;
+        }
+        match deletable(path, clips_dir, external) {
+            Ok(()) => ok.push(path.to_path_buf()),
+            Err(e) => res.failed.push((p.clone(), e)),
+        }
+    }
+    #[cfg(test)]
+    let batch: Result<(), String> = ok.iter().try_for_each(|p| fs::remove_file(p).map_err(|e| e.to_string()));
+    #[cfg(not(test))]
+    let batch: Result<(), String> = trash::delete_all(&ok).map_err(|e| e.to_string());
+    match batch {
+        Ok(()) => res.deleted.extend(ok.iter().map(|p| p.to_string_lossy().into_owned())),
+        Err(_) => {
+            // Fall back to one by one, so one locked file doesn't block the rest.
+            for p in ok {
+                match discard(&p) {
+                    Ok(()) => res.deleted.push(p.to_string_lossy().into_owned()),
+                    Err(e) => res.failed.push((p.to_string_lossy().into_owned(), friendly_delete_error(&e))),
+                }
+            }
+        }
+    }
+    res
+}
+
+fn friendly_delete_error(e: &str) -> String {
+    if e.contains("32") || e.to_lowercase().contains("used by another process") {
+        "It's open in another app".into()
+    } else {
+        e.to_string()
+    }
+}
+
+/// Put files back from the Recycle Bin (newest deletion of each path).
+pub fn restore_clips(paths: &[String]) -> Result<usize, String> {
+    let wanted: std::collections::HashSet<PathBuf> = paths.iter().map(PathBuf::from).collect();
+    let mut items: Vec<trash::TrashItem> = trash::os_limited::list()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|i| wanted.contains(&i.original_parent.join(&i.name)))
+        .collect();
+    // If the same path was deleted twice, restore only the latest.
+    items.sort_by(|a, b| b.time_deleted.cmp(&a.time_deleted));
+    let mut seen = std::collections::HashSet::new();
+    items.retain(|i| seen.insert(i.original_parent.join(&i.name)));
+    let n = items.len();
+    if n == 0 {
+        return Err("Those clips aren't in the Recycle Bin anymore.".into());
+    }
+    trash::os_limited::restore_all(items).map_err(|e| e.to_string())?;
+    Ok(n)
+}
+
 /// Swap an edited file in for the original (original goes to the Recycle Bin).
 /// Nothing is removed unless the edit checks out first.
 pub fn replace_original(original: &str, edited: &str, expected_secs: Option<f64>) -> Result<String, String> {
@@ -464,6 +548,49 @@ mod tests {
         fs::copy(&src, &copy).unwrap();
         assert!(replace_original(&src, &copy.to_string_lossy(), Some(2.0)).is_err());
         assert!(Path::new(&src).exists(), "original must survive every refusal");
+        let _ = fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn delete_only_touches_library_videos() {
+        let d = tmp("delete");
+        let clips = d.join("clips");
+        fs::create_dir_all(clips.join("VALORANT")).unwrap();
+        let a = clips.join("VALORANT").join("a.mkv");
+        let b = clips.join("VALORANT").join("b.mp4");
+        let outside = d.join("outside.mkv");
+        let imported = d.join("imported.mp4");
+        let not_video = clips.join("notes.txt");
+        for f in [&a, &b, &outside, &imported, &not_video] {
+            fs::write(f, b"x").unwrap();
+        }
+        let s = |p: &PathBuf| p.to_string_lossy().into_owned();
+        let ext = vec![s(&imported)];
+        let r = delete_clips(&[s(&a), s(&b), s(&outside), s(&imported), s(&not_video)], &clips, &ext);
+        assert_eq!(r.deleted.len(), 3, "{:?}", r.failed);
+        assert!(!a.exists() && !b.exists() && !imported.exists());
+        assert!(outside.exists(), "files outside the library are never deleted");
+        assert!(not_video.exists(), "non-videos are never deleted");
+        assert_eq!(r.failed.len(), 2);
+        // Already-deleted paths count as done, not as errors.
+        let again = delete_clips(&[s(&a)], &clips, &ext);
+        assert_eq!((again.deleted.len(), again.failed.len()), (1, 0));
+        let _ = fs::remove_dir_all(d);
+    }
+
+    /// Uses the real Recycle Bin: cargo test recycle_ -- --ignored
+    #[test]
+    #[ignore]
+    fn recycle_and_undo_roundtrip() {
+        let d = tmp("recycle");
+        fs::create_dir_all(&d).unwrap();
+        let f = d.join(format!("rewind-undo-test-{}.mkv", std::process::id()));
+        fs::write(&f, b"clip").unwrap();
+        let p = f.to_string_lossy().into_owned();
+        trash::delete_all([&f]).unwrap();
+        assert!(!f.exists());
+        assert_eq!(restore_clips(std::slice::from_ref(&p)).unwrap(), 1);
+        assert_eq!(fs::read(&f).unwrap(), b"clip");
         let _ = fs::remove_dir_all(d);
     }
 

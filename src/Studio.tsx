@@ -11,6 +11,7 @@ export function Studio({
   clips,
   onOpen,
   onDone,
+  onDelete,
   settings,
   update,
 }: {
@@ -18,6 +19,7 @@ export function Studio({
   clips: ClipFile[] | null;
   onOpen: (path: string) => void;
   onDone: () => void;
+  onDelete: (paths: string[]) => Promise<boolean>;
   settings: Settings | null;
   update: (p: Partial<Settings>) => Promise<void>;
 }) {
@@ -323,6 +325,17 @@ export function Studio({
             </div>
             <button className="btn block" onClick={() => api.reveal(path)}>
               Show in Explorer
+            </button>
+            <button
+              className="btn block"
+              style={{ color: "#ffb3b3" }}
+              disabled={busy}
+              onClick={() => {
+                video.current?.pause();
+                onDelete([path]);
+              }}
+            >
+              Delete this clip…
             </button>
           </div>
           <label className="row" style={{ fontSize: 13, color: "var(--text-2)", cursor: "pointer" }}>

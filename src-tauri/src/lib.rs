@@ -314,6 +314,25 @@ fn reveal_file(path: String) -> Result<(), String> {
     cmd.spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
+/// Move clips to the Recycle Bin. Imported files stay listed so Undo brings them back.
+#[tauri::command]
+async fn delete_clips(app: AppHandle, paths: Vec<String>) -> Result<library::DeleteResult, String> {
+    let s = settings_of(&app);
+    let res = blocking(move || {
+        Ok(library::delete_clips(&paths, PathBuf::from(&s.clips_dir).as_path(), &s.external_files))
+    })
+    .await?;
+    let _ = app.emit("clips-changed", ());
+    Ok(res)
+}
+
+#[tauri::command]
+async fn restore_clips(app: AppHandle, paths: Vec<String>) -> Result<usize, String> {
+    let n = blocking(move || library::restore_clips(&paths)).await?;
+    let _ = app.emit("clips-changed", ());
+    Ok(n)
+}
+
 #[tauri::command]
 fn add_external_files(app: AppHandle, paths: Vec<String>) -> Result<(), String> {
     let mut s = settings_of(&app);
@@ -579,6 +598,8 @@ pub fn run() {
             export_h264,
             compress_clip,
             reveal_file,
+            delete_clips,
+            restore_clips,
             add_external_files,
             remove_external_file,
             open_in_studio,

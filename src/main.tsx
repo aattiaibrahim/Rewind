@@ -10,8 +10,13 @@ function FlyoutRoot() {
   return <Flyout />;
 }
 
-const isFlyout = getCurrentWindow().label === "flyout";
+async function start() {
+  // In a plain browser during development, use fake sample data.
+  if (import.meta.env.DEV) (await import("./devMock")).installDevMock();
+  const isFlyout = getCurrentWindow().label === "flyout";
+  ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+    <React.StrictMode>{isFlyout ? <FlyoutRoot /> : <App />}</React.StrictMode>,
+  );
+}
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <React.StrictMode>{isFlyout ? <FlyoutRoot /> : <App />}</React.StrictMode>,
-);
+start();
