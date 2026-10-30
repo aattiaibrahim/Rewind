@@ -29,9 +29,11 @@ export function SettingsView({
   onError: (msg: string) => void;
 }) {
   const [monitors, setMonitors] = useState<Monitor[]>([]);
+  const [mics, setMics] = useState<string[]>([]);
   const [listening, setListening] = useState(false);
   useEffect(() => {
     api.listMonitors().then(setMonitors).catch(() => {});
+    api.listAudioInputs().then(setMics).catch(() => {});
   }, []);
 
   const set = (p: Partial<Settings>) => update(p).catch((e) => onError(String(e)));
@@ -141,6 +143,49 @@ export function SettingsView({
         </section>
 
         <section className="group">
+          <h2>Audio</h2>
+          <label className="setting">
+            <span>
+              Desktop audio
+              <small>Game and app sound from your default speakers or headset (track 1)</small>
+            </span>
+            <Toggle label="Desktop audio" checked={s.desktopAudio} onChange={(v) => set({ desktopAudio: v })} />
+          </label>
+          <label className="setting">
+            <span>
+              Microphone
+              <small>Recorded on its own track (track 2), so you can turn it down later</small>
+            </span>
+            <Toggle label="Microphone" checked={s.micEnabled} onChange={(v) => set({ micEnabled: v })} />
+          </label>
+          {s.micEnabled && (
+            <>
+              <label className="setting">
+                <span>Mic device</span>
+                <select className="select" value={s.micDevice} onChange={(e) => set({ micDevice: e.target.value })}>
+                  <option value="">Windows default</option>
+                  {mics.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="setting">
+                <span>
+                  Mono microphone
+                  <small>Your voice in both ears instead of one side</small>
+                </span>
+                <Toggle label="Mono microphone" checked={s.micMono} onChange={(v) => set({ micMono: v })} />
+              </label>
+            </>
+          )}
+          <span className="muted" style={{ fontSize: 11, paddingTop: 8, lineHeight: 1.5 }}>
+            Exports and Discord-size compresses mix both tracks into one so they play everywhere.
+          </span>
+        </section>
+
+        <section className="group">
           <h2>Display &amp; capture</h2>
           <label className="setting">
             <span>
@@ -223,6 +268,17 @@ export function SettingsView({
               label="Keep original after remux"
               checked={s.keepOriginalAfterRemux}
               onChange={(v) => set({ keepOriginalAfterRemux: v })}
+            />
+          </label>
+          <label className="setting">
+            <span>
+              Replace the original when I save an edit
+              <small>Trims, exports and compresses overwrite the file. The old one goes to the Recycle Bin.</small>
+            </span>
+            <Toggle
+              label="Replace original on edit"
+              checked={s.replaceOriginalOnEdit}
+              onChange={(v) => set({ replaceOriginalOnEdit: v })}
             />
           </label>
           <div className="setting">

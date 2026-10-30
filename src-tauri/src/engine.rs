@@ -8,7 +8,7 @@
 //! (Win+P, a monitor plugged in, a resolution change) or ffmpeg dies, it starts
 //! a fresh "generation" on the right monitor, so capture never stays black.
 
-use crate::{ffmpeg, monitors, settings::Settings};
+use crate::{audio, ffmpeg, monitors, settings::Settings};
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::fs;
@@ -21,6 +21,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 pub const SEG_SECONDS: u32 = 2;
+/// Video starts ~0.12 s before ffmpeg connects to the audio sockets (measured
+/// with a flash + click test), so audio is shifted later by this much.
+const AUDIO_DELAY_SECS: f64 = 0.12;
 
 #[derive(Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
@@ -36,6 +39,9 @@ pub struct Status {
     pub buffer_seconds: u32,
     pub restarts: u32,
     pub last_error: Option<String>,
+    /// e.g. ["Desktop: Speakers (Realtek)", "Mic (mono): USB Microphone"]
+    pub audio: Vec<String>,
+    pub audio_error: Option<String>,
 }
 
 #[derive(Clone)]
@@ -56,6 +62,15 @@ struct Running {
     child: Child,
     sig: String,
     log: Arc<Mutex<VecDeque<String>>>,
+    _audio: Vec<audio::Capture>,
+}
+
+struct Spawned {
+    child: Child,
+    log: Arc<Mutex<VecDeque<String>>>,
+    audio: Vec<audio::Capture>,
+    labels: Vec<String>,
+    audio_error: Option<String>,
 }
 
 pub struct Engine {
@@ -187,16 +202,22 @@ fn supervise(
         let s = settings.lock().unwrap().clone();
         let mons = monitors::list();
         let picked = monitors::pick(&s.monitor_mode, &s.fixed_monitor, &mons);
-        // Anything in here changing means "restart capture".
+        let devices = if s.desktop_audio || s.mic_enabled { audio::default_devices() } else { (None, None) };
+        // Anything in here changing means "restart capture" (incl. a new default headset).
         let sig = format!(
-            "{:?}|{:?}|{}|{}|{}|{}|{}",
+            "{:?}|{:?}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{:?}",
             mons,
             picked.as_ref().map(|m| m.index),
             s.encoder,
             s.quality,
             s.fps,
             s.draw_cursor,
-            s.buffer_seconds
+            s.buffer_seconds,
+            s.desktop_audio,
+            s.mic_enabled,
+            s.mic_mono,
+            s.mic_device,
+            devices,
         );
 
         if let Some(r) = cur.as_mut() {
@@ -206,13 +227,17 @@ fn supervise(
                     let tail: Vec<String> = log.iter().rev().take(3).rev().cloned().collect();
                     let mut st = status.lock().unwrap();
                     st.last_error = Some(format!("ffmpeg stopped ({code}). {}", tail.join(" ")));
+                    eprintln!("[rewind] capture stopped: {:?}", st.last_error);
                     st.restarts += 1;
                     drop(st);
                     drop(log);
                     cur = None;
                     retry_at = Instant::now() + Duration::from_secs(2);
                 }
-                Ok(None) if !s.buffer_enabled || r.sig != sig => stop(cur.take().unwrap()),
+                Ok(None) if !s.buffer_enabled || r.sig != sig => {
+                    eprintln!("[rewind] restarting capture: settings or displays/devices changed");
+                    stop(cur.take().unwrap())
+                }
                 _ => {}
             }
         }
@@ -229,7 +254,7 @@ fn supervise(
                         fps: s.fps,
                     };
                     match spawn(&s, &m, &generation) {
-                        Ok((child, log)) => {
+                        Ok(sp) => {
                             let mut g = gens.lock().unwrap();
                             g.push(generation);
                             while g.len() > 4 {
@@ -241,7 +266,9 @@ fn supervise(
                             st.monitor = Some(m.label());
                             st.width = m.width;
                             st.height = m.height;
-                            cur = Some(Running { child, sig: sig.clone(), log });
+                            st.audio = sp.labels;
+                            st.audio_error = sp.audio_error;
+                            cur = Some(Running { child: sp.child, sig: sig.clone(), log: sp.log, _audio: sp.audio });
                         }
                         Err(e) => {
                             status.lock().unwrap().last_error = Some(e);
@@ -269,6 +296,7 @@ fn supervise(
             st.buffered_seconds = buffered;
             if !st.running {
                 st.monitor = None;
+                st.audio.clear();
             }
         }
 
@@ -302,8 +330,30 @@ fn spawn(
     s: &Settings,
     m: &monitors::Monitor,
     generation: &Gen,
-) -> Result<(Child, Arc<Mutex<VecDeque<String>>>), String> {
+) -> Result<Spawned, String> {
     fs::create_dir_all(&generation.dir).map_err(|e| e.to_string())?;
+
+    // Audio first, so its sockets are listening when ffmpeg connects.
+    let mut caps: Vec<(audio::Capture, &str, &str, String)> = Vec::new();
+    let mut audio_errors = Vec::new();
+    if s.desktop_audio {
+        match audio::start(audio::Source::Desktop, AUDIO_DELAY_SECS) {
+            Ok(c) => {
+                let label = format!("Desktop: {}", c.device);
+                caps.push((c, "Desktop audio", "192k", label));
+            }
+            Err(e) => audio_errors.push(format!("Desktop audio: {e}")),
+        }
+    }
+    if s.mic_enabled {
+        match audio::start(audio::Source::Mic { device: s.mic_device.clone(), mono: s.mic_mono }, AUDIO_DELAY_SECS) {
+            Ok(c) => {
+                let label = format!("Mic{}: {}", if c.channels == 1 { " (mono)" } else { "" }, c.device);
+                caps.push((c, "Microphone", "96k", label));
+            }
+            Err(e) => audio_errors.push(format!("Mic: {e}")),
+        }
+    }
     let per = segs_needed(s.buffer_seconds);
     let codec = match s.encoder.as_str() {
         "h264" => "h264_nvenc",
@@ -324,8 +374,26 @@ fn spawn(
 
     let mut cmd = ffmpeg::cmd("ffmpeg");
     cmd.current_dir(&generation.dir)
-        .args(["-hide_banner", "-loglevel", "warning", "-f", "lavfi", "-i", &src])
-        .args(["-c:v", codec, "-preset", "p4", "-tune", "hq", "-rc", "vbr", "-cq", &cq, "-b:v", "0"])
+        .args(["-hide_banner", "-loglevel", "warning", "-f", "lavfi", "-i", &src]);
+    for (c, _, _, _) in &caps {
+        // Raw PCM with a known format: skip ffmpeg's multi-second stream probing.
+        cmd.args(["-probesize", "32", "-analyzeduration", "0"])
+            .args(["-fflags", "nobuffer", "-f", "f32le"])
+            .args(["-ar", &c.rate.to_string(), "-ac", &c.channels.to_string()])
+            .args(["-i", &c.url]);
+    }
+    cmd.args(["-map", "0:v"]);
+    for (i, (_, title, bitrate, _)) in caps.iter().enumerate() {
+        cmd.args(["-map", &format!("{}:a", i + 1)])
+            .arg(format!("-b:a:{i}"))
+            .arg(bitrate)
+            .arg(format!("-metadata:s:a:{i}"))
+            .arg(format!("title={title}"));
+    }
+    if !caps.is_empty() {
+        cmd.args(["-c:a", "aac", "-ar", "48000"]);
+    }
+    cmd.args(["-c:v", codec, "-preset", "p4", "-tune", "hq", "-rc", "vbr", "-cq", &cq, "-b:v", "0"])
         .args(["-g", &gop])
         .args(["-f", "segment", "-segment_time", &seg, "-segment_format", "matroska"])
         .args(["-segment_wrap", &wrap, "-segment_list", "list.txt"])
@@ -350,7 +418,14 @@ fn spawn(
             }
         });
     }
-    Ok((child, log))
+    let labels = caps.iter().map(|(_, _, _, l)| l.clone()).collect();
+    Ok(Spawned {
+        child,
+        log,
+        audio: caps.into_iter().map(|(c, _, _, _)| c).collect(),
+        labels,
+        audio_error: if audio_errors.is_empty() { None } else { Some(audio_errors.join(" · ")) },
+    })
 }
 
 /// Ask ffmpeg to finish its current segment ("q"), then force it if needed.

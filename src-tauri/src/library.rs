@@ -234,13 +234,43 @@ pub fn trim(path: &str, start: f64, end: f64, exact: bool) -> Result<String, Str
     finish(args, out)
 }
 
-/// An H.264 + AAC MP4 that plays everywhere.
+/// Map video plus one audio track: desktop + mic mixed when there are several,
+/// because most players and Discord only play the first track.
+fn map_mixed_audio(args: &mut Vec<OsString>, audio_tracks: u32) {
+    args.extend(ffmpeg::args(&["-map", "0:v:0"]));
+    match audio_tracks {
+        0 => {}
+        1 => args.extend(ffmpeg::args(&["-map", "0:a:0"])),
+        n => {
+            let inputs: String = (0..n).map(|i| format!("[0:a:{i}]")).collect();
+            let graph = format!("{inputs}amix=inputs={n}:duration=longest:normalize=0[mix]");
+            args.extend(ffmpeg::args(&["-filter_complex", &graph, "-map", "[mix]"]));
+        }
+    }
+}
+
+/// Swap an edited file in for the original. The original goes to the Recycle Bin.
+pub fn replace_original(original: &str, edited: &str) -> Result<String, String> {
+    let orig = Path::new(original);
+    let new_ext = ext_of(Path::new(edited));
+    let target = orig.with_extension(&new_ext);
+    trash::delete(orig).map_err(|e| format!("Saved the edit, but couldn't recycle the original: {e}"))?;
+    if target.exists() && target != orig {
+        trash::delete(&target).map_err(|e| e.to_string())?;
+    }
+    fs::rename(edited, &target).map_err(|e| format!("Couldn't rename the edit: {e}"))?;
+    Ok(target.to_string_lossy().into_owned())
+}
+
+/// An H.264 + AAC MP4 that plays everywhere (audio tracks mixed into one).
 pub fn export_h264(path: &str) -> Result<String, String> {
+    let info = probe(path)?;
     let out = unique(Path::new(path), " (H.264)", "mp4");
     let mut args = ffmpeg::args(&["-hide_banner", "-loglevel", "error", "-i"]);
     args.push(path.into());
+    map_mixed_audio(&mut args, info.audio_tracks);
     args.extend(ffmpeg::args(&[
-        "-map", "0:v:0", "-map", "0:a?", "-c:v", "h264_nvenc", "-preset", "p5", "-cq", "21", "-b:v", "0",
+        "-c:v", "h264_nvenc", "-preset", "p5", "-cq", "21", "-b:v", "0",
         "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
     ]));
     args.push(out.clone().into());
@@ -260,7 +290,7 @@ pub fn compress(path: &str, target_mb: u32) -> Result<String, String> {
     let (b, buf) = (format!("{video_kbps}k"), format!("{}k", video_kbps * 2));
     let mut args = ffmpeg::args(&["-hide_banner", "-loglevel", "error", "-i"]);
     args.push(path.into());
-    args.extend(ffmpeg::args(&["-map", "0:v:0", "-map", "0:a:0?"]));
+    map_mixed_audio(&mut args, info.audio_tracks);
     if video_kbps < 2500 && info.height > 720 {
         args.extend(ffmpeg::args(&["-vf", "scale=-2:720"]));
     }

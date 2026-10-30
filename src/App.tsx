@@ -2,6 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
 import { api } from "./api";
+import logo from "./logo.svg";
 import { BufferCard } from "./BufferCard";
 import { useClips, useSettings, useStatus } from "./hooks";
 import { Library } from "./Library";
@@ -51,7 +52,10 @@ export default function App() {
   return (
     <div className="shell">
       <nav className="nav">
-        <div className="brand">REWIND</div>
+        <div className="brand">
+          <img src={logo} alt="" width={26} height={26} />
+          REWIND
+        </div>
         {nav.map(([id, label]) => (
           <button key={id} className={`nav-item ${view === id ? "on" : ""}`} onClick={() => setView(id)}>
             {label}
@@ -64,7 +68,16 @@ export default function App() {
         {view === "clips" && (
           <Library clips={clips} onOpen={openInStudio} onToast={(t, e) => toast(t, e)} hotkey={settings?.hotkey ?? "Alt+F10"} />
         )}
-        {view === "studio" && <Studio path={studioPath} clips={clips} onOpen={openInStudio} onDone={refresh} />}
+        {view === "studio" && (
+          <Studio
+            path={studioPath}
+            clips={clips}
+            onOpen={openInStudio}
+            onDone={refresh}
+            settings={settings}
+            update={update}
+          />
+        )}
         {view === "settings" && settings && (
           <SettingsView settings={settings} update={update} onError={(m) => toast(m, true)} />
         )}

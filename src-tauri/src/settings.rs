@@ -21,8 +21,15 @@ pub struct Settings {
     pub launch_on_startup: bool,
     pub start_minimized: bool,
     pub keep_original_after_remux: bool,
+    /// Trims / exports replace the file you edited (original goes to the Recycle Bin)
+    pub replace_original_on_edit: bool,
     /// Videos opened from outside the clips folder
     pub external_files: Vec<String>,
+    pub desktop_audio: bool,
+    pub mic_enabled: bool,
+    pub mic_mono: bool,
+    /// "" = Windows default microphone
+    pub mic_device: String,
 }
 
 impl Default for Settings {
@@ -41,7 +48,12 @@ impl Default for Settings {
             launch_on_startup: false,
             start_minimized: true,
             keep_original_after_remux: true,
+            replace_original_on_edit: false,
             external_files: Vec::new(),
+            desktop_audio: true,
+            mic_enabled: true,
+            mic_mono: true,
+            mic_device: String::new(),
         }
     }
 }

@@ -14,10 +14,12 @@ A lightweight replay-buffer clipper for Windows that records on your NVIDIA GPU 
 - **Studio**: preview, drag in/out handles, a fast trim (keyframe cut, no re-encode) and an exact trim (re-encoded on the GPU).
 - **Per-file tools**: remux to MP4 (only for the file you pick), export H.264 MP4, compress to 10/25/50/100 MB. Originals are never changed.
 
+- **Audio**: desktop sound (WASAPI loopback, track 1) and the microphone (mono by default, track 2), both on by default. Synced to video within about 10 ms. Exports and compresses mix both tracks into one.
+- **Replace original** option: trims, exports and compresses overwrite the edited file, and the old one goes to the Recycle Bin.
+
 ## Not yet
 
-- **Audio**: clips are video-only for now. Desktop, mic and per-app tracks via WASAPI are next.
-- Game capture mode, the in-game overlay, a multi-track editor (text, merge), HDR tone-mapping, and auto-update.
+- Game detection and auto-start, a high-performance mode, per-app audio tracks, the in-game overlay, a multi-track editor (text, merge), HDR tone-mapping, and auto-update.
 
 ## How it works
 

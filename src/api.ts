@@ -17,7 +17,12 @@ export type Settings = {
   launchOnStartup: boolean;
   startMinimized: boolean;
   keepOriginalAfterRemux: boolean;
+  replaceOriginalOnEdit: boolean;
   externalFiles: string[];
+  desktopAudio: boolean;
+  micEnabled: boolean;
+  micMono: boolean;
+  micDevice: string;
 };
 
 export type Status = {
@@ -32,6 +37,8 @@ export type Status = {
   bufferSeconds: number;
   restarts: number;
   lastError: string | null;
+  audio: string[];
+  audioError: string | null;
 };
 
 export type ClipFile = {
@@ -108,10 +115,12 @@ export const api = {
     return thumbCache.get(k)!;
   },
   remuxMp4: (path: string) => invoke<string>("remux_mp4", { path }),
-  trim: (path: string, start: number, end: number, exact: boolean) =>
-    invoke<string>("trim_clip", { path, start, end, exact }),
-  exportH264: (path: string) => invoke<string>("export_h264", { path }),
-  compress: (path: string, targetMb: number) => invoke<string>("compress_clip", { path, targetMb }),
+  trim: (path: string, start: number, end: number, exact: boolean, replace = false) =>
+    invoke<string>("trim_clip", { path, start, end, exact, replace }),
+  exportH264: (path: string, replace = false) => invoke<string>("export_h264", { path, replace }),
+  compress: (path: string, targetMb: number, replace = false) =>
+    invoke<string>("compress_clip", { path, targetMb, replace }),
+  listAudioInputs: () => invoke<string[]>("list_audio_inputs"),
   reveal: (path: string) => invoke<void>("reveal_file", { path }),
   addExternal: (paths: string[]) => invoke<void>("add_external_files", { paths }),
   removeExternal: (path: string) => invoke<void>("remove_external_file", { path }),

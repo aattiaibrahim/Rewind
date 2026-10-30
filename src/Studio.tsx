@@ -1,6 +1,6 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, ClipFile, codecLabel, errText, fmtSize, fmtTime, Probe } from "./api";
+import { api, ClipFile, codecLabel, errText, fmtSize, fmtTime, Probe, Settings } from "./api";
 
 type Job = { label: string } | null;
 type Result = { text: string; path?: string; err?: boolean } | null;
@@ -10,12 +10,18 @@ export function Studio({
   clips,
   onOpen,
   onDone,
+  settings,
+  update,
 }: {
   path: string | null;
   clips: ClipFile[] | null;
   onOpen: (path: string) => void;
   onDone: () => void;
+  settings: Settings | null;
+  update: (p: Partial<Settings>) => Promise<void>;
 }) {
+  const replace = !!settings?.replaceOriginalOnEdit;
+  const [reload, setReload] = useState(0);
   const video = useRef<HTMLVideoElement>(null);
   const bar = useRef<HTMLDivElement>(null);
   const [info, setInfo] = useState<Probe | null>(null);
@@ -37,14 +43,14 @@ export function Studio({
     setDuration(0);
     if (!path) return;
     api
-      .probe(path)
+      .probe(path, String(reload))
       .then((p) => {
         setInfo(p);
         setDuration((d) => d || p.duration);
         setRange((r) => (r[1] ? r : [0, p.duration]));
       })
       .catch(() => {});
-  }, [path]);
+  }, [path, reload]);
 
   const seek = useCallback((t: number) => {
     const v = video.current;
@@ -107,13 +113,21 @@ export function Studio({
     el.addEventListener("pointerup", up);
   };
 
-  const run = async (label: string, fn: () => Promise<string>) => {
+  const run = async (label: string, fn: () => Promise<string>, replaces = false) => {
     setJob({ label });
     setResult(null);
     try {
       const out = await fn();
-      setResult({ text: `Saved ${out.split("\\").pop()}`, path: out });
       onDone();
+      if (replaces) {
+        // The edit now lives where the original was: show it.
+        video.current?.pause();
+        onOpen(out);
+        setReload((k) => k + 1);
+        setResult({ text: `Replaced the original with your edit (old file is in the Recycle Bin).` });
+        return;
+      }
+      setResult({ text: `Saved ${out.split("\\").pop()}`, path: out });
     } catch (e) {
       setResult({ text: errText(e), err: true });
     } finally {
@@ -157,7 +171,7 @@ export function Studio({
           className="btn"
           disabled={busy || wholeFile}
           title="Cuts on the nearest keyframes. Instant, no quality loss."
-          onClick={() => run("Saving trim…", () => api.trim(path, a, b, false))}
+          onClick={() => run("Saving trim…", () => api.trim(path, a, b, false, replace), replace)}
         >
           Save trim (fast)
         </button>
@@ -165,7 +179,7 @@ export function Studio({
           className="btn primary"
           disabled={busy || wholeFile}
           title="Frame-accurate. Re-encodes on your GPU."
-          onClick={() => run("Saving exact trim…", () => api.trim(path, a, b, true))}
+          onClick={() => run("Saving exact trim…", () => api.trim(path, a, b, true, replace), replace)}
         >
           Save trim (exact)
         </button>
@@ -174,6 +188,7 @@ export function Studio({
         <div className="stage">
           <div className="video-wrap">
             <video
+              key={`${path}#${reload}`}
               ref={video}
               src={convertFileSrc(path)}
               onLoadedMetadata={(e) => {
@@ -265,7 +280,11 @@ export function Studio({
             <button className="btn block" disabled={busy} onClick={() => run("Remuxing…", () => api.remuxMp4(path))}>
               Remux to MP4 (no quality loss)
             </button>
-            <button className="btn block" disabled={busy} onClick={() => run("Exporting H.264…", () => api.exportH264(path))}>
+            <button
+              className="btn block"
+              disabled={busy}
+              onClick={() => run("Exporting H.264…", () => api.exportH264(path, replace), replace)}
+            >
               Export as H.264 MP4
             </button>
             <div className="row">
@@ -273,7 +292,7 @@ export function Studio({
                 className="btn block"
                 style={{ flex: 1 }}
                 disabled={busy}
-                onClick={() => run(`Compressing to ${targetMb} MB…`, () => api.compress(path, targetMb))}
+                onClick={() => run(`Compressing to ${targetMb} MB…`, () => api.compress(path, targetMb, replace), replace)}
               >
                 Compress to
               </button>
@@ -293,8 +312,19 @@ export function Studio({
               Show in Explorer
             </button>
           </div>
+          <label className="row" style={{ fontSize: 13, color: "var(--text-2)", cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              className="switch"
+              checked={replace}
+              onChange={(e) => update({ replaceOriginalOnEdit: e.target.checked })}
+            />
+            Replace the original with my edit
+          </label>
           <span className="muted" style={{ fontSize: 12, lineHeight: 1.5 }}>
-            The original file is never changed. New files are saved next to it.
+            {replace
+              ? "Trims, exports and compresses overwrite this file. The old version goes to the Recycle Bin."
+              : "The original is kept. Edits are saved as new files next to it."}
           </span>
           {job && <div className="result">{job.label}</div>}
           {result && (

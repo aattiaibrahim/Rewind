@@ -1,3 +1,4 @@
+mod audio;
 mod engine;
 mod ffmpeg;
 mod library;
@@ -162,19 +163,47 @@ async fn remux_mp4(app: AppHandle, path: String) -> Result<String, String> {
     blocking(move || library::remux_mp4(&path, keep)).await
 }
 
-#[tauri::command]
-async fn trim_clip(path: String, start: f64, end: f64, exact: bool) -> Result<String, String> {
-    blocking(move || library::trim(&path, start, end, exact)).await
+/// Run an edit; if `replace`, swap the result in for the original.
+async fn edit(
+    app: AppHandle,
+    path: String,
+    replace: bool,
+    f: impl FnOnce(&str) -> Result<String, String> + Send + 'static,
+) -> Result<String, String> {
+    let original = path.clone();
+    let out = blocking(move || f(&path)).await?;
+    if !replace {
+        return Ok(out);
+    }
+    let o = original.clone();
+    let final_path = blocking(move || library::replace_original(&o, &out)).await?;
+    // Keep an imported file in the list even if its extension changed.
+    let mut s = settings_of(&app);
+    if let Some(p) = s.external_files.iter_mut().find(|p| **p == original) {
+        *p = final_path.clone();
+        let _ = set_settings(app, s);
+    }
+    Ok(final_path)
 }
 
 #[tauri::command]
-async fn export_h264(path: String) -> Result<String, String> {
-    blocking(move || library::export_h264(&path)).await
+async fn trim_clip(app: AppHandle, path: String, start: f64, end: f64, exact: bool, replace: bool) -> Result<String, String> {
+    edit(app, path, replace, move |p| library::trim(p, start, end, exact)).await
 }
 
 #[tauri::command]
-async fn compress_clip(path: String, target_mb: u32) -> Result<String, String> {
-    blocking(move || library::compress(&path, target_mb)).await
+async fn export_h264(app: AppHandle, path: String, replace: bool) -> Result<String, String> {
+    edit(app, path, replace, library::export_h264).await
+}
+
+#[tauri::command]
+async fn compress_clip(app: AppHandle, path: String, target_mb: u32, replace: bool) -> Result<String, String> {
+    edit(app, path, replace, move |p| library::compress(p, target_mb)).await
+}
+
+#[tauri::command]
+fn list_audio_inputs() -> Vec<String> {
+    audio::input_devices()
 }
 
 #[tauri::command]
@@ -340,6 +369,7 @@ pub fn run() {
             get_status,
             restart_capture,
             list_monitors,
+            list_audio_inputs,
             save_clip,
             list_clips,
             probe_file,

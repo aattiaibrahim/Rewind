@@ -39,7 +39,14 @@ export function BufferCard({ status, hotkey }: { status: Status | null; hotkey: 
         {status ? `${fmtDuration(status.bufferedSeconds)} of ${fmtDuration(status.bufferSeconds)} held` : "—"}
         <br />
         {statusLine(status)}
+        {on && (
+          <>
+            <br />
+            {status!.audio.length ? `Audio: ${status!.audio.map((a) => a.split(":")[0]).join(" + ")}` : "No audio"}
+          </>
+        )}
       </div>
+      {on && status?.audioError && <div className="err-text">{status.audioError}</div>}
       {status?.lastError && !on && status.enabled && <div className="err-text">{status.lastError}</div>}
       {err && <div className="err-text">{err}</div>}
       <button className="btn primary" disabled={!on || busy} onClick={save}>
