@@ -136,6 +136,69 @@ pub fn probe(path: &str) -> Result<Probe, String> {
     Ok(p)
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewTrack {
+    /// Audio track number in the file (1 = second track; 0 plays in the video itself)
+    pub index: u32,
+    pub title: String,
+    pub path: String,
+}
+
+/// The video player only plays a file's first audio track. Every other track
+/// (e.g. the mic) is pulled out into its own small audio file so Studio can
+/// play it alongside, in sync. Copied without re-encoding when possible.
+pub fn preview_tracks(path: &str, cache: &Path) -> Result<Vec<PreviewTrack>, String> {
+    let mut args = ffmpeg::args(&["-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_name:stream_tags=title", "-of", "json"]);
+    args.push(path.into());
+    let json: Value = serde_json::from_str(&ffmpeg::run("ffprobe", &args)?).map_err(|e| e.to_string())?;
+    let streams = json["streams"].as_array().cloned().unwrap_or_default();
+    let meta = fs::metadata(path).map_err(|e| e.to_string())?;
+    let mut h = DefaultHasher::new();
+    path.hash(&mut h);
+    meta.len().hash(&mut h);
+    meta.modified().ok().hash(&mut h);
+    let key = format!("{:016x}", h.finish());
+    fs::create_dir_all(cache).map_err(|e| e.to_string())?;
+
+    let mut out = Vec::new();
+    for (i, s) in streams.iter().enumerate().skip(1) {
+        let title = s["tags"]["title"].as_str().map(str::to_string).unwrap_or_else(|| {
+            if i == 1 { "Microphone".into() } else { format!("Track {}", i + 1) }
+        });
+        let file = cache.join(format!("{key}_a{i}.m4a"));
+        if !file.exists() {
+            let codec = s["codec_name"].as_str().unwrap_or("");
+            let tmp = cache.join(format!("{key}_a{i}.part.m4a"));
+            let mut a = ffmpeg::args(&["-hide_banner", "-loglevel", "error", "-y", "-i"]);
+            a.push(path.into());
+            a.extend(ffmpeg::args(&["-map", &format!("0:a:{i}"), "-vn"]));
+            if codec == "aac" {
+                a.extend(ffmpeg::args(&["-c:a", "copy"]));
+            } else {
+                a.extend(ffmpeg::args(&["-c:a", "aac", "-b:a", "160k"]));
+            }
+            a.extend(ffmpeg::args(&["-movflags", "+faststart"]));
+            a.push(tmp.clone().into());
+            ffmpeg::run("ffmpeg", &a)?;
+            fs::rename(&tmp, &file).map_err(|e| e.to_string())?;
+        }
+        out.push(PreviewTrack { index: i as u32, title, path: file.to_string_lossy().into_owned() });
+    }
+    Ok(out)
+}
+
+/// The first audio track's title (what plays inside the video element).
+pub fn first_track_title(path: &str) -> String {
+    let mut args = ffmpeg::args(&["-v", "error", "-select_streams", "a:0", "-show_entries", "stream_tags=title", "-of", "json"]);
+    args.push(path.into());
+    ffmpeg::run("ffprobe", &args)
+        .ok()
+        .and_then(|j| serde_json::from_str::<Value>(&j).ok())
+        .and_then(|v| v["streams"][0]["tags"]["title"].as_str().map(str::to_string))
+        .unwrap_or_else(|| "Game".into())
+}
+
 pub fn thumbnail(path: &str, cache: &Path) -> Result<String, String> {
     let meta = fs::metadata(path).map_err(|e| e.to_string())?;
     let mut h = DefaultHasher::new();
@@ -459,6 +522,23 @@ mod tests {
         assert_eq!(p.codec, "av1");
         assert_eq!(p.audio_tracks, 2);
         assert!((p.duration - 6.0).abs() < 0.2, "duration {}", p.duration);
+        let _ = fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn preview_tracks_extracts_the_mic_track() {
+        let d = tmp("preview");
+        let src = sample(&d, "a.mkv");
+        let tracks = preview_tracks(&src, &d.join("cache")).unwrap();
+        assert_eq!(tracks.len(), 1, "one extra track besides the first");
+        assert_eq!(tracks[0].index, 1);
+        let p = probe(&tracks[0].path).unwrap();
+        assert_eq!(p.audio_tracks, 1);
+        assert!(p.codec.is_empty(), "audio only");
+        assert!((p.duration - 6.0).abs() < 0.3, "{}", p.duration);
+        // Second call reuses the cached file.
+        let again = preview_tracks(&src, &d.join("cache")).unwrap();
+        assert_eq!(again[0].path, tracks[0].path);
         let _ = fs::remove_dir_all(d);
     }
 

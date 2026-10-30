@@ -58,7 +58,9 @@ export type UpdateState = {
   error: string | null;
 };
 
-export type DeleteResult = { deleted: string[]; failed: [string, string][] };
+export type PreviewAudio = { firstTitle: string; extra: { index: number; title: string; path: string }[] };
+
+export type DeleteResult ={ deleted: string[]; failed: [string, string][] };
 
 export type ClipFile = {
   path: string;
@@ -134,6 +136,7 @@ export const api = {
     }
     return thumbCache.get(k)!;
   },
+  previewAudio: (path: string) => invoke<PreviewAudio>("preview_audio", { path }),
   remuxMp4: (path: string) => invoke<string>("remux_mp4", { path }),
   trim: (path: string, start: number, end: number, exact: boolean, replace = false) =>
     invoke<string>("trim_clip", { path, start, end, exact, replace }),

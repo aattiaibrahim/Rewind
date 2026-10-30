@@ -55,6 +55,10 @@ export function installDevMock() {
     list_audio_inputs: () => [],
     probe_file: () => ({ duration: 45, codec: "av1", width: 1920, height: 1080, fps: 60, audioTracks: 2, container: "matroska" }),
     thumbnail: () => Promise.reject("no thumbnails in preview"),
+    preview_audio: () => ({
+      firstTitle: "Desktop audio",
+      extra: [{ index: 1, title: "Microphone", path: "C:\\Users\\you\\preview\\mic.m4a" }],
+    }),
     delete_clips: (a) => {
       const paths = a.paths as string[];
       bin.push(...clips.filter((c) => paths.includes(c.path)));
@@ -86,7 +90,8 @@ export function installDevMock() {
     },
     unregisterCallback: (id: number) => callbacks.delete(id),
     // Every sample clip plays the same generated test video (public/preview-sample.mp4).
-    convertFileSrc: (p: string) => (p.startsWith("C:\\Users\\you\\") ? "/preview-sample.mp4" : p),
+    convertFileSrc: (p: string) =>
+      p.endsWith("mic.m4a") ? "/preview-mic.m4a" : p.startsWith("C:\\Users\\you\\") ? "/preview-sample.mp4" : p,
     invoke: async (cmd: string, args: Record<string, unknown> = {}) => {
       const h = handlers[cmd];
       if (!h) {

@@ -245,6 +245,23 @@ async fn thumbnail(app: AppHandle, path: String) -> Result<String, String> {
     blocking(move || library::thumbnail(&path, &dir)).await
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewAudio {
+    first_title: String,
+    extra: Vec<library::PreviewTrack>,
+}
+
+/// Audio tracks Studio has to play next to the video (the video plays track 1 itself).
+#[tauri::command]
+async fn preview_audio(app: AppHandle, path: String) -> Result<PreviewAudio, String> {
+    let cache = app.state::<AppState>().thumbs_dir.with_file_name("preview");
+    blocking(move || {
+        Ok(PreviewAudio { first_title: library::first_track_title(&path), extra: library::preview_tracks(&path, &cache)? })
+    })
+    .await
+}
+
 #[tauri::command]
 async fn remux_mp4(app: AppHandle, path: String) -> Result<String, String> {
     let keep = settings_of(&app).keep_original_after_remux;
@@ -459,6 +476,8 @@ pub fn run() {
             let _ = settings::save(&settings_path, &s);
 
             let local = app.path().app_local_data_dir()?;
+            // Preview audio is cheap to rebuild; start each session clean.
+            let _ = std::fs::remove_dir_all(local.join("preview"));
             let scratch_dir = local.join("scratch");
             let _ = std::fs::create_dir_all(&scratch_dir);
             let shared = Arc::new(Mutex::new(s.clone()));
@@ -603,6 +622,7 @@ pub fn run() {
             list_clips,
             probe_file,
             thumbnail,
+            preview_audio,
             remux_mp4,
             trim_clip,
             export_h264,

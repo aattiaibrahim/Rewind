@@ -1,7 +1,7 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, ClipFile, codecLabel, errText, fmtSize, fmtTime, Probe, Settings } from "./api";
+import { api, ClipFile, codecLabel, errText, fmtSize, fmtTime, PreviewAudio, Probe, Settings } from "./api";
 
 type Job = { label: string } | null;
 
@@ -12,6 +12,23 @@ function loadNumber(key: string, fallback: number) {
     return Number.isFinite(n) ? n : fallback;
   } catch {
     return fallback;
+  }
+}
+
+function loadJson<T>(key: string, fallback: T): T {
+  try {
+    const v = localStorage.getItem(key);
+    return v ? (JSON.parse(v) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function saveJson(key: string, value: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* not remembered */
   }
 }
 
@@ -79,14 +96,48 @@ export function Studio({
   }, []);
   const toggleMute = useCallback(() => setMutedState((m) => !m), []);
   useEffect(() => save("rewind.muted", muted ? 1 : 0), [muted]);
-  // Keep the video element in step (also after it remounts for a new clip).
+  // The video element only plays the first audio track; other tracks (the
+  // mic) play from their own <audio> elements, kept in sync with the video.
+  const [tracks, setTracks] = useState<PreviewAudio | null>(null);
+  const extraAudio = useRef<Map<number, HTMLAudioElement>>(new Map());
+  const [trackVol, setTrackVol] = useState<Record<string, number>>(() => loadJson("rewind.trackVolume", {}));
+  const [trackMuted, setTrackMuted] = useState<Record<string, boolean>>({});
+  const tv = (title: string) => trackVol[title] ?? 1;
+  const setTrack = (title: string, v: number) => {
+    const next = { ...trackVol, [title]: Math.round(Math.min(1, Math.max(0, v)) * 100) / 100 };
+    setTrackVol(next);
+    saveJson("rewind.trackVolume", next);
+    if (v > 0) setTrackMuted((m) => ({ ...m, [title]: false }));
+  };
+  // Keep every element's volume in step (also after it remounts for a new clip).
   useEffect(() => {
+    const allMuted = muted || volume === 0;
     const v = video.current;
     if (v) {
-      v.volume = volume;
-      v.muted = muted || volume === 0;
+      const first = tracks?.firstTitle ?? "Game";
+      v.volume = Math.min(1, volume * tv(first));
+      v.muted = allMuted || !!trackMuted[first];
     }
+    tracks?.extra.forEach((t) => {
+      const a = extraAudio.current.get(t.index);
+      if (a) {
+        a.volume = Math.min(1, volume * tv(t.title));
+        a.muted = allMuted || !!trackMuted[t.title];
+      }
+    });
   });
+  // Mirror play / pause / seek / speed from the video onto the extra tracks,
+  // and nudge them back if they drift more than ~60 ms.
+  const syncExtra = useCallback((hard = false) => {
+    const v = video.current;
+    if (!v) return;
+    extraAudio.current.forEach((a) => {
+      if (hard || Math.abs(a.currentTime - v.currentTime) > 0.06) a.currentTime = v.currentTime;
+      a.playbackRate = v.playbackRate;
+      if (v.paused && !a.paused) a.pause();
+      if (!v.paused && a.paused) a.play().catch(() => {});
+    });
+  }, []);
   const [range, setRange] = useState<[number, number]>([0, 0]);
   const [playError, setPlayError] = useState(false);
   const [job, setJob] = useState<Job>(null);
@@ -100,7 +151,13 @@ export function Studio({
     setTime(0);
     setRange([0, 0]);
     setDuration(0);
+    setTracks(null);
     if (!path) return;
+    let alive = true;
+    api
+      .previewAudio(path)
+      .then((t) => alive && setTracks(t))
+      .catch(() => {});
     api
       .probe(path, String(reload))
       .then((p) => {
@@ -109,6 +166,9 @@ export function Studio({
         setRange((r) => (r[1] ? r : [0, p.duration]));
       })
       .catch(() => {});
+    return () => {
+      alive = false;
+    };
   }, [path, reload]);
 
   const seek = useCallback((t: number) => {
@@ -280,9 +340,20 @@ export function Studio({
                 const v = e.currentTarget;
                 setTime(v.currentTime);
                 if (!v.paused && v.currentTime >= range[1]) v.pause();
+                syncExtra();
               }}
-              onPlay={() => setPlaying(true)}
-              onPause={() => setPlaying(false)}
+              onPlay={() => {
+                setPlaying(true);
+                syncExtra(true);
+              }}
+              onPause={() => {
+                setPlaying(false);
+                syncExtra();
+              }}
+              onSeeked={() => syncExtra(true)}
+              onRateChange={() => syncExtra()}
+              onWaiting={() => extraAudio.current.forEach((a) => a.pause())}
+              onPlaying={() => syncExtra(true)}
               onError={() => setPlayError(true)}
               onClick={toggle}
             />
@@ -378,6 +449,60 @@ export function Studio({
             <span>{fmtSize(clips?.find((c) => c.path === path)?.size ?? 0)}</span>
           </div>
 
+          {tracks && (tracks.extra.length > 0 || (info?.audioTracks ?? 0) > 0) && (
+            <>
+              <div className="label">Preview audio</div>
+              <div className="stack">
+                {[{ index: 0, title: tracks.firstTitle, path: "" }, ...tracks.extra].map((t) => {
+                  const off = !!trackMuted[t.title] || tv(t.title) === 0;
+                  return (
+                    <div key={t.index} className="row track-row">
+                      <button
+                        className="round small-round"
+                        aria-label={off ? `Unmute ${t.title}` : `Mute ${t.title}`}
+                        aria-pressed={off}
+                        onClick={() =>
+                          tv(t.title) === 0 ? setTrack(t.title, 1) : setTrackMuted((m) => ({ ...m, [t.title]: !m[t.title] }))
+                        }
+                      >
+                        <SpeakerIcon level={off ? 0 : tv(t.title)} />
+                      </button>
+                      <span className="track-name" title={t.title}>
+                        {t.title.replace(" audio", "")}
+                      </span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        aria-label={`${t.title} volume`}
+                        value={off ? 0 : Math.round(tv(t.title) * 100)}
+                        onChange={(e) => setTrack(t.title, Number(e.target.value) / 100)}
+                        style={{ flex: 1, width: 0 }}
+                      />
+                      <span className="mono" style={{ width: 34, textAlign: "right", fontSize: 11 }}>
+                        {off ? "Off" : `${Math.round(tv(t.title) * 100)}%`}
+                      </span>
+                    </div>
+                  );
+                })}
+                <span className="muted" style={{ fontSize: 11, lineHeight: 1.5 }}>
+                  Only changes what you hear here. Saved files keep every track as recorded.
+                </span>
+              </div>
+              {tracks.extra.map((t) => (
+                <audio
+                  key={`${t.path}#${reload}`}
+                  ref={(el) => {
+                    if (el) extraAudio.current.set(t.index, el);
+                    else extraAudio.current.delete(t.index);
+                  }}
+                  src={convertFileSrc(t.path)}
+                  preload="auto"
+                  onLoadedData={() => syncExtra(true)}
+                />
+              ))}
+            </>
+          )}
           <div className="label">This file only</div>
           <div className="stack">
             <button className="btn block" disabled={busy} onClick={() => run("Remuxing…", () => api.remuxMp4(path))}>
