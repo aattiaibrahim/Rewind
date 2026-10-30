@@ -4,6 +4,44 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ClipFile, codecLabel, errText, fmtSize, fmtTime, Probe, Settings } from "./api";
 
 type Job = { label: string } | null;
+
+function loadNumber(key: string, fallback: number) {
+  try {
+    const v = localStorage.getItem(key);
+    const n = v === null ? NaN : Number(v);
+    return Number.isFinite(n) ? n : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function save(key: string, value: number) {
+  try {
+    localStorage.setItem(key, String(value));
+  } catch {
+    /* storage unavailable: volume just isn't remembered */
+  }
+}
+
+/** Speaker with 0, 1 or 2 sound waves, or a cross when muted. */
+function SpeakerIcon({ level }: { level: number }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M11 5 6 9H2v6h4l5 4V5z" fill="currentColor" />
+      {level === 0 ? (
+        <>
+          <line x1="22" y1="9" x2="16" y2="15" />
+          <line x1="16" y1="9" x2="22" y2="15" />
+        </>
+      ) : (
+        <>
+          <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+          {level > 0.5 && <path d="M18.5 5.5a9 9 0 0 1 0 13" />}
+        </>
+      )}
+    </svg>
+  );
+}
 type Result = { text: string; path?: string; err?: boolean } | null;
 
 export function Studio({
@@ -31,6 +69,24 @@ export function Studio({
   const [duration, setDuration] = useState(0);
   const [time, setTime] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [volume, setVolumeState] = useState(() => loadNumber("rewind.volume", 1));
+  const [muted, setMutedState] = useState(() => loadNumber("rewind.muted", 0) === 1);
+  const setVolume = useCallback((v: number) => {
+    const clamped = Math.round(Math.min(1, Math.max(0, v)) * 100) / 100;
+    setVolumeState(clamped);
+    if (clamped > 0) setMutedState(false); // turning it up unmutes, like most players
+    save("rewind.volume", clamped);
+  }, []);
+  const toggleMute = useCallback(() => setMutedState((m) => !m), []);
+  useEffect(() => save("rewind.muted", muted ? 1 : 0), [muted]);
+  // Keep the video element in step (also after it remounts for a new clip).
+  useEffect(() => {
+    const v = video.current;
+    if (v) {
+      v.volume = volume;
+      v.muted = muted || volume === 0;
+    }
+  });
   const [range, setRange] = useState<[number, number]>([0, 0]);
   const [playError, setPlayError] = useState(false);
   const [job, setJob] = useState<Job>(null);
@@ -97,10 +153,17 @@ export function Studio({
       else if (e.key === "o" || e.key === "O") setRange(([a]) => [a, Math.max(v.currentTime, a + 0.1)]);
       else if (e.key === "ArrowLeft") seek(v.currentTime - (e.shiftKey ? 1 / 60 : 5));
       else if (e.key === "ArrowRight") seek(v.currentTime + (e.shiftKey ? 1 / 60 : 5));
+      else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setVolume(volume + 0.1);
+      } else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setVolume(volume - 0.1);
+      } else if (e.key === "m" || e.key === "M") toggleMute();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [path, toggle, seek]);
+  }, [path, toggle, seek, volume, setVolume, toggleMute]);
 
   // Dragging on the timeline: handles move in/out, anywhere else scrubs.
   const drag = (kind: "in" | "out" | "seek") => (e: React.PointerEvent) => {
@@ -251,6 +314,31 @@ export function Studio({
             <span className="mono">
               {fmtTime(time)} / {fmtTime(duration)}
             </span>
+            <div className="volume" role="group" aria-label="Volume">
+              <button
+                className="round"
+                aria-label={muted || volume === 0 ? "Unmute" : "Mute"}
+                aria-pressed={muted || volume === 0}
+                title="Mute (M)"
+                onClick={() => (volume === 0 ? setVolume(0.5) : toggleMute())}
+              >
+                <SpeakerIcon level={muted ? 0 : volume} />
+              </button>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                aria-label="Volume"
+                title="Volume (↑ / ↓)"
+                value={muted ? 0 : Math.round(volume * 100)}
+                onChange={(e) => setVolume(Number(e.target.value) / 100)}
+                style={{ width: 96 }}
+              />
+              <span className="mono" style={{ width: 38, textAlign: "right" }}>
+                {muted ? "Muted" : `${Math.round(volume * 100)}%`}
+              </span>
+            </div>
             <span style={{ flex: 1 }} />
             <button className="btn small" onClick={() => setRange(([, y]) => [Math.min(time, y - 0.1), y])}>
               Set start (I)
@@ -273,7 +361,7 @@ export function Studio({
             <span className="mono">
               Start {fmtTime(a)} · End {fmtTime(b)} · Length {fmtTime(Math.max(0, b - a))}
             </span>
-            <span>Space play · I / O set points · ← → 5 s · Shift+← → one frame</span>
+            <span>Space play · I / O set points · ← → 5 s · Shift+← → one frame · ↑ ↓ volume · M mute</span>
           </div>
         </div>
 

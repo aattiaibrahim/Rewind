@@ -85,7 +85,8 @@ export function installDevMock() {
       return id;
     },
     unregisterCallback: (id: number) => callbacks.delete(id),
-    convertFileSrc: (p: string) => p,
+    // Every sample clip plays the same generated test video (public/preview-sample.mp4).
+    convertFileSrc: (p: string) => (p.startsWith("C:\\Users\\you\\") ? "/preview-sample.mp4" : p),
     invoke: async (cmd: string, args: Record<string, unknown> = {}) => {
       const h = handlers[cmd];
       if (!h) {

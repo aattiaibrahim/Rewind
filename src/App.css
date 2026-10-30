@@ -138,6 +138,9 @@ h1 { margin: 0; font-family: var(--display); font-size: 28px; font-weight: 600; 
 .round { width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--line-2); background: transparent; color: var(--text); padding: 0; }
 .round.play { width: 46px; height: 46px; background: var(--text); color: var(--bg); border: 0; font-size: 16px; }
 .mono { font-variant-numeric: tabular-nums; }
+.volume { display: flex; align-items: center; gap: 8px; }
+.volume .round { display: inline-flex; align-items: center; justify-content: center; }
+.volume .round[aria-pressed="true"] { color: var(--danger); border-color: rgba(255, 138, 122, 0.5); }
 .timeline { position: relative; height: 56px; border-radius: 8px; background: var(--panel); border: 1px solid #232933; cursor: pointer; touch-action: none; }
 .tl-range { position: absolute; top: 0; bottom: 0; border: 2px solid var(--accent); border-radius: 8px; background: rgba(198, 244, 50, 0.08); }
 .tl-handle {
