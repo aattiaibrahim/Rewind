@@ -19,14 +19,18 @@ $version = $conf.version
 $tag = "v$version"
 $repo = "aattiaibrahim/Rewind"
 if (-not (Test-Path $KeyPath)) { throw "Signing key not found at $KeyPath" }
-if (gh release view $tag --repo $repo 2>$null) { throw "Release $tag already exists. Bump the version first." }
+$ErrorActionPreference = "Continue"
+gh release view $tag --repo $repo *> $null
+$exists = ($LASTEXITCODE -eq 0)
+$ErrorActionPreference = "Stop"
+if ($exists) { throw "Release $tag already exists. Bump the version first." }
 
 Write-Host "Building Rewind $version (signed)..."
 $env:TAURI_SIGNING_PRIVATE_KEY = Get-Content $KeyPath -Raw
 $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ""
 pnpm tauri build
 if ($LASTEXITCODE -ne 0) { throw "Build failed" }
-Remove-Item Env:\TAURI_SIGNING_PRIVATE_KEY, Env:\TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+Remove-Item Env:\TAURI_SIGNING_PRIVATE_KEY, Env:\TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
 
 $exeName = "Rewind_${version}_x64-setup.exe"
 $exe = "src-tauri\target\release\bundle\nsis\$exeName"

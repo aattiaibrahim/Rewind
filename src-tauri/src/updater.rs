@@ -85,6 +85,7 @@ pub async fn check(app: &AppHandle, download: bool) -> Result<Option<String>, St
     }
     .await;
     if let Err(e) = &result {
+        eprintln!("[rewind] update check failed: {e}");
         set(app, |s| {
             s.stage = "error".into();
             s.error = Some(e.clone());
