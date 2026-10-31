@@ -133,7 +133,7 @@ pub fn start(app: AppHandle) {
 /// Not recording and no game in front.
 pub fn safe_to_restart(app: &AppHandle) -> bool {
     let st = app.state::<crate::AppState>().engine.status();
-    !st.recording && st.game.is_none()
+    !st.recording && st.game.is_none() && crate::engine::saves_in_progress() == 0
 }
 
 async fn tokio_sleep(d: Duration) {

@@ -429,12 +429,12 @@ pub fn save(runs: &[Arc<Buffers>], seconds: u32, out: &Path, scratch: &Path) -> 
     fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
     let result = (|| {
         if spans.len() == 1 {
-            return mux_span(&spans[0], out, &staging);
+            return mux_span(&spans[0], out, &staging, true);
         }
         let mut parts = Vec::new();
         for (i, s) in spans.iter().enumerate() {
             let p = staging.join(format!("part{i}.mkv"));
-            mux_span(s, &p, &staging)?;
+            mux_span(s, &p, &staging, false)?;
             parts.push(p);
         }
         crate::engine::concat_files(&parts, out, scratch)
@@ -443,7 +443,19 @@ pub fn save(runs: &[Arc<Buffers>], seconds: u32, out: &Path, scratch: &Path) -> 
     result
 }
 
-fn mux_span(s: &Span, out: &Path, staging: &Path) -> Result<(), String> {
+/// What a save's staging folder needs to be finished later, if Rewind is
+/// closed (or crashes) between writing the raw files and the MKV.
+#[derive(Serialize, Deserialize)]
+struct SaveMeta {
+    out: PathBuf,
+    format: String,
+    fps: u32,
+    tracks: Vec<TrackMeta>,
+}
+
+const SAVE_DIR_PREFIX: &str = ".rewind-save-";
+
+fn mux_span(s: &Span, out: &Path, staging: &Path, resumable: bool) -> Result<(), String> {
     let v = s.buffers.video.lock().unwrap();
     let start = v.time(s.from);
     let frames = s.to - s.from + 1;
@@ -465,11 +477,67 @@ fn mux_span(s: &Span, out: &Path, staging: &Path) -> Result<(), String> {
         fs::write(&path, bytes).map_err(|e| e.to_string())?;
         tracks.push((path, TrackMeta { title: t.title.into(), bitrate: t.bitrate.into(), rate: ring.rate, channels: ring.channels }));
     }
-    mux(&video_path, format, fps, &tracks, out)
+    if resumable {
+        let meta = SaveMeta { out: out.to_path_buf(), format: format.to_string(), fps, tracks: tracks.iter().map(|(_, t)| t.clone()).collect() };
+        let _ = fs::write(staging.join("save.json"), serde_json::to_vec(&meta).unwrap());
+    }
+    mux(&video_path, format, fps, &tracks, out, Duration::from_secs_f64(60.0 + secs))
+}
+
+/// Finish saves that were cut off (Rewind closed or crashed mid-save).
+/// Returns the clips written.
+pub fn recover_saves(clips_dir: &Path) -> Vec<String> {
+    let mut done = Vec::new();
+    let tops = std::iter::once(clips_dir.to_path_buf())
+        .chain(fs::read_dir(clips_dir).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.is_dir()));
+    for top in tops {
+        for e in fs::read_dir(&top).into_iter().flatten().flatten() {
+            let dir = e.path();
+            if !dir.is_dir() || !e.file_name().to_string_lossy().starts_with(SAVE_DIR_PREFIX) {
+                continue;
+            }
+            let Some(meta) = fs::read(dir.join("save.json")).ok().and_then(|b| serde_json::from_slice::<SaveMeta>(&b).ok()) else {
+                continue; // from an older version, or not finished writing: leave it alone
+            };
+            let tracks: Vec<(PathBuf, TrackMeta)> =
+                meta.tracks.into_iter().enumerate().map(|(i, t)| (dir.join(format!("a{i}.raw")), t)).collect();
+            let video = dir.join("video.raw");
+            // Rough length from the size (a few MB per second at most), just to size the time limit.
+            let est_secs = fs::metadata(&video).map(|m| m.len() as f64 / 1_000_000.0).unwrap_or(60.0);
+            // Write next to the clip first, so a half-written older attempt is only replaced by a good one.
+            let tmp = meta.out.with_extension("recovering.mkv");
+            match mux(&video, &meta.format, meta.fps, &tracks, &tmp, Duration::from_secs_f64(120.0 + est_secs))
+                .and_then(|_| fs::rename(&tmp, &meta.out).map_err(|e| e.to_string()))
+            {
+                Ok(()) => {
+                    let _ = fs::remove_dir_all(&dir);
+                    done.push(meta.out.to_string_lossy().into_owned());
+                }
+                Err(e) => {
+                    eprintln!("[rewind] couldn't finish the cut-off save in {}: {e}", dir.display());
+                    let _ = fs::remove_file(&tmp);
+                }
+            }
+        }
+    }
+    done
 }
 
 /// Raw NVENC stream + raw PCM tracks → MKV (video copied, audio to AAC).
-fn mux(video: &Path, format: &str, fps: u32, tracks: &[(PathBuf, TrackMeta)], out: &Path) -> Result<(), String> {
+/// If ffmpeg fails or takes longer than `limit`, try once more with
+/// lossless FLAC audio, so a clip is never lost to an audio-encoder problem.
+fn mux(video: &Path, format: &str, fps: u32, tracks: &[(PathBuf, TrackMeta)], out: &Path, limit: Duration) -> Result<(), String> {
+    match mux_with(video, format, fps, tracks, out, limit, "aac") {
+        Ok(()) => Ok(()),
+        Err(e) if !tracks.is_empty() => {
+            eprintln!("[rewind] clip audio as AAC failed ({e}); saving with FLAC audio instead");
+            mux_with(video, format, fps, tracks, out, limit, "flac")
+        }
+        Err(e) => Err(e),
+    }
+}
+
+fn mux_with(video: &Path, format: &str, fps: u32, tracks: &[(PathBuf, TrackMeta)], out: &Path, limit: Duration, acodec: &str) -> Result<(), String> {
     let mut a = ffmpeg::args(&["-hide_banner", "-loglevel", "error", "-y", "-r", &fps.to_string(), "-f", format, "-i"]);
     a.push(video.into());
     for (p, t) in tracks {
@@ -486,10 +554,10 @@ fn mux(video: &Path, format: &str, fps: u32, tracks: &[(PathBuf, TrackMeta)], ou
     }
     a.extend(ffmpeg::args(&["-c:v", "copy"]));
     if !tracks.is_empty() {
-        a.extend(ffmpeg::args(&["-c:a", "aac", "-ar", "48000"]));
+        a.extend(ffmpeg::args(&["-c:a", acodec, "-ar", "48000"]));
     }
     a.push(out.into());
-    ffmpeg::run("ffmpeg", &a).map(|_| ())
+    ffmpeg::run_limited("ffmpeg", &a, Some(limit)).map(|_| ())
 }
 
 /// Turn raw recording parts in `dir` into `NNNNNN_key.mkv` files, which the
@@ -510,12 +578,56 @@ pub fn mux_recording_parts(dir: &Path) {
         let tracks: Vec<(PathBuf, TrackMeta)> =
             meta.tracks.iter().enumerate().map(|(i, t)| (dir.join(format!("{stem}.a{i}")), t.clone())).collect();
         let out = dir.join(format!("{stem}.mkv"));
-        if mux(&video, &meta.format, meta.fps, &tracks, &out).is_ok() {
+        // Generous: about 1 s per MB of video, so only a stuck ffmpeg hits it.
+        let limit = Duration::from_secs(300 + fs::metadata(&video).map(|m| m.len() / 1_000_000).unwrap_or(0));
+        if mux(&video, &meta.format, meta.fps, &tracks, &out, limit).is_ok() {
             let _ = fs::remove_file(&meta_path);
             let _ = fs::remove_file(&video);
             for (p, _) in &tracks {
                 let _ = fs::remove_file(p);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A save cut off after its raw files were written (Rewind closed or
+    /// crashed) is finished on the next start, and its folder removed.
+    #[test]
+    fn unfinished_save_is_finished_on_next_start() {
+        ffmpeg::init(None);
+        let clips = std::env::temp_dir().join(format!("rewind-recover-save-{}", std::process::id()));
+        let game = clips.join("Some Game");
+        let staging = game.join(format!("{SAVE_DIR_PREFIX}123"));
+        fs::create_dir_all(&staging).unwrap();
+        let mut a = ffmpeg::args(&["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=60", "-t", "2", "-c:v", "h264_nvenc", "-bf", "0", "-f", "h264"]);
+        a.push(staging.join("video.raw").into());
+        ffmpeg::run("ffmpeg", &a).expect("test video");
+        let mut a = ffmpeg::args(&["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=440:r=44100:d=2", "-ac", "1", "-f", "f32le"]);
+        a.push(staging.join("a0.raw").into());
+        ffmpeg::run("ffmpeg", &a).expect("test audio");
+        let out = game.join("Some Game clip.mkv");
+        let meta = SaveMeta {
+            out: out.clone(),
+            format: "h264".into(),
+            fps: 60,
+            tracks: vec![TrackMeta { title: "Microphone".into(), bitrate: "128k".into(), rate: 44100, channels: 1 }],
+        };
+        fs::write(staging.join("save.json"), serde_json::to_vec(&meta).unwrap()).unwrap();
+        // A folder without save.json (older version) is left alone.
+        let old = game.join(format!("{SAVE_DIR_PREFIX}old"));
+        fs::create_dir_all(&old).unwrap();
+
+        let done = recover_saves(&clips);
+        assert_eq!(done, vec![out.to_string_lossy().into_owned()]);
+        let p = crate::library::probe(&out.to_string_lossy()).unwrap();
+        assert_eq!((p.width, p.audio_tracks), (320, 1));
+        assert!((p.duration - 2.0).abs() < 0.2, "{}", p.duration);
+        assert!(!staging.exists());
+        assert!(old.exists());
+        let _ = fs::remove_dir_all(&clips);
     }
 }

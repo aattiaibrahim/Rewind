@@ -3,9 +3,11 @@
 use std::ffi::c_void;
 use std::os::windows::io::AsRawHandle;
 use std::os::windows::process::CommandExt;
+use std::io::Read;
 use std::path::PathBuf;
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::HANDLE;
 use windows::Win32::System::JobObjects::{
@@ -62,16 +64,73 @@ pub fn args(a: &[&str]) -> Vec<std::ffi::OsString> {
     a.iter().map(|s| s.into()).collect()
 }
 
+/// ffmpeg's default AAC search ("twoloop") can loop forever on some audio
+/// (seen with a 44.1 kHz mic resampled to 48 kHz, build N-128198). The
+/// "fast" coder never does and sounds the same at Rewind's bitrates, so
+/// every AAC encode uses it.
+pub const AAC_SAFE: [&str; 2] = ["-aac_coder", "fast"];
+
+/// Add `-aac_coder fast` after every `-c:a aac` / `-c:a:N aac` / `-acodec aac`.
+pub fn safe_aac<S: AsRef<std::ffi::OsStr>>(args: &[S]) -> Vec<std::ffi::OsString> {
+    let mut out = Vec::with_capacity(args.len() + 2);
+    let mut prev_was_acodec = false;
+    for a in args {
+        let a = a.as_ref();
+        out.push(a.to_os_string());
+        let s = a.to_string_lossy();
+        if prev_was_acodec && s == "aac" {
+            out.extend(AAC_SAFE.iter().map(|x| x.into()));
+        }
+        prev_was_acodec = s == "-acodec" || s == "-c:a" || s.starts_with("-c:a:") || s == "-codec:a";
+    }
+    out
+}
+
 /// Run to completion; Ok(stdout) on success, Err(last stderr lines) on failure.
 pub fn run<S: AsRef<std::ffi::OsStr>>(name: &str, args: &[S]) -> Result<String, String> {
-    let out = cmd(name)
-        .args(args)
-        .output()
+    run_limited(name, args, None)
+}
+
+/// Like `run`, but kill ffmpeg and fail if it takes longer than `limit`.
+pub fn run_limited<S: AsRef<std::ffi::OsStr>>(name: &str, args: &[S], limit: Option<Duration>) -> Result<String, String> {
+    let mut child = cmd(name)
+        .args(safe_aac(args))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|e| format!("Could not start {name}: {e}"))?;
-    if out.status.success() {
-        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    // Read both pipes on their own threads so a chatty ffmpeg can't block.
+    let mut so = child.stdout.take().unwrap();
+    let mut se = child.stderr.take().unwrap();
+    let t_out = std::thread::spawn(move || {
+        let mut b = Vec::new();
+        let _ = so.read_to_end(&mut b);
+        b
+    });
+    let t_err = std::thread::spawn(move || {
+        let mut b = Vec::new();
+        let _ = se.read_to_end(&mut b);
+        b
+    });
+    let started = Instant::now();
+    let status = loop {
+        if let Some(s) = child.try_wait().map_err(|e| e.to_string())? {
+            break s;
+        }
+        if limit.is_some_and(|l| started.elapsed() > l) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("{name} got stuck and was stopped after {} s.", started.elapsed().as_secs()));
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let stdout = t_out.join().unwrap_or_default();
+    let stderr = t_err.join().unwrap_or_default();
+    if status.success() {
+        Ok(String::from_utf8_lossy(&stdout).into_owned())
     } else {
-        let err = String::from_utf8_lossy(&out.stderr);
+        let err = String::from_utf8_lossy(&stderr);
         let tail: Vec<&str> = err.lines().rev().take(4).collect();
         Err(tail.into_iter().rev().collect::<Vec<_>>().join("\n"))
     }
@@ -100,5 +159,53 @@ pub fn adopt(child: &Child) {
                 HANDLE(child.as_raw_handle() as *mut c_void),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_aac_encode_gets_the_safe_coder() {
+        let a = safe_aac(&["-i", "x", "-c:a", "aac", "-b:a", "192k", "-c:a:1", "aac", "-c", "copy", "out.mkv"]);
+        let a: Vec<String> = a.iter().map(|s| s.to_string_lossy().into_owned()).collect();
+        assert_eq!(
+            a,
+            ["-i", "x", "-c:a", "aac", "-aac_coder", "fast", "-b:a", "192k", "-c:a:1", "aac", "-aac_coder", "fast", "-c", "copy", "out.mkv"]
+        );
+        // Not touched: other codecs, or "aac" as a file name.
+        let b = safe_aac(&["-i", "aac", "-c:a", "flac", "o.mkv"]);
+        assert_eq!(b.len(), 5);
+    }
+
+    #[test]
+    fn a_stuck_ffmpeg_is_stopped() {
+        init(None);
+        let t = Instant::now();
+        // -re reads in real time: this would take 60 s.
+        let r = run_limited("ffmpeg", &["-hide_banner", "-nostdin", "-re", "-f", "lavfi", "-i", "anullsrc=d=60", "-f", "null", "-"], Some(Duration::from_secs(2)));
+        assert!(r.unwrap_err().contains("stuck"));
+        assert!(t.elapsed() < Duration::from_secs(5), "{:?}", t.elapsed());
+    }
+
+    /// Replays the save that hung on 2026-10-31 (44.1 kHz mic → AAC 48 kHz)
+    /// through `run`. Point REWIND_HUNG_SAVE at its .rewind-save-* folder.
+    /// cargo test replays_the_hung_save -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn replays_the_hung_save() {
+        init(None);
+        let Ok(d) = std::env::var("REWIND_HUNG_SAVE") else { return };
+        let d = std::path::Path::new(&d);
+        let out = std::env::temp_dir().join("rewind-hung-save-replay.mkv");
+        let mut a = args(&["-hide_banner", "-loglevel", "error", "-y", "-f", "f32le", "-ar", "44100", "-ac", "1", "-i"]);
+        a.push(d.join("a1.raw").into());
+        a.extend(args(&["-c:a", "aac", "-b:a", "128k", "-ar", "48000"]));
+        a.push(out.clone().into());
+        let t = Instant::now();
+        run_limited("ffmpeg", &a, Some(Duration::from_secs(60))).expect("mic track encodes");
+        println!("mic track encoded in {:?}", t.elapsed());
+        let _ = std::fs::remove_file(out);
     }
 }

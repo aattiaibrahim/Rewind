@@ -511,7 +511,7 @@ pub fn run() {
             {
                 let (h, clips, scratch) = (handle.clone(), PathBuf::from(&s.clips_dir), scratch_dir);
                 thread::spawn(move || {
-                    for f in engine::recover_recordings(&clips, &scratch) {
+                    for f in native::pipeline::recover_saves(&clips).into_iter().chain(engine::recover_recordings(&clips, &scratch)) {
                         let _ = h.emit("clip-saved", &f);
                     }
                 });

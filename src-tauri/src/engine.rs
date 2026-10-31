@@ -255,6 +255,12 @@ impl Engine {
 
     /// Stop ffmpeg cleanly before the app exits (finishing any recording first).
     pub fn shutdown(&self) {
+        // Let clips being saved finish first: quitting (or updating) mid-save
+        // would leave a half-written file.
+        let until = std::time::Instant::now() + Duration::from_secs(90);
+        while saves_in_progress() > 0 && std::time::Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(100));
+        }
         if self.is_recording() {
             let _ = self.stop_recording();
         }
@@ -268,6 +274,7 @@ impl Engine {
 
     /// Write the last `seconds` of the buffer to `out` (an .mkv path).
     pub fn save_clip(&self, seconds: u32, out: &Path) -> Result<(), String> {
+        let _saving = SaveGuard::new();
         check_space(out, MIN_FREE_FOR_CLIP)?;
         let native_runs = self.native.lock().unwrap().runs.clone();
         if !native_runs.is_empty() {
@@ -574,6 +581,29 @@ pub fn finalize(tmp: &Path, out: &Path, scratch: &Path) -> Result<Vec<String>, S
     }
     let _ = fs::remove_dir_all(tmp);
     Ok(saved)
+}
+
+static SAVES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Clips being written right now.
+pub fn saves_in_progress() -> usize {
+    SAVES.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Counts a save while it runs (also if it fails or panics).
+struct SaveGuard;
+
+impl SaveGuard {
+    fn new() -> SaveGuard {
+        SAVES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        SaveGuard
+    }
+}
+
+impl Drop for SaveGuard {
+    fn drop(&mut self) {
+        SAVES.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 /// Turn leftover recording folders (from a crash) into files.
@@ -1111,7 +1141,7 @@ fn spawn(s: &Settings, m: &monitors::Monitor, generation: &Gen) -> Result<Spawne
             .arg(format!("title={title}"));
     }
     if !caps.is_empty() {
-        cmd.args(["-c:a", "aac", "-ar", "48000"]);
+        cmd.args(["-c:a", "aac", "-ar", "48000"]).args(crate::ffmpeg::AAC_SAFE);
     }
     cmd.args(["-c:v", codec, "-preset", "p4", "-tune", "hq", "-rc", "vbr", "-cq", &cq, "-b:v", "0"])
         .args(["-g", &gop])
