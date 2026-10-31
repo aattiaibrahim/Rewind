@@ -1,7 +1,9 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ClipFile, codecLabel, errText, fmtSize, fmtTime, PreviewAudio, Probe, Settings } from "./api";
+import { useThumb } from "./hooks";
 
 type Job = { label: string } | null;
 
@@ -61,6 +63,99 @@ function SpeakerIcon({ level }: { level: number }) {
 }
 type Result = { text: string; path?: string; err?: boolean } | null;
 
+const Icon = {
+  play: (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z" fill="currentColor" />
+    </svg>
+  ),
+  pause: (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="6" y="5" width="4.2" height="14" rx="1.2" fill="currentColor" />
+      <rect x="13.8" y="5" width="4.2" height="14" rx="1.2" fill="currentColor" />
+    </svg>
+  ),
+  fullscreen: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />
+    </svg>
+  ),
+  exitFullscreen: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" />
+    </svg>
+  ),
+  theater: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2.5" y="6" width="19" height="12" rx="2" />
+    </svg>
+  ),
+  theaterOff: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2.5" y="6" width="19" height="12" rx="2" />
+      <path d="M15 6v12" />
+    </svg>
+  ),
+};
+
+/** The app window, or null in the browser preview. */
+function appWindow() {
+  try {
+    return getCurrentWindow();
+  } catch {
+    return null;
+  }
+}
+
+function StripItem({ clip, current, onOpen }: { clip: ClipFile; current: boolean; onOpen: (p: string) => void }) {
+  const thumb = useThumb(clip.path, clip.modified);
+  const ref = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (current) ref.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [current]);
+  return (
+    <button
+      ref={ref}
+      className={`strip-item ${current ? "on" : ""}`}
+      onClick={() => !current && onOpen(clip.path)}
+      title={clip.path}
+      aria-current={current ? "true" : undefined}
+    >
+      <div className="strip-thumb">{thumb && <img src={thumb} alt="" loading="lazy" />}</div>
+      <span>{clip.name}</span>
+    </button>
+  );
+}
+
+/** Thumbnails of recent clips, to jump between them. */
+function ClipStrip({ clips, current, onOpen }: { clips: ClipFile[]; current: string; onOpen: (p: string) => void }) {
+  if (clips.length < 2) return null;
+  return (
+    <div className="strip" role="list" aria-label="Clips">
+      {clips.map((c) => (
+        <StripItem key={c.path} clip={c} current={c.path === current} onOpen={onOpen} />
+      ))}
+    </div>
+  );
+}
+
+function PickerCard({ clip, onOpen }: { clip: ClipFile; onOpen: (p: string) => void }) {
+  const thumb = useThumb(clip.path, clip.modified);
+  const when = new Date(clip.modified).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  return (
+    <button className="card" onClick={() => onOpen(clip.path)} title={clip.path}>
+      <div className="thumb">
+        {thumb && <img src={thumb} alt="" loading="lazy" />}
+        <div className="thumb-play" aria-hidden="true">{Icon.play}</div>
+      </div>
+      <div className="card-title">{clip.name}</div>
+      <div className="card-meta">
+        {clip.folder} · {when} · {fmtSize(clip.size)}
+      </div>
+    </button>
+  );
+}
+
 export function Studio({
   path,
   clips,
@@ -82,6 +177,19 @@ export function Studio({
   const [reload, setReload] = useState(0);
   const video = useRef<HTMLVideoElement>(null);
   const bar = useRef<HTMLDivElement>(null);
+  const wrap = useRef<HTMLDivElement>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [theater, setTheater] = useState(() => loadJson("rewind.theater", false));
+  // Overlay controls: shown while the pointer moves over the video, hidden after a moment of stillness.
+  const [hover, setHover] = useState(false);
+  const [active, setActive] = useState(false);
+  const idle = useRef<number | undefined>(undefined);
+  const poke = useCallback(() => {
+    setActive(true);
+    window.clearTimeout(idle.current);
+    idle.current = window.setTimeout(() => setActive(false), 2200);
+  }, []);
+  useEffect(() => () => window.clearTimeout(idle.current), []);
   const [info, setInfo] = useState<Probe | null>(null);
   const [duration, setDuration] = useState(0);
   const [time, setTime] = useState(0);
@@ -187,6 +295,29 @@ export function Studio({
     } else v.pause();
   }, [range]);
 
+  // Fullscreen: Rewind's window goes fullscreen and the player covers it.
+  // (Not the browser Fullscreen API, which embedded web views can refuse.)
+  // Esc, F or the button leave it.
+  const toggleFullscreen = useCallback(() => setFullscreen((f) => !f), []);
+  const wasFullscreen = useRef(false);
+  useEffect(() => {
+    if (fullscreen === wasFullscreen.current) return;
+    wasFullscreen.current = fullscreen;
+    appWindow()?.setFullscreen(fullscreen).catch(() => {});
+  }, [fullscreen]);
+  useEffect(
+    () => () => {
+      if (wasFullscreen.current) appWindow()?.setFullscreen(false).catch(() => {});
+    },
+    [],
+  );
+  const toggleTheater = useCallback(() => {
+    setTheater((t: boolean) => {
+      saveJson("rewind.theater", !t);
+      return !t;
+    });
+  }, []);
+
   // Minimized, hidden to the tray, or covered: pause right where it is.
   useEffect(() => {
     const pause = () => video.current?.pause();
@@ -220,10 +351,13 @@ export function Studio({
         e.preventDefault();
         setVolume(volume - 0.1);
       } else if (e.key === "m" || e.key === "M") toggleMute();
+      else if ((e.key === "f" || e.key === "F") && !e.ctrlKey && !e.altKey) toggleFullscreen();
+      else if (e.key === "Escape" && fullscreen) setFullscreen(false);
+      else if ((e.key === "t" || e.key === "T") && !e.ctrlKey && !e.altKey && !fullscreen) toggleTheater();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [path, toggle, seek, volume, setVolume, toggleMute]);
+  }, [path, toggle, seek, volume, setVolume, toggleMute, toggleFullscreen, toggleTheater, fullscreen]);
 
   // Dragging on the timeline: handles move in/out, anywhere else scrubs.
   const drag = (kind: "in" | "out" | "seek") => (e: React.PointerEvent) => {
@@ -243,6 +377,24 @@ export function Studio({
     };
     apply(e.clientX);
     const move = (ev: PointerEvent) => apply(ev.clientX);
+    const up = () => {
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
+    };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+  };
+
+  // The fullscreen progress bar: click or drag to jump.
+  const scrubProgress = (e: React.PointerEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    el.setPointerCapture(e.pointerId);
+    const to = (x: number) => {
+      const r = el.getBoundingClientRect();
+      seek(Math.max(0, Math.min(1, (x - r.left) / r.width)) * duration);
+    };
+    to(e.clientX);
+    const move = (ev: PointerEvent) => to(ev.clientX);
     const up = () => {
       el.removeEventListener("pointermove", move);
       el.removeEventListener("pointerup", up);
@@ -274,21 +426,25 @@ export function Studio({
   };
 
   if (!path) {
-    const recent = (clips ?? []).slice(0, 8);
+    const recent = (clips ?? []).slice(0, 12);
     return (
       <div className="page">
         <h1>Studio</h1>
-        <div className="empty">
-          <strong>Pick a clip to edit</strong>
-          <span>Open one from Clips, or choose a recent one:</span>
-          <div className="stack" style={{ width: "100%", maxWidth: 420 }}>
-            {recent.map((c) => (
-              <button key={c.path} className="btn block" onClick={() => onOpen(c.path)}>
-                {c.name}
-              </button>
-            ))}
+        {recent.length === 0 ? (
+          <div className="empty">
+            <strong>No clips yet</strong>
+            <span>Save a clip with your hotkey, then edit it here.</span>
           </div>
-        </div>
+        ) : (
+          <>
+            <p className="muted" style={{ margin: 0 }}>Pick a clip to edit. Recent clips:</p>
+            <div className="grid">
+              {recent.map((c) => (
+                <PickerCard key={c.path} clip={c} onOpen={onOpen} />
+              ))}
+            </div>
+          </>
+        )}
       </div>
     );
   }
@@ -322,9 +478,18 @@ export function Studio({
           Save trim (exact)
         </button>
       </div>
-      <div className="studio-body">
+      <div className={`studio-body ${theater ? "theater" : ""}`}>
         <div className="stage">
-          <div className="video-wrap">
+          <div
+            ref={wrap}
+            className={`video-wrap ${fullscreen ? "fs" : ""} ${hover && (active || !playing) ? "ui" : ""} ${fullscreen && playing && !active ? "idle" : ""}`}
+            onPointerMove={() => {
+              setHover(true);
+              poke();
+            }}
+            onPointerEnter={() => setHover(true)}
+            onPointerLeave={() => setHover(false)}
+          >
             <video
               key={`${path}#${reload}`}
               ref={video}
@@ -355,8 +520,57 @@ export function Studio({
               onWaiting={() => extraAudio.current.forEach((a) => a.pause())}
               onPlaying={() => syncExtra(true)}
               onError={() => setPlayError(true)}
-              onClick={toggle}
             />
+            {!playError && (
+              <div
+                className={`vid-overlay ${playing ? "playing" : "paused"}`}
+                onClick={(e) => e.target === e.currentTarget && toggle()}
+                onDoubleClick={(e) => e.target === e.currentTarget && toggleFullscreen()}
+              >
+                <button
+                  className="vid-center"
+                  aria-label={playing ? "Pause" : "Play"}
+                  onClick={toggle}
+                  onDoubleClick={(e) => e.stopPropagation()}
+                >
+                  {playing ? Icon.pause : Icon.play}
+                </button>
+                <div className="vid-bar">
+                  {fullscreen && (
+                    <>
+                      <button className="vid-btn" aria-label={playing ? "Pause" : "Play"} onClick={toggle}>
+                        {playing ? Icon.pause : Icon.play}
+                      </button>
+                      <span className="mono vid-time">
+                        {fmtTime(time)} / {fmtTime(duration)}
+                      </span>
+                      <div className="vid-progress" onPointerDown={scrubProgress}>
+                        <div style={{ width: duration ? `${(time / duration) * 100}%` : 0 }} />
+                      </div>
+                    </>
+                  )}
+                  {!fullscreen && <span style={{ flex: 1 }} />}
+                  {!fullscreen && (
+                    <button
+                      className="vid-btn"
+                      aria-label={theater ? "Exit theater mode" : "Theater mode"}
+                      title={theater ? "Exit theater mode (T)" : "Theater mode (T)"}
+                      onClick={toggleTheater}
+                    >
+                      {theater ? Icon.theaterOff : Icon.theater}
+                    </button>
+                  )}
+                  <button
+                    className="vid-btn"
+                    aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen"}
+                    title={fullscreen ? "Exit fullscreen (F or Esc)" : "Fullscreen (F)"}
+                    onClick={toggleFullscreen}
+                  >
+                    {fullscreen ? Icon.exitFullscreen : Icon.fullscreen}
+                  </button>
+                </div>
+              </div>
+            )}
             {playError && (
               <div className="video-msg">
                 <strong style={{ color: "var(--text)" }}>The preview can't play this file's format</strong>
@@ -432,8 +646,9 @@ export function Studio({
             <span className="mono">
               Start {fmtTime(a)} · End {fmtTime(b)} · Length {fmtTime(Math.max(0, b - a))}
             </span>
-            <span>Space play · I / O set points · ← → 5 s · Shift+← → one frame · ↑ ↓ volume · M mute</span>
+            <span>Space play · I / O set points · ← → 5 s · Shift+← → one frame · ↑ ↓ volume · M mute · T theater · F fullscreen</span>
           </div>
+          {!theater && <ClipStrip clips={(clips ?? []).slice(0, 30)} current={path} onOpen={onOpen} />}
         </div>
 
         <aside className="side">

@@ -5,6 +5,7 @@
   "windows": ["main", "flyout"],
   "permissions": [
     "core:default",
+    "core:window:allow-set-fullscreen",
     "opener:default",
     "dialog:default"
   ]

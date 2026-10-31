@@ -133,6 +133,52 @@ h1 { margin: 0; font-family: var(--display); font-size: 28px; font-weight: 600; 
 .stage { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 14px; padding: 18px; background: #0b0d10; }
 .video-wrap { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; border-radius: 10px; overflow: hidden; background: #000; position: relative; }
 .video-wrap video { width: 100%; height: 100%; object-fit: contain; display: block; }
+.studio-body.theater .side { display: none; }
+.video-wrap.fs { position: fixed; inset: 0; z-index: 100; border-radius: 0; }
+.video-wrap.idle, .video-wrap.idle * { cursor: none; }
+
+/* Player overlay: a faint play / pause on hover, and theater / fullscreen buttons. */
+.vid-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.vid-center {
+  width: 76px; height: 76px; border-radius: 50%; border: 0; padding: 0; display: grid; place-items: center;
+  background: rgba(0, 0, 0, 0.42); color: #fff; opacity: 0; transform: scale(0.94);
+  transition: opacity 0.18s ease, transform 0.18s ease, background 0.18s ease;
+}
+.vid-center svg { width: 32px; height: 32px; }
+.vid-overlay.playing .vid-center svg { width: 30px; height: 30px; }
+.video-wrap.ui .vid-center { opacity: 0.42; transform: scale(1); }
+.video-wrap .vid-center:hover, .video-wrap .vid-center:focus-visible { opacity: 0.95; background: rgba(0, 0, 0, 0.6); transform: scale(1.05); }
+.vid-bar {
+  position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 10px; padding: 28px 12px 12px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.55)); opacity: 0; pointer-events: none; transition: opacity 0.18s ease;
+}
+.video-wrap.ui .vid-bar, .vid-bar:focus-within { opacity: 1; pointer-events: auto; }
+.vid-btn {
+  width: 34px; height: 34px; border-radius: 8px; border: 0; padding: 0; display: grid; place-items: center;
+  background: rgba(0, 0, 0, 0.35); color: #fff; cursor: pointer;
+}
+.vid-btn svg { width: 18px; height: 18px; }
+.vid-btn:hover { background: rgba(255, 255, 255, 0.16); }
+.vid-time { color: #fff; font-size: 13px; white-space: nowrap; }
+.vid-progress { flex: 1; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.25); cursor: pointer; overflow: hidden; }
+.vid-progress > div { height: 100%; background: var(--accent); }
+.video-wrap.fs .vid-bar { padding: 40px 24px 20px; gap: 14px; }
+
+/* Studio: thumbnails of recent clips under the timeline. */
+.strip { display: flex; gap: 10px; overflow-x: auto; flex-shrink: 0; padding: 2px 2px 6px; }
+.strip-item { flex: 0 0 132px; display: flex; flex-direction: column; gap: 5px; background: none; border: 0; padding: 0; text-align: left; cursor: pointer; color: var(--muted); font-size: 11px; min-width: 0; }
+.strip-item span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.strip-thumb { aspect-ratio: 16 / 9; border-radius: 7px; overflow: hidden; border: 1px solid var(--line-2); background: repeating-linear-gradient(135deg, #1b2029 0 10px, #181c24 10px 20px); }
+.strip-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.strip-item:hover .strip-thumb { border-color: var(--accent); }
+.strip-item.on { cursor: default; color: var(--text); }
+.strip-item.on .strip-thumb { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+
+/* Studio picker cards: a faint play icon on hover. */
+.thumb-play { position: absolute; inset: 0; display: grid; place-items: center; color: #fff; opacity: 0; transition: opacity 0.15s ease; }
+.thumb-play svg { width: 44px; height: 44px; padding: 12px; border-radius: 50%; background: rgba(0, 0, 0, 0.45); }
+.card:hover .thumb-play { opacity: 0.75; }
+
 .video-msg { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 12px; align-items: center; justify-content: center; text-align: center; padding: 24px; color: var(--muted); }
 .transport { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
 .round { width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--line-2); background: transparent; color: var(--text); padding: 0; }

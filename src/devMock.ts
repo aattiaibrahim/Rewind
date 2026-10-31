@@ -54,7 +54,7 @@ export function installDevMock() {
     list_monitors: () => [],
     list_audio_inputs: () => [],
     probe_file: () => ({ duration: 45, codec: "av1", width: 1920, height: 1080, fps: 60, audioTracks: 2, container: "matroska" }),
-    thumbnail: () => Promise.reject("no thumbnails in preview"),
+    thumbnail: (a) => `/preview-thumb-${((a.path as string).length % 3) + 1}.jpg`,
     preview_audio: () => ({
       firstTitle: "Desktop audio",
       extra: [{ index: 1, title: "Microphone", path: "C:\\Users\\you\\preview\\mic.m4a" }],
