@@ -1,6 +1,6 @@
 [package]
 name = "rewind"
-version = "0.1.6"
+version = "0.1.7"
 description = "Lightweight NVENC replay-buffer clipper"
 authors = ["Rewind"]
 edition = "2024"
@@ -48,6 +48,7 @@ features = [
   "Win32_System_Performance",
   "Win32_System_ProcessStatus",
   "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_Registry",
   "Foundation",
   "Graphics",
   "Graphics_Capture",

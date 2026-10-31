@@ -23,7 +23,7 @@ A lightweight replay-buffer clipper for Windows that records on your NVIDIA GPU 
 
 - **Audio**: desktop sound (WASAPI loopback, track 1) and the microphone (mono by default, track 2), both on by default. Synced to video within about 10 ms. Exports and compresses mix both tracks into one.
 - **Replace original** option: trims, exports and compresses overwrite the edited file, and the old one goes to the Recycle Bin.
-- **Performance test** (Performance page): measures your game's FPS and 1% lows with no recorder, then with Rewind, OBS replay buffer, NVIDIA Instant Replay and Medal in turn, plus each one's CPU, RAM, GPU and video-encoder use. Frame times come from Intel PresentMon. A voice tells you when to switch things on or off.
+- **Performance test** (Performance page): compares your game's FPS, 1% lows and GPU time per frame with nothing recording vs Rewind, OBS replay buffer, NVIDIA Instant Replay and Medal. After a warm-up, runs alternate nothing → recorder → nothing over several rounds in a shuffled order; each recorder is compared with the runs either side of it, and results carry 95% confidence ranges, so differences inside the game's own noise are reported as "no measurable cost". Every run is checked (game in front, the right recorder encoding, nothing else encoding), and it warns about drift, V-Sync, FPS caps, CPU-bound scenes and recorders set to a different resolution, FPS or buffer length. Frame times come from Intel PresentMon.
 
 ## Not yet
 

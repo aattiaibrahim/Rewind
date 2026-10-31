@@ -62,13 +62,75 @@ export type UpdateState = {
 
 export type BenchApp = "rewind" | "obs" | "nvidia" | "medal";
 export type AppUse = { cpuPercent: number; ramMb: number; gpu3dPercent: number; encoderPercent: number };
-export type BenchWindow = {
-  seconds: number;
-  frames: { frames: number; avgFps: number; low1Fps: number; avgFrameMs: number } | null;
-  apps: Partial<Record<BenchApp, AppUse>>;
+export type BenchFrames = {
+  frames: number;
+  avgFps: number;
+  low1Fps: number;
+  avgFrameMs: number;
+  gpuBusyMs: number | null;
+  cpuBusyMs: number | null;
+  syncInterval: number | null;
+  presentMode: string | null;
 };
-export type BenchPhase = { name: string; app: BenchApp | null; window: BenchWindow | null; skipped: string | null; note: string | null };
-export type BenchReport = { game: string; started: string; seconds: number; cores: number; phases: BenchPhase[]; error: string | null };
+export type Stat = { mean: number; sd: number; n: number; ci95: number | null };
+export type BenchRun = {
+  round: number;
+  app: BenchApp | null;
+  atSecs: number;
+  frames: BenchFrames | null;
+  apps: Partial<Record<BenchApp, AppUse>>;
+  excluded: string | null;
+};
+export type Verdict = "oneRun" | "noMeasurableCost" | "costs" | "faster" | "noData";
+export type Comparison = {
+  app: BenchApp;
+  runs: number;
+  fpsCost: Stat | null;
+  low1Cost: Stat | null;
+  gpuMsAdded: Stat | null;
+  cpuPercent: Stat | null;
+  gpu3dPercent: Stat | null;
+  encoderPercent: Stat | null;
+  ramMb: Stat | null;
+  verdict: Verdict;
+};
+export type Baseline = {
+  runs: number;
+  fps: Stat | null;
+  low1: Stat | null;
+  noisePercent: number | null;
+  driftPercent: number | null;
+  gpuBusyShare: number | null;
+  cpuBusyShare: number | null;
+  vsync: boolean;
+  presentMode: string | null;
+};
+export type RecorderSettings = {
+  app: BenchApp;
+  width: number | null;
+  height: number | null;
+  fps: number | null;
+  codec: string | null;
+  quality: string | null;
+  bufferSecs: number | null;
+  source: string;
+};
+export type BenchReport = {
+  game: string;
+  started: string;
+  seconds: number;
+  rounds: number;
+  cores: number;
+  warmupSecs: number;
+  minutes: number;
+  runs: BenchRun[];
+  baseline: Baseline;
+  results: Comparison[];
+  settings: RecorderSettings[];
+  skipped: { app: BenchApp; reason: string }[];
+  warnings: string[];
+  error: string | null;
+};
 export type BenchProgress = { step: string; detail: string; waitingForUser: boolean; done: number; total: number };
 
 export type PreviewAudio ={ firstTitle: string; extra: { index: number; title: string; path: string }[] };
@@ -149,7 +211,8 @@ export const api = {
     }
     return thumbCache.get(k)!;
   },
-  startBench: (compare: BenchApp[], seconds: number) => invoke<void>("start_bench", { options: { compare, seconds } }),
+  startBench: (compare: BenchApp[], seconds: number, rounds: number) =>
+    invoke<void>("start_bench", { options: { compare, seconds, rounds } }),
   cancelBench: () => invoke<void>("cancel_bench"),
   benchState: () => invoke<[boolean, BenchReport | null]>("bench_state"),
   previewAudio: (path: string) => invoke<PreviewAudio>("preview_audio", { path }),

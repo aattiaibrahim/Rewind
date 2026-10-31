@@ -1,63 +1,112 @@
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
-import { api, AppUse, BenchApp, BenchPhase, BenchProgress, BenchReport, errText } from "./api";
+import { api, BenchApp, BenchProgress, BenchReport, Comparison, RecorderSettings, Stat, Verdict, errText } from "./api";
 
 const OTHERS: { app: BenchApp; label: string; how: string }[] = [
-  { app: "obs", label: "OBS replay buffer", how: "Started and stopped automatically" },
-  { app: "nvidia", label: "NVIDIA Instant Replay", how: "A voice asks you to press Alt+Shift+F10" },
-  { app: "medal", label: "Medal", how: "A voice asks you to turn clipping on" },
+  { app: "obs", label: "OBS replay buffer", how: "Started and stopped for you, or a voice asks you to" },
+  { app: "nvidia", label: "NVIDIA Instant Replay", how: "A voice asks you to press Alt+Shift+F10 each round" },
+  { app: "medal", label: "Medal", how: "A voice asks you to turn clipping on and off each round" },
 ];
+
+const NAME: Record<BenchApp, string> = {
+  rewind: "Rewind",
+  obs: "OBS replay buffer",
+  nvidia: "NVIDIA Instant Replay",
+  medal: "Medal",
+};
 
 const f1 = (n: number) => n.toFixed(1);
 const f2 = (n: number) => n.toFixed(2);
+const signed = (n: number, d = 1) => `${n < 0 ? "−" : n > 0 ? "+" : "±"}${Math.abs(n).toFixed(d)}`;
+const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
 
-/** The recorder's own use during its run, minus what it used with nothing recording. */
-function recorderUse(p: BenchPhase, base: BenchPhase | undefined): AppUse | null {
-  if (!p.app || !p.window) return null;
-  const now = p.window.apps[p.app];
-  if (!now) return null;
-  const idle = base?.window?.apps[p.app];
-  return {
-    cpuPercent: Math.max(0, now.cpuPercent - (idle?.cpuPercent ?? 0)),
-    ramMb: now.ramMb,
-    gpu3dPercent: Math.max(0, now.gpu3dPercent - (idle?.gpu3dPercent ?? 0)),
-    encoderPercent: now.encoderPercent,
-  };
+/** "1.2% ±0.8" — mean with its 95% range. */
+function pm(s: Stat | null, unit: string, d = 1) {
+  if (!s) return "–";
+  return `${s.mean.toFixed(d)}${unit}${s.ci95 !== null ? ` ±${s.ci95.toFixed(d)}` : ""}`;
+}
+
+/** FPS cost shown as a slowdown: positive = slower. */
+function cost(s: Stat | null) {
+  if (!s) return "–";
+  const ci = s.ci95 !== null ? ` ±${f1(s.ci95)}` : "";
+  return `${signed(-s.mean)}%${ci}`;
+}
+
+function verdictText(c: Comparison): { text: string; tone: "good" | "bad" | "dim" } {
+  const v: Verdict = c.verdict;
+  const s = c.fpsCost;
+  switch (v) {
+    case "noMeasurableCost":
+      return { text: `No measurable FPS cost (within ±${f1(s?.ci95 ?? 0)}%)`, tone: "good" };
+    case "costs":
+      return { text: `Costs ${f1(s!.mean)}% FPS (${f1(s!.mean - s!.ci95!)}–${f1(s!.mean + s!.ci95!)}%)`, tone: "bad" };
+    case "faster":
+      return { text: "Faster than nothing recording: noise or a changing scene", tone: "dim" };
+    case "oneRun":
+      return { text: "Only one good run: no confidence range", tone: "dim" };
+    default:
+      return { text: "No good runs", tone: "dim" };
+  }
+}
+
+function res(s: RecorderSettings) {
+  return s.width && s.height ? `${s.width}×${s.height}` : "?";
 }
 
 function asText(r: BenchReport) {
-  const base = r.phases.find((p) => !p.app);
+  const b = r.baseline;
   const lines = [
-    `Rewind performance test: ${r.game}, ${r.started}, ${r.seconds} s per run`,
-    "Recorder | Avg FPS | 1% low | FPS cost | CPU (whole PC) | RAM | GPU | Encoder",
+    `Rewind performance test: ${r.game}, ${r.started}`,
+    `${r.rounds} rounds × ${r.seconds} s runs, interleaved with nothing-recording runs, shuffled order, ${r.warmupSecs} s warm-up, ${f1(r.minutes)} min total`,
+    `Nothing recording: ${b.fps ? `${f1(b.fps.mean)} FPS` : "–"} over ${b.runs} runs, run-to-run noise ±${f1(b.noisePercent ?? 0)}%, drift ${signed(b.driftPercent ?? 0)}%` +
+      (b.gpuBusyShare !== null ? `, GPU busy ${Math.round(b.gpuBusyShare * 100)}% of each frame` : ""),
+    "",
+    "Recorder | FPS change (95% range) | 1% low change | GPU time per frame | CPU (whole PC) | GPU 3D | Encoder | RAM | Good runs | Verdict",
   ];
-  for (const p of r.phases) {
-    if (!p.window) {
-      lines.push(`${p.name} | skipped: ${p.skipped ?? ""}`);
-      continue;
-    }
-    const fr = p.window.frames;
-    const u = recorderUse(p, base);
-    const cost = fr && base?.window?.frames ? (1 - fr.avgFps / base.window.frames.avgFps) * 100 : null;
+  for (const c of r.results) {
     lines.push(
       [
-        p.name,
-        fr ? f1(fr.avgFps) : "-",
-        fr ? f1(fr.low1Fps) : "-",
-        p.app ? (cost === null ? "-" : `${f1(cost)}%`) : "baseline",
-        u ? `${f2(u.cpuPercent)}%` : "-",
-        u ? `${Math.round(u.ramMb)} MB` : "-",
-        u ? `${f1(u.gpu3dPercent)}%` : "-",
-        u ? `${f1(u.encoderPercent)}%` : "-",
+        NAME[c.app],
+        cost(c.fpsCost),
+        cost(c.low1Cost),
+        c.gpuMsAdded ? `${signed(c.gpuMsAdded.mean, 2)} ms` : "–",
+        pm(c.cpuPercent, "%", 2),
+        pm(c.gpu3dPercent, "%"),
+        pm(c.encoderPercent, "%"),
+        c.ramMb ? `${Math.round(c.ramMb.mean)} MB` : "–",
+        c.runs,
+        verdictText(c).text,
       ].join(" | "),
     );
   }
+  lines.push("", "Settings: recorder | resolution | fps | codec | quality | buffer");
+  for (const s of r.settings) {
+    lines.push([NAME[s.app], res(s), s.fps ?? "?", s.codec ?? "?", s.quality ?? "?", s.bufferSecs ? `${s.bufferSecs} s` : "?"].join(" | "));
+  }
+  if (r.warnings.length) lines.push("", "Warnings:", ...r.warnings.map((w) => `- ${w}`));
+  lines.push("", "All runs: # | round | recording | at | avg FPS | 1% low | GPU ms/frame | note");
+  r.runs.forEach((run, i) =>
+    lines.push(
+      [
+        i + 1,
+        run.round,
+        run.app ? NAME[run.app] : "nothing",
+        mmss(run.atSecs),
+        run.frames ? f1(run.frames.avgFps) : "–",
+        run.frames ? f1(run.frames.low1Fps) : "–",
+        run.frames?.gpuBusyMs != null ? f2(run.frames.gpuBusyMs) : "–",
+        run.excluded ?? "",
+      ].join(" | "),
+    ),
+  );
   return lines.join("\n");
 }
 
 export function Performance() {
   const [compare, setCompare] = useState<BenchApp[]>(["obs", "nvidia", "medal"]);
-  const [seconds, setSeconds] = useState(30);
+  const [seconds, setSeconds] = useState(20);
+  const [rounds, setRounds] = useState(3);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<BenchProgress | null>(null);
   const [report, setReport] = useState<BenchReport | null>(null);
@@ -84,7 +133,7 @@ export function Performance() {
   const start = async () => {
     setErr(null);
     try {
-      await api.startBench(compare, seconds);
+      await api.startBench(compare, seconds, rounds);
       setRunning(true);
       setReport(null);
     } catch (e) {
@@ -92,17 +141,20 @@ export function Performance() {
     }
   };
 
-  const base = report?.phases.find((p) => !p.app);
-  const baseFps = base?.window?.frames?.avgFps;
-  const minutes = Math.ceil(((2 + compare.length) * (seconds + 15) + 10) / 60);
+  // Each recorder run and the baseline after it, plus switching time (manual ones take longer).
+  const recorders = 1 + compare.length;
+  const manual = compare.filter((a) => a !== "obs").length;
+  const minutes = Math.ceil(
+    (30 + 20 + seconds + rounds * (recorders * (2 * seconds + 2 * 4 + 8 + 5 + 6) + manual * 15)) / 60,
+  );
 
   return (
     <div className="page">
       <h1>Performance test</h1>
       <p className="muted" style={{ margin: 0, maxWidth: 760, lineHeight: 1.6 }}>
-        Measures your game's frame rate with no recorder running, then with Rewind and each other recorder in turn, in the same
-        game on the same PC. It also shows how much CPU, memory, GPU and video encoder each recorder uses. For a fair test, stand
-        somewhere steady in-game (a menu, training range or spawn), because a busy fight changes FPS on its own.
+        Measures your game's frame rate with nothing recording, then with each recorder, switching back and forth several times in
+        a shuffled order. Each recorder is compared with the runs right before and after it, and the repeats show how sure the
+        result is. Differences smaller than the game's own run-to-run noise are reported as "no measurable cost".
       </p>
 
       {!running && (
@@ -118,23 +170,37 @@ export function Performance() {
                 type="checkbox"
                 className="switch"
                 checked={compare.includes(o.app)}
-                onChange={(e) =>
-                  setCompare((c) => (e.target.checked ? [...c, o.app] : c.filter((x) => x !== o.app)))
-                }
+                onChange={(e) => setCompare((c) => (e.target.checked ? [...c, o.app] : c.filter((x) => x !== o.app)))}
               />
             </label>
           ))}
+          <label className="setting">
+            <span>
+              Rounds
+              <small>How many times each recorder is measured. 3 or more gives a confidence range worth trusting.</small>
+            </span>
+            <select className="select" value={rounds} onChange={(e) => setRounds(Number(e.target.value))}>
+              <option value={2}>2</option>
+              <option value={3}>3</option>
+              <option value={5}>5</option>
+            </select>
+          </label>
           <label className="setting">
             <span>
               Length of each run
               <small>The whole test takes about {minutes} min</small>
             </span>
             <select className="select" value={seconds} onChange={(e) => setSeconds(Number(e.target.value))}>
+              <option value={15}>15 seconds</option>
               <option value={20}>20 seconds</option>
               <option value={30}>30 seconds</option>
-              <option value={60}>60 seconds</option>
             </select>
           </label>
+          <ul className="muted bench-tips">
+            <li>Best: the game's built-in benchmark, or standing still in a quiet spot (training range, an empty map).</li>
+            <li>Turn off V-Sync and FPS caps for the test, or a recorder's cost gets hidden. Rewind warns if it sees either.</li>
+            <li>Close other heavy apps. Plug in a laptop.</li>
+          </ul>
           <div className="row" style={{ paddingTop: 12, gap: 12, flexWrap: "wrap" }}>
             <button className="btn primary" onClick={start}>
               Start test
@@ -154,80 +220,222 @@ export function Performance() {
             {progress?.detail ?? "Switch to your game."}
           </p>
           <div className="meter" aria-hidden="true">
-            <div style={{ width: `${progress ? (progress.done / progress.total) * 100 : 0}%` }} />
+            <div style={{ width: `${progress ? (progress.done / Math.max(1, progress.total)) * 100 : 0}%` }} />
           </div>
-          <div className="row" style={{ paddingTop: 12 }}>
+          <div className="row" style={{ paddingTop: 12, gap: 12 }}>
             <button className="btn" onClick={() => api.cancelBench()}>
               Cancel test
             </button>
+            {progress && (
+              <span className="muted" style={{ fontSize: 12 }}>
+                Run {progress.done} of {progress.total}
+              </span>
+            )}
           </div>
         </section>
       )}
 
-      {report && (
-        <section className="group" style={{ maxWidth: 1000 }}>
-          <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
-            <h2 style={{ margin: 0 }}>
-              Results{report.game ? `: ${report.game}` : ""} <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>{report.started}</span>
-            </h2>
-            <button
-              className="btn small"
-              onClick={() => {
-                navigator.clipboard.writeText(asText(report)).then(() => {
-                  setCopied(true);
-                  setTimeout(() => setCopied(false), 2000);
-                });
-              }}
-            >
-              {copied ? "Copied" : "Copy results"}
-            </button>
-          </div>
-          {report.error && <div className="err-text" style={{ padding: "8px 0" }}>{report.error}</div>}
-          <div style={{ overflowX: "auto", marginTop: 12 }}>
-            <table className="bench">
-              <thead>
-                <tr>
-                  <th>Recorder</th>
-                  <th>Avg FPS</th>
-                  <th>1% low FPS</th>
-                  <th>FPS cost</th>
-                  <th title="Share of your whole CPU, on top of what it uses idle">CPU</th>
-                  <th title="Private memory, including its replay buffer">RAM</th>
-                  <th title="Graphics (3D) engine, on top of idle">GPU</th>
-                  <th title="Video encoder chip">Encoder</th>
-                </tr>
-              </thead>
-              <tbody>
-                {report.phases.map((p) => {
-                  const fr = p.window?.frames;
-                  const u = recorderUse(p, base);
-                  const cost = fr && baseFps ? (1 - fr.avgFps / baseFps) * 100 : null;
-                  return (
-                    <tr key={p.name} className={p.app === "rewind" ? "ours" : ""}>
-                      <td>
-                        {p.name}
-                        {(p.skipped || p.note) && <div className="muted" style={{ fontSize: 11 }}>{p.skipped ?? p.note}</div>}
-                      </td>
-                      <td className="mono">{fr ? f1(fr.avgFps) : "–"}</td>
-                      <td className="mono">{fr ? f1(fr.low1Fps) : "–"}</td>
-                      <td className="mono">{!p.app ? "baseline" : cost === null ? "–" : `${cost > 0 ? "−" : "+"}${f1(Math.abs(cost))}%`}</td>
-                      <td className="mono">{u ? `${f2(u.cpuPercent)}%` : "–"}</td>
-                      <td className="mono">{u ? `${Math.round(u.ramMb)} MB` : "–"}</td>
-                      <td className="mono">{u ? `${f1(u.gpu3dPercent)}%` : "–"}</td>
-                      <td className="mono">{u ? `${f1(u.encoderPercent)}%` : "–"}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          <p className="muted" style={{ fontSize: 11, lineHeight: 1.6, marginBottom: 0 }}>
-            FPS cost compares each run with "No recorder". Differences under about 1–2% are within normal run-to-run variation. CPU is
-            a share of your whole processor ({report.cores} threads). RAM includes each recorder's replay buffer. Run the test twice to
-            see how consistent the numbers are.
-          </p>
-        </section>
-      )}
+      {report && <Results report={report} copied={copied} onCopy={() => {
+        navigator.clipboard.writeText(asText(report)).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+        });
+      }} />}
     </div>
+  );
+}
+
+function Results({ report: r, copied, onCopy }: { report: BenchReport; copied: boolean; onCopy: () => void }) {
+  const b = r.baseline;
+  return (
+    <section className="group" style={{ maxWidth: 1060 }}>
+      <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+        <h2 style={{ margin: 0 }}>
+          Results{r.game ? `: ${r.game}` : ""}{" "}
+          <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>{r.started}</span>
+        </h2>
+        <button className="btn small" onClick={onCopy}>
+          {copied ? "Copied" : "Copy results"}
+        </button>
+      </div>
+      {r.error && <div className="err-text" style={{ padding: "8px 0" }}>{r.error} Results below use the runs finished before that.</div>}
+
+      <div className="bench-summary">
+        <div>
+          <span>Nothing recording</span>
+          <strong>{b.fps ? `${f1(b.fps.mean)} FPS` : "–"}</strong>
+          <small>{b.runs} runs · 1% low {b.low1 ? f1(b.low1.mean) : "–"}</small>
+        </div>
+        <div>
+          <span>Run-to-run noise</span>
+          <strong>{b.noisePercent !== null ? `±${f1(b.noisePercent)}%` : "–"}</strong>
+          <small>Spread between identical runs</small>
+        </div>
+        <div>
+          <span>Drift over the test</span>
+          <strong>{b.driftPercent !== null ? `${signed(b.driftPercent)}%` : "–"}</strong>
+          <small>Cancelled out by pairing</small>
+        </div>
+        <div>
+          <span>GPU busy per frame</span>
+          <strong>{b.gpuBusyShare !== null ? `${Math.round(b.gpuBusyShare * 100)}%` : "–"}</strong>
+          <small>{b.vsync ? "V-Sync on" : b.gpuBusyShare !== null && b.gpuBusyShare > 0.9 ? "GPU-bound: good for this test" : "Near 100% is best"}</small>
+        </div>
+        <div>
+          <span>Test</span>
+          <strong>{r.rounds} × {r.seconds} s</strong>
+          <small>{f1(r.minutes)} min · {r.runs.length} runs</small>
+        </div>
+      </div>
+
+      {r.warnings.length > 0 && (
+        <ul className="bench-warnings">
+          {r.warnings.map((w) => (
+            <li key={w}>{w}</li>
+          ))}
+        </ul>
+      )}
+
+      <div style={{ overflowX: "auto", marginTop: 12 }}>
+        <table className="bench">
+          <thead>
+            <tr>
+              <th>Recorder</th>
+              <th title="Change in average FPS vs the nothing-recording runs either side, with its 95% range">FPS change</th>
+              <th title="Change in 1% low FPS (the slowest 1% of frames)">1% low change</th>
+              <th title="Extra time the GPU spends on each frame. Still shows a cost when FPS is capped.">GPU time / frame</th>
+              <th title={`Share of your whole CPU (${r.cores} threads), on top of what it uses idle`}>CPU</th>
+              <th title="Graphics (3D) engine, on top of idle">GPU</th>
+              <th title="Video encoder chip">Encoder</th>
+              <th title="Private memory, including its replay buffer">RAM</th>
+              <th>Verdict</th>
+            </tr>
+          </thead>
+          <tbody>
+            {r.results.map((c) => {
+              const v = verdictText(c);
+              const skip = r.skipped.find((s) => s.app === c.app);
+              return (
+                <tr key={c.app} className={c.app === "rewind" ? "ours" : ""}>
+                  <td>
+                    {NAME[c.app]}
+                    <div className="muted" style={{ fontSize: 11 }}>
+                      {skip ? skip.reason : `${c.runs} good run${c.runs === 1 ? "" : "s"}`}
+                    </div>
+                  </td>
+                  <td className="mono">{cost(c.fpsCost)}</td>
+                  <td className="mono">{cost(c.low1Cost)}</td>
+                  <td className="mono">{c.gpuMsAdded ? `${signed(c.gpuMsAdded.mean, 2)} ms` : "–"}</td>
+                  <td className="mono">{pm(c.cpuPercent, "%", 2)}</td>
+                  <td className="mono">{pm(c.gpu3dPercent, "%")}</td>
+                  <td className="mono">{pm(c.encoderPercent, "%")}</td>
+                  <td className="mono">{c.ramMb ? `${Math.round(c.ramMb.mean)} MB` : "–"}</td>
+                  <td className={`verdict ${v.tone}`}>{v.text}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <h3 className="bench-h3">Recorder settings</h3>
+      <div style={{ overflowX: "auto" }}>
+        <table className="bench">
+          <thead>
+            <tr>
+              <th>Recorder</th>
+              <th>Resolution</th>
+              <th>FPS</th>
+              <th>Codec</th>
+              <th>Quality</th>
+              <th>Buffer</th>
+              <th>Read from</th>
+            </tr>
+          </thead>
+          <tbody>
+            {r.settings.map((s) => (
+              <tr key={s.app} className={s.app === "rewind" ? "ours" : ""}>
+                <td>{NAME[s.app]}</td>
+                <td className="mono">{res(s)}</td>
+                <td className="mono">{s.fps !== null ? Math.round(s.fps) : "?"}</td>
+                <td>{s.codec ?? "?"}</td>
+                <td>{s.quality ?? "?"}</td>
+                <td className="mono">{s.bufferSecs ? `${s.bufferSecs} s` : "?"}</td>
+                <td className="muted wrap">{s.source}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <details className="bench-more">
+        <summary>All runs ({r.runs.length})</summary>
+        <div style={{ overflowX: "auto" }}>
+          <table className="bench">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Round</th>
+                <th>Recording</th>
+                <th>At</th>
+                <th>Avg FPS</th>
+                <th>1% low</th>
+                <th>GPU ms / frame</th>
+                <th>Check</th>
+              </tr>
+            </thead>
+            <tbody>
+              {r.runs.map((run, i) => (
+                <tr key={i} className={run.excluded ? "left-out" : ""}>
+                  <td className="mono">{i + 1}</td>
+                  <td className="mono">{run.round}</td>
+                  <td>{run.app ? NAME[run.app] : "Nothing"}</td>
+                  <td className="mono">{mmss(run.atSecs)}</td>
+                  <td className="mono">{run.frames ? f1(run.frames.avgFps) : "–"}</td>
+                  <td className="mono">{run.frames ? f1(run.frames.low1Fps) : "–"}</td>
+                  <td className="mono">{run.frames?.gpuBusyMs != null ? f2(run.frames.gpuBusyMs) : "–"}</td>
+                  <td className="wrap">{run.excluded ? `Left out: ${run.excluded}` : "OK"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
+
+      <details className="bench-more">
+        <summary>How this test works</summary>
+        <ul className="muted bench-tips">
+          <li>
+            <b>Frames</b> come from Intel PresentMon, which reads the game's frame presents from Windows' event tracing: the same
+            source as CapFrameX and NVIDIA FrameView. 1% low is the average of the slowest 1% of frames.
+          </li>
+          <li>
+            <b>Order</b>: {r.warmupSecs} s warm-up, then nothing → recorder → nothing → recorder … for {r.rounds} rounds, with the
+            recorder order shuffled each round. Each recorder run waits {8} s after its recorder starts encoding, and each
+            nothing-recording run waits {5} s after it stops.
+          </li>
+          <li>
+            <b>Pairing</b>: each recorder run is compared with the nothing-recording runs right before and after it, so slow
+            changes (heat, background tasks) cancel out instead of being blamed on whichever recorder ran then.
+          </li>
+          <li>
+            <b>Confidence</b>: the ± numbers are 95% ranges (Student's t) across rounds. If the range includes zero, the test
+            can't tell the recorder from noise, and says so.
+          </li>
+          <li>
+            <b>Checks</b>: a nothing-recording run is left out if any recorder was using the video encoder; a recorder run is left
+            out if that recorder wasn't encoding; any run is left out if the game wasn't in front for 90% of it.
+          </li>
+          <li>
+            <b>Use</b>: CPU, GPU and encoder come from Windows' per-process counters for each recorder and its helper processes,
+            minus what it used while idle. RAM is private memory, which includes the replay buffer.
+          </li>
+          <li>
+            <b>Limits</b>: the scene isn't perfectly repeatable unless you use a built-in benchmark; settings for NVIDIA and Medal
+            are only partly readable; and a CPU-bound or capped game hides GPU-side costs (GPU time per frame still shows them).
+          </li>
+        </ul>
+      </details>
+    </section>
   );
 }

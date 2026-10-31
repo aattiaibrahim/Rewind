@@ -196,6 +196,20 @@ pub fn encoder_use(app: App) -> f64 {
     s.iter().filter(|((pid, eng), _)| pids.contains(pid) && eng.starts_with("VideoEncode")).map(|(_, v)| v).sum()
 }
 
+/// Video-encoder use of every recorder at once (one ~2 s sample).
+pub fn encoder_use_all() -> HashMap<App, f64> {
+    let Some(g) = GpuEngines::start() else { return HashMap::new() };
+    std::thread::sleep(Duration::from_secs(2));
+    let s = g.sample();
+    app_pids()
+        .into_iter()
+        .map(|(app, pids)| {
+            let v = s.iter().filter(|((pid, eng), _)| pids.contains(pid) && eng.starts_with("VideoEncode")).map(|(_, v)| v).sum();
+            (app, v)
+        })
+        .collect()
+}
+
 #[derive(Serialize, Clone, Default, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct AppUse {
@@ -214,6 +228,15 @@ pub struct Frames {
     /// Average FPS of the slowest 1% of frames.
     pub low1_fps: f64,
     pub avg_frame_ms: f64,
+    /// Average time the GPU spent working on each frame (PresentMon's
+    /// MsGPUBusy). Still shows a recorder's cost when FPS is capped.
+    pub gpu_busy_ms: Option<f64>,
+    /// Average time the game's CPU thread spent working on each frame.
+    pub cpu_busy_ms: Option<f64>,
+    /// Most common present sync interval: 1+ means V-Sync is on.
+    pub sync_interval: Option<i32>,
+    /// Most common present mode, e.g. "Hardware: Independent Flip".
+    pub present_mode: Option<String>,
 }
 
 #[derive(Serialize, Clone, Default, Debug)]
@@ -229,13 +252,23 @@ fn cores() -> f64 {
 }
 
 /// Measure for `secs`: the game's frames (if `game_pid`) and every app's use.
+#[cfg(test)]
 pub fn measure(secs: u32, game_pid: Option<u32>, presentmon: &Path, scratch: &Path) -> Window {
+    measure_with(secs, game_pid, presentmon, scratch, || {})
+}
+
+/// Like `measure`, calling `tick` about every 250 ms while it runs.
+pub fn measure_with(secs: u32, game_pid: Option<u32>, presentmon: &Path, scratch: &Path, mut tick: impl FnMut()) -> Window {
     let pids = app_pids();
     let cpu0: HashMap<u32, f64> = pids.values().flatten().filter_map(|&p| cpu_and_ram(p).map(|(c, _)| (p, c))).collect();
     let gpu = GpuEngines::start();
     let pm = game_pid.and_then(|pid| start_presentmon(presentmon, pid, secs, scratch));
     let t0 = Instant::now();
-    std::thread::sleep(Duration::from_secs(secs as u64));
+    let until = t0 + Duration::from_secs(secs as u64);
+    while Instant::now() < until {
+        tick();
+        std::thread::sleep(Duration::from_millis(250).min(until.saturating_duration_since(Instant::now())));
+    }
     let elapsed = t0.elapsed().as_secs_f64();
     let engines = gpu.as_ref().map(|g| g.sample()).unwrap_or_default();
 
@@ -299,17 +332,38 @@ pub fn frames_from_csv(text: &str, pid: u32) -> Option<Frames> {
     let header: Vec<&str> = lines.next()?.split(',').collect();
     let col = |name: &str| header.iter().position(|h| *h == name);
     let (pid_col, ms_col) = (col("ProcessID")?, col("MsBetweenPresents")?);
-    let mut ms: Vec<f64> = lines
-        .filter_map(|l| {
-            let f: Vec<&str> = l.split(',').collect();
-            (f.get(pid_col)?.parse::<u32>().ok()? == pid).then(|| f.get(ms_col)?.parse::<f64>().ok()).flatten()
-        })
-        .filter(|v| *v > 0.0)
-        .collect();
+    let (gpu_col, cpu_col, sync_col, mode_col) = (col("MsGPUBusy"), col("MsCPUBusy"), col("SyncInterval"), col("PresentMode"));
+    let mut ms: Vec<f64> = Vec::new();
+    let (mut gpu, mut cpu) = (Vec::new(), Vec::new());
+    let mut syncs: HashMap<i32, usize> = HashMap::new();
+    let mut modes: HashMap<String, usize> = HashMap::new();
+    for l in lines {
+        let f: Vec<&str> = l.split(',').collect();
+        if f.get(pid_col).and_then(|s| s.parse::<u32>().ok()) != Some(pid) {
+            continue;
+        }
+        let Some(v) = f.get(ms_col).and_then(|s| s.parse::<f64>().ok()).filter(|v| *v > 0.0) else { continue };
+        ms.push(v);
+        let num = |c: Option<usize>| c.and_then(|c| f.get(c)).and_then(|s| s.parse::<f64>().ok());
+        if let Some(g) = num(gpu_col) {
+            gpu.push(g);
+        }
+        if let Some(c) = num(cpu_col) {
+            cpu.push(c);
+        }
+        if let Some(s) = sync_col.and_then(|c| f.get(c)).and_then(|s| s.parse::<i32>().ok()) {
+            *syncs.entry(s).or_default() += 1;
+        }
+        if let Some(m) = mode_col.and_then(|c| f.get(c)) {
+            *modes.entry(m.to_string()).or_default() += 1;
+        }
+    }
     if ms.len() < 10 {
         return None;
     }
     let total: f64 = ms.iter().sum();
+    let mean = |v: &[f64]| (v.len() * 2 >= ms.len()).then(|| v.iter().sum::<f64>() / v.len() as f64);
+    let (gpu_busy_ms, cpu_busy_ms) = (mean(&gpu), mean(&cpu));
     ms.sort_by(|a, b| b.partial_cmp(a).unwrap());
     let worst = (ms.len() / 100).max(1);
     let worst_avg = ms[..worst].iter().sum::<f64>() / worst as f64;
@@ -318,6 +372,10 @@ pub fn frames_from_csv(text: &str, pid: u32) -> Option<Frames> {
         avg_fps: ms.len() as f64 / (total / 1000.0),
         low1_fps: 1000.0 / worst_avg,
         avg_frame_ms: total / ms.len() as f64,
+        gpu_busy_ms,
+        cpu_busy_ms,
+        sync_interval: syncs.into_iter().max_by_key(|(_, n)| *n).map(|(s, _)| s),
+        present_mode: modes.into_iter().max_by_key(|(_, n)| *n).map(|(m, _)| m),
     })
 }
 
@@ -337,6 +395,20 @@ mod tests {
         assert_eq!(f.frames, 100);
         assert!((f.avg_fps - 100.0 / 1.04).abs() < 0.01, "{}", f.avg_fps);
         assert!((f.low1_fps - 20.0).abs() < 0.01, "{}", f.low1_fps);
+        assert_eq!(f.gpu_busy_ms, None);
+    }
+
+    #[test]
+    fn reads_gpu_busy_and_vsync_columns() {
+        let mut csv = String::from("Application,ProcessID,SyncInterval,PresentMode,MsBetweenPresents,MsCPUBusy,MsGPUBusy\n");
+        for _ in 0..20 {
+            csv.push_str("game.exe,42,1,Hardware: Independent Flip,16.6,4.0,6.0\n");
+        }
+        let f = frames_from_csv(&csv, 42).unwrap();
+        assert_eq!(f.gpu_busy_ms, Some(6.0));
+        assert_eq!(f.cpu_busy_ms, Some(4.0));
+        assert_eq!(f.sync_interval, Some(1));
+        assert_eq!(f.present_mode.as_deref(), Some("Hardware: Independent Flip"));
     }
 
     /// A stand-in game (ffplay test pattern at 60 fps) measured by PresentMon,

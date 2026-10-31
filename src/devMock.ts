@@ -73,23 +73,7 @@ export function installDevMock() {
       setTimeout(() => emit("clips-changed"));
       return back.length;
     },
-    bench_state: () => [
-      false,
-      {
-        game: "VALORANT-Win64-Shipping",
-        started: "2026-10-30 17:30",
-        seconds: 30,
-        cores: 16,
-        error: null,
-        phases: [
-          { name: "No recorder", app: null, skipped: null, note: null, window: { seconds: 30, frames: { frames: 8460, avgFps: 282.1, low1Fps: 201.4, avgFrameMs: 3.54 }, apps: { rewind: { cpuPercent: 0.05, ramMb: 230, gpu3dPercent: 0, encoderPercent: 0 }, nvidia: { cpuPercent: 0.02, ramMb: 50, gpu3dPercent: 0, encoderPercent: 0 } } } },
-          { name: "Rewind", app: "rewind", skipped: null, note: null, window: { seconds: 30, frames: { frames: 8391, avgFps: 279.8, low1Fps: 199.0, avgFrameMs: 3.57 }, apps: { rewind: { cpuPercent: 0.21, ramMb: 690, gpu3dPercent: 1.6, encoderPercent: 9.1 } } } },
-          { name: "OBS replay buffer", app: "obs", skipped: null, note: null, window: { seconds: 30, frames: { frames: 8220, avgFps: 274.0, low1Fps: 190.2, avgFrameMs: 3.65 }, apps: { obs: { cpuPercent: 0.81, ramMb: 649, gpu3dPercent: 2.2, encoderPercent: 14.3 } } } },
-          { name: "NVIDIA Instant Replay", app: "nvidia", skipped: null, note: null, window: { seconds: 30, frames: { frames: 8370, avgFps: 279.0, low1Fps: 197.5, avgFrameMs: 3.58 }, apps: { nvidia: { cpuPercent: 0.3, ramMb: 410, gpu3dPercent: 1.1, encoderPercent: 10.2 } } } },
-          { name: "Medal", app: "medal", skipped: "Medal didn't start recording, so it was skipped.", note: null, window: null },
-        ],
-      },
-    ],
+    bench_state: () => [false, sampleBenchReport()],
     start_bench: () => null,
     cancel_bench: () => null,
     "plugin:event|listen": (a) => {
@@ -123,3 +107,55 @@ export function installDevMock() {
   w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
   console.info("[preview] Rewind UI running with fake sample clips");
 }
+
+// A believable 3-round result so the Performance page can be laid out in preview.
+function sampleBenchReport() {
+  const st = (mean: number, sd: number, n = 3) => ({ mean, sd, n, ci95: n > 1 ? ((n === 2 ? 12.706 : 4.303) * sd) / Math.sqrt(n) : null });
+  const fr = (fps: number, gpu = 0.96) => ({
+    frames: Math.round(fps * 20), avgFps: fps, low1Fps: fps * 0.71, avgFrameMs: 1000 / fps,
+    gpuBusyMs: (1000 / fps) * gpu, cpuBusyMs: (1000 / fps) * 0.55, syncInterval: 0, presentMode: "Hardware: Independent Flip",
+  });
+  const orders = [["obs", "rewind", "medal", "nvidia"], ["rewind", "nvidia", "obs", "medal"], ["nvidia", "medal", "rewind", "obs"]];
+  const hit: Record<string, number> = { rewind: 0.004, obs: 0.021, nvidia: 0.009, medal: 0.017 };
+  const runs: unknown[] = [];
+  let t = 0;
+  let base = 282;
+  const push = (round: number, app: string | null, fps: number, excluded: string | null = null) => {
+    runs.push({ round, app, atSecs: t, frames: fr(fps), apps: {}, excluded });
+    t += 34;
+  };
+  push(1, null, base);
+  orders.forEach((order, ri) =>
+    order.forEach((app, ai) => {
+      if (app === "medal" && ri === 2) {
+        push(ri + 1, app, 0, "Medal wasn't recording for the whole run.");
+      } else push(ri + 1, app, base * (1 - hit[app]) + ((ai * 7 + ri * 3) % 5) - 2);
+      base -= 0.35;
+      push(ri + 1, null, base + ((ai * 5 + ri) % 3) - 1);
+    }),
+  );
+  return {
+    game: "VALORANT-Win64-Shipping", started: "2026-10-30 21:10", seconds: 20, rounds: 3, cores: 16, warmupSecs: 20, minutes: 17.4,
+    runs,
+    baseline: { runs: 13, fps: st(280.0, 1.6, 13), low1: st(198.8, 2.9, 13), noisePercent: 0.5, driftPercent: -1.5, gpuBusyShare: 0.96, cpuBusyShare: 0.55, vsync: false, presentMode: "Hardware: Independent Flip" },
+    results: [
+      { app: "rewind", runs: 3, fpsCost: st(0.4, 0.5), low1Cost: st(0.6, 1.2), gpuMsAdded: st(0.01, 0.01), cpuPercent: st(0.14, 0.03), gpu3dPercent: st(1.4, 0.2), encoderPercent: st(8.9, 0.4), ramMb: st(688, 4), verdict: "noMeasurableCost" },
+      { app: "obs", runs: 3, fpsCost: st(2.1, 0.4), low1Cost: st(2.8, 1.1), gpuMsAdded: st(0.07, 0.01), cpuPercent: st(0.78, 0.06), gpu3dPercent: st(2.3, 0.3), encoderPercent: st(14.2, 0.6), ramMb: st(651, 9), verdict: "costs" },
+      { app: "nvidia", runs: 3, fpsCost: st(0.9, 0.6), low1Cost: st(1.0, 1.4), gpuMsAdded: st(0.03, 0.01), cpuPercent: st(0.27, 0.04), gpu3dPercent: st(1.1, 0.2), encoderPercent: st(10.1, 0.5), ramMb: st(412, 6), verdict: "noMeasurableCost" },
+      { app: "medal", runs: 2, fpsCost: st(1.7, 0.3, 2), low1Cost: st(2.2, 0.9, 2), gpuMsAdded: st(0.06, 0.02, 2), cpuPercent: st(1.9, 0.2, 2), gpu3dPercent: st(2.0, 0.3, 2), encoderPercent: st(11.0, 0.4, 2), ramMb: st(540, 12, 2), verdict: "noMeasurableCost" },
+    ],
+    settings: [
+      { app: "rewind", width: 1920, height: 1080, fps: 60, codec: "AV1 (NVENC)", quality: "CQ 24", bufferSecs: 120, source: "Rewind settings" },
+      { app: "obs", width: 1920, height: 1080, fps: 60, codec: "AV1 (NVENC)", quality: "CQP 16", bufferSecs: 180, source: 'OBS profile "Untitled"' },
+      { app: "nvidia", width: 1920, height: 1080, fps: 60, codec: null, quality: null, bufferSecs: 180, source: "NVIDIA Instant Replay settings (codec and bitrate aren't stored where Rewind can read them)" },
+      { app: "medal", width: null, height: null, fps: null, codec: "HEVC", quality: "7Mbps", bufferSecs: null, source: "Medal settings (resolution, FPS and clip length aren't stored where Rewind can read them)" },
+    ],
+    skipped: [],
+    warnings: [
+      "Rewind couldn't read Medal's resolution and frame rate. Check they match Rewind's (1920×1080 at 60 fps).",
+      "1 of 25 runs failed a check and were left out (see All runs).",
+    ],
+    error: null,
+  };
+}
+

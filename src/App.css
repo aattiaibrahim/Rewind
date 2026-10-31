@@ -219,6 +219,25 @@ table.bench th { text-align: left; font-size: 11px; font-weight: 600; letter-spa
 table.bench td { padding: 10px; border-bottom: 1px solid #1c2028; white-space: nowrap; }
 table.bench tr.ours td { background: rgba(198, 244, 50, 0.06); }
 table.bench tr.ours td:first-child { color: var(--accent); font-weight: 600; }
+table.bench tr.left-out td { color: var(--dim); }
+table.bench td.wrap { white-space: normal; min-width: 180px; font-size: 12px; }
+table.bench td.verdict { white-space: normal; min-width: 140px; font-size: 12px; }
+.page table.bench th, .page table.bench td { padding-left: 8px; padding-right: 8px; }
+table.bench td.verdict.good { color: var(--accent); }
+table.bench td.verdict.bad { color: var(--danger); }
+table.bench td.verdict.dim { color: var(--muted); }
+.bench-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 14px; }
+.bench-summary > div { background: var(--raised); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; }
+.bench-summary span { font-size: 11px; color: var(--dim); letter-spacing: 0.3px; }
+.bench-summary strong { font-family: var(--display); font-size: 20px; font-weight: 600; color: var(--text); }
+.bench-summary small { font-size: 11px; color: var(--muted); }
+.bench-warnings { margin: 14px 0 0; padding: 10px 12px 10px 28px; border: 1px solid rgba(255, 138, 122, 0.35); background: rgba(255, 138, 122, 0.07); border-radius: 10px; font-size: 12.5px; line-height: 1.55; color: var(--text-2); }
+.bench-warnings li + li { margin-top: 6px; }
+.bench-h3 { font-size: 13px; font-weight: 600; color: var(--text-2); margin: 22px 0 4px; }
+.bench-more { margin-top: 14px; }
+.bench-more summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--text-2); padding: 6px 0; }
+.bench-tips { margin: 10px 0 0; padding-left: 18px; font-size: 12px; line-height: 1.6; }
+.bench-tips li + li { margin-top: 4px; }
 
 /* ---------- toast ---------- */
 .toasts { position: fixed; right: 20px; bottom: 20px; display: flex; flex-direction: column; gap: 10px; z-index: 50; }
