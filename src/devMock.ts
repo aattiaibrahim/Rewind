@@ -73,6 +73,25 @@ export function installDevMock() {
       setTimeout(() => emit("clips-changed"));
       return back.length;
     },
+    bench_state: () => [
+      false,
+      {
+        game: "VALORANT-Win64-Shipping",
+        started: "2026-10-30 17:30",
+        seconds: 30,
+        cores: 16,
+        error: null,
+        phases: [
+          { name: "No recorder", app: null, skipped: null, note: null, window: { seconds: 30, frames: { frames: 8460, avgFps: 282.1, low1Fps: 201.4, avgFrameMs: 3.54 }, apps: { rewind: { cpuPercent: 0.05, ramMb: 230, gpu3dPercent: 0, encoderPercent: 0 }, nvidia: { cpuPercent: 0.02, ramMb: 50, gpu3dPercent: 0, encoderPercent: 0 } } } },
+          { name: "Rewind", app: "rewind", skipped: null, note: null, window: { seconds: 30, frames: { frames: 8391, avgFps: 279.8, low1Fps: 199.0, avgFrameMs: 3.57 }, apps: { rewind: { cpuPercent: 0.21, ramMb: 690, gpu3dPercent: 1.6, encoderPercent: 9.1 } } } },
+          { name: "OBS replay buffer", app: "obs", skipped: null, note: null, window: { seconds: 30, frames: { frames: 8220, avgFps: 274.0, low1Fps: 190.2, avgFrameMs: 3.65 }, apps: { obs: { cpuPercent: 0.81, ramMb: 649, gpu3dPercent: 2.2, encoderPercent: 14.3 } } } },
+          { name: "NVIDIA Instant Replay", app: "nvidia", skipped: null, note: null, window: { seconds: 30, frames: { frames: 8370, avgFps: 279.0, low1Fps: 197.5, avgFrameMs: 3.58 }, apps: { nvidia: { cpuPercent: 0.3, ramMb: 410, gpu3dPercent: 1.1, encoderPercent: 10.2 } } } },
+          { name: "Medal", app: "medal", skipped: "Medal didn't start recording, so it was skipped.", note: null, window: null },
+        ],
+      },
+    ],
+    start_bench: () => null,
+    cancel_bench: () => null,
     "plugin:event|listen": (a) => {
       const ev = a.event as string;
       listeners.set(ev, [...(listeners.get(ev) ?? []), a.handler as number]);

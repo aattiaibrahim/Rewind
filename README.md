@@ -23,6 +23,7 @@ A lightweight replay-buffer clipper for Windows that records on your NVIDIA GPU 
 
 - **Audio**: desktop sound (WASAPI loopback, track 1) and the microphone (mono by default, track 2), both on by default. Synced to video within about 10 ms. Exports and compresses mix both tracks into one.
 - **Replace original** option: trims, exports and compresses overwrite the edited file, and the old one goes to the Recycle Bin.
+- **Performance test** (Performance page): measures your game's FPS and 1% lows with no recorder, then with Rewind, OBS replay buffer, NVIDIA Instant Replay and Medal in turn, plus each one's CPU, RAM, GPU and video-encoder use. Frame times come from Intel PresentMon. A voice tells you when to switch things on or off.
 
 ## Not yet
 
@@ -83,7 +84,7 @@ cargo test live_ -- --ignored --nocapture    # real capture: buffer, clip, recor
 Requirements: Rust, Node + pnpm, Visual Studio C++ Build Tools, an NVIDIA GPU.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\get-ffmpeg.ps1   # once: LGPL FFmpeg into vendor\
+powershell -ExecutionPolicy Bypass -File scripts\get-ffmpeg.ps1   # once: LGPL FFmpeg + PresentMon into vendor\
 pnpm install
 pnpm tauri dev
 ```
@@ -92,4 +93,4 @@ Build an installer with `pnpm tauri build`. It bundles FFmpeg next to the app.
 
 ## License notes
 
-Rewind bundles an LGPL build of FFmpeg. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Rewind bundles an LGPL build of FFmpeg and Intel's PresentMon (MIT, for the Performance test). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

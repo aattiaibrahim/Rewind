@@ -60,7 +60,18 @@ export type UpdateState = {
   error: string | null;
 };
 
-export type PreviewAudio = { firstTitle: string; extra: { index: number; title: string; path: string }[] };
+export type BenchApp = "rewind" | "obs" | "nvidia" | "medal";
+export type AppUse = { cpuPercent: number; ramMb: number; gpu3dPercent: number; encoderPercent: number };
+export type BenchWindow = {
+  seconds: number;
+  frames: { frames: number; avgFps: number; low1Fps: number; avgFrameMs: number } | null;
+  apps: Partial<Record<BenchApp, AppUse>>;
+};
+export type BenchPhase = { name: string; app: BenchApp | null; window: BenchWindow | null; skipped: string | null; note: string | null };
+export type BenchReport = { game: string; started: string; seconds: number; cores: number; phases: BenchPhase[]; error: string | null };
+export type BenchProgress = { step: string; detail: string; waitingForUser: boolean; done: number; total: number };
+
+export type PreviewAudio ={ firstTitle: string; extra: { index: number; title: string; path: string }[] };
 
 export type DeleteResult ={ deleted: string[]; failed: [string, string][] };
 
@@ -138,6 +149,9 @@ export const api = {
     }
     return thumbCache.get(k)!;
   },
+  startBench: (compare: BenchApp[], seconds: number) => invoke<void>("start_bench", { options: { compare, seconds } }),
+  cancelBench: () => invoke<void>("cancel_bench"),
+  benchState: () => invoke<[boolean, BenchReport | null]>("bench_state"),
   previewAudio: (path: string) => invoke<PreviewAudio>("preview_audio", { path }),
   remuxMp4: (path: string) => invoke<string>("remux_mp4", { path }),
   trim: (path: string, start: number, end: number, exact: boolean, replace = false) =>

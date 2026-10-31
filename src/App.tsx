@@ -6,11 +6,12 @@ import { BufferCard } from "./BufferCard";
 import { ConfirmDelete } from "./ConfirmDelete";
 import { useClips, useSettings, useStatus, useUpdate } from "./hooks";
 import { Library } from "./Library";
+import { Performance } from "./Performance";
 import logo from "./logo.svg";
 import { SettingsView } from "./SettingsView";
 import { Studio } from "./Studio";
 
-type View = "clips" | "studio" | "settings";
+type View = "clips" | "studio" | "performance" | "settings";
 type ToastAction = { label: string; run: () => void };
 type Toast = { id: number; text: string; sub?: string; err?: boolean; action?: ToastAction };
 type PendingDelete = { paths: string[]; resolve: (deleted: boolean) => void };
@@ -120,6 +121,7 @@ export default function App() {
   const nav: [View, string][] = [
     ["clips", "Clips"],
     ["studio", "Studio"],
+    ["performance", "Performance"],
     ["settings", "Settings"],
   ];
 
@@ -179,6 +181,7 @@ export default function App() {
             update={update}
           />
         )}
+        {view === "performance" && <Performance />}
         {view === "settings" && settings && (
           <SettingsView settings={settings} update={update} onError={(m) => toast(m, true)} />
         )}

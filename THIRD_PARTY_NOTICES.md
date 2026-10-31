@@ -15,6 +15,13 @@ FFmpeg is a trademark of Fabrice Bellard, originator of the FFmpeg project. Rewi
 
 `src-tauri/nvenc/nvEncodeAPI.h` (from FFmpeg's nv-codec-headers) and the Rust bindings generated from it (`src-tauri/src/native/nvenc_sys.rs`) are © NVIDIA Corporation under the MIT license, as stated at the top of the header. Rewind loads NVIDIA's encoder from the installed graphics driver (`nvEncodeAPI64.dll`) and does not redistribute it.
 
+## PresentMon
+
+Rewind's installer includes Intel's PresentMon 2.6.0 (`presentmon/PresentMon.exe`), which the Performance test runs as a separate program to measure a game's frame rate.
+
+- PresentMon is © Intel Corporation under the **MIT license**. The license text ships with the app as `presentmon/LICENSE.txt`.
+- Source and releases: https://github.com/GameTechDev/PresentMon (`scripts/get-ffmpeg.ps1` fetches the exact release).
+
 ## Rust and JavaScript dependencies
 
 Rewind is built with Tauri, React, cpal, the `windows` crate and other open-source libraries under MIT, Apache-2.0 and similar licenses. See `src-tauri/Cargo.lock` and `pnpm-lock.yaml` for the full list.

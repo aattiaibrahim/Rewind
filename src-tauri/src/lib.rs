@@ -1,4 +1,5 @@
 mod audio;
+mod bench;
 mod control;
 mod engine;
 mod ffmpeg;
@@ -405,6 +406,21 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn start_bench(app: AppHandle, options: bench::run::Options) -> Result<(), String> {
+    bench::run::start(app, options)
+}
+
+#[tauri::command]
+fn cancel_bench() {
+    bench::run::cancel();
+}
+
+#[tauri::command]
+fn bench_state() -> (bool, Option<bench::run::Report>) {
+    (bench::run::is_running(), bench::run::last_report())
+}
+
+#[tauri::command]
 fn hide_flyout(app: AppHandle) {
     if let Some(f) = app.get_webview_window("flyout") {
         let _ = f.hide();
@@ -639,6 +655,9 @@ pub fn run() {
             get_update_state,
             check_for_updates,
             install_update,
+            start_bench,
+            cancel_bench,
+            bench_state,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Rewind")
