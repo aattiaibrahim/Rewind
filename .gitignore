@@ -33,3 +33,8 @@ streamdeck/dist/
 public/preview-sample.mp4
 public/preview-thumb-*.jpg
 public/preview-mic.m4a
+
+# One-off local install helper
+.install-outside.ps1
+Fix Rewind install.cmd
+install-log.txt
