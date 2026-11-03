@@ -17,13 +17,19 @@ A lightweight replay-buffer clipper for Windows that records on your NVIDIA GPU 
 - **Tray app**: left-click opens a quick flyout (save 30 s / 60 s / full, monitor mode, last clips); right-click shows a menu. Closing the window keeps it running in the tray.
 - **Launch with Windows** (starts in the tray), single instance.
 - **Library**: clips grouped by day and game, with search, thumbnails, codec and length.
+- **NAS library** (Settings → Library & NAS):
+  - Clips save to this PC first, so saving stays instant and works offline. They then copy in the background to a network folder in the same `<Game>\` layout, verified by size before they count as copied.
+  - Several PCs can share one NAS: file names include the PC's name, and clips from other PCs show up in the library.
+  - Optionally, the local copy is removed once it's safely on the NAS.
+- **Clips from other recorders**: Medal, OBS and NVIDIA folders are found from their own settings and shown in the library in place, grouped by game. Nothing is moved or copied. Any other folder can be added too.
+- **Save sound**: a short chime when a clip or recording is saved, a low tone if it fails (can be turned off).
 - **Open any video** from any folder; it shows up under "Imported".
 - **Studio**: preview, drag in/out handles, one frame-exact **Save trim** that re-encodes only the moment before the first keyframe (under a second) and copies the rest untouched, so it takes a few seconds and keeps full quality.
 - **Per-file tools**: remux to MP4 (only for the file you pick), export H.264 MP4, compress to 10/25/50/100 MB. Originals are never changed.
 
 - **Audio**: desktop sound (WASAPI loopback, track 1) and the microphone (mono by default, track 2), both on by default. Synced to video within about 10 ms. Exports and compresses mix both tracks into one.
 - **Replace original** option: trims, exports and compresses overwrite the edited file, and the old one goes to the Recycle Bin.
-- **Performance test** (Performance page): compares your game's FPS, 1% lows and GPU time per frame with nothing recording vs Rewind, OBS replay buffer, NVIDIA Instant Replay and Medal. After a warm-up, runs alternate nothing → recorder → nothing over several rounds in a shuffled order; each recorder is compared with the runs either side of it, and results carry 95% confidence ranges, so differences inside the game's own noise are reported as "no measurable cost". Every run is checked (game in front, the right recorder encoding, nothing else encoding), and it warns about drift, V-Sync, FPS caps, CPU-bound scenes and recorders set to a different resolution, FPS or buffer length. Frame times come from Intel PresentMon.
+- **Performance test** (Performance page): compares your game's FPS, 1% lows and GPU time per frame with nothing recording vs Rewind, OBS replay buffer, NVIDIA Instant Replay and Medal. After a warm-up, runs alternate nothing → recorder → nothing over several rounds in a shuffled order; each recorder is compared with the runs either side of it, and results carry 95% confidence ranges, so differences inside the game's own noise are reported as "no measurable cost". Every run is checked (game in front, the right recorder encoding, nothing else encoding), and it warns about drift, V-Sync, FPS caps, CPU-bound scenes and recorders set to a different resolution, FPS or buffer length. Frame times come from Intel PresentMon. **Share on GitHub** sends your results to the [benchmarks](benchmarks/README.md) page.
 
 ## Not yet
 

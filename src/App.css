@@ -269,6 +269,7 @@ input[type="range"].track { width: auto; }
 .group { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; display: flex; flex-direction: column; }
 .group h2 { margin: 0 0 6px; font-family: var(--display); font-size: 16px; font-weight: 600; }
 .setting { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 48px; border-top: 1px solid var(--border-soft); padding: 6px 0; }
+.setting.sub { padding-left: 16px; min-height: 40px; }
 .setting:first-of-type { border-top: 0; }
 .setting > span { font-size: 13px; color: var(--text-2); display: flex; flex-direction: column; gap: 2px; }
 .setting small { font-size: 11px; color: var(--muted); }
@@ -343,6 +344,12 @@ input.slider::-moz-range-thumb { width: 12px; height: 12px; border: 0; border-ra
 .check.on { background: var(--accent); border-color: var(--accent); }
 .card.selected .thumb { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
 .badge.bl { left: 8px; bottom: 8px; }
+/* Where a clip lives: another recorder's folder, the NAS. */
+.src-tag {
+  display: inline-block; margin-right: 6px; padding: 0 6px; border-radius: 999px; font-size: 10.5px; line-height: 16px;
+  border: 1px solid var(--border); color: var(--text-2); vertical-align: 1px;
+}
+.src-tag.ok { color: var(--accent-ink); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
 
 table.bench { width: 100%; border-collapse: collapse; font-size: 13px; }
 table.bench th { text-align: left; font-size: 11px; font-weight: 600; letter-spacing: 0.5px; color: var(--dim); padding: 8px 10px; border-bottom: 1px solid var(--line-2); white-space: nowrap; }

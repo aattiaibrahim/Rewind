@@ -22,6 +22,18 @@ pub struct ClipFile {
     pub size: u64,
     pub modified: i64,
     pub external: bool,
+    /// "local" (this PC), "nas" (only on the NAS) or "linked" (another recorder's folder)
+    pub location: &'static str,
+    /// A local clip that's also safely on the NAS
+    pub on_nas: bool,
+    /// Where it came from, for a badge: "" (Rewind), "NAS", "Medal", "OBS", "NVIDIA" or a folder name
+    pub source: String,
+}
+
+/// Another recorder's folder shown in the library in place.
+pub struct LinkedRoot {
+    pub path: PathBuf,
+    pub label: String,
 }
 
 #[derive(Serialize, Default)]
@@ -36,7 +48,7 @@ pub struct Probe {
     pub container: String,
 }
 
-fn is_video(p: &Path) -> bool {
+pub(crate) fn is_video(p: &Path) -> bool {
     p.extension()
         .map(|e| VIDEO_EXT.contains(&e.to_string_lossy().to_lowercase().as_str()))
         .unwrap_or(false)
@@ -57,7 +69,84 @@ fn clip_file(p: &Path, folder: String, external: bool) -> Option<ClipFile> {
         size: meta.len(),
         modified,
         external,
+        location: "local",
+        on_nas: false,
+        source: String::new(),
     })
+}
+
+/// Folders inside another recorder's folder that hold no clips.
+fn skip_dir(name: &str) -> bool {
+    name.starts_with('.') || name.to_lowercase().contains("thumbnail") || name.eq_ignore_ascii_case("cache")
+}
+
+/// Videos up to three folders deep (Medal: Clips/<Game>/; NVIDIA: <Game>/; OBS: flat).
+/// The group is the folder a file sits in, or the recorder's name for files at the top.
+fn scan_linked(root: &LinkedRoot, avoid: &[PathBuf], out: &mut Vec<ClipFile>) {
+    fn walk(dir: &Path, depth: u32, root: &LinkedRoot, avoid: &[PathBuf], out: &mut Vec<ClipFile>) {
+        let Ok(entries) = fs::read_dir(dir) else { return };
+        for e in entries.flatten() {
+            let p = e.path();
+            let name = e.file_name().to_string_lossy().into_owned();
+            if p.is_dir() {
+                if depth < 3 && !skip_dir(&name) && !avoid.iter().any(|a| same_path(a, &p)) {
+                    walk(&p, depth + 1, root, avoid, out);
+                }
+            } else if is_video(&p) {
+                let group = if depth == 0 { root.label.clone() } else { dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default() };
+                if let Some(mut c) = clip_file(&p, group, true) {
+                    c.location = "linked";
+                    c.source = root.label.clone();
+                    out.push(c);
+                }
+            }
+        }
+    }
+    walk(&root.path, 0, root, avoid, out);
+}
+
+fn same_path(a: &Path, b: &Path) -> bool {
+    let norm = |p: &Path| p.to_string_lossy().trim_end_matches(['\\', '/']).to_lowercase();
+    norm(a) == norm(b)
+}
+
+/// The whole library: this PC's clips, clips only on the NAS (e.g. from other
+/// PCs), other recorders' folders, and files opened from elsewhere.
+pub fn scan_all(clips_dir: &Path, external: &[String], nas: &[crate::nas::NasFile], linked: &[LinkedRoot], nas_dir: &str) -> Vec<ClipFile> {
+    let mut out = scan(clips_dir, external);
+    let key = |s: &str| s.replace('\\', "/").to_lowercase();
+    let local_rels: std::collections::HashMap<String, usize> = out
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| !c.external)
+        .filter_map(|(i, c)| Path::new(&c.path).strip_prefix(clips_dir).ok().map(|r| (key(&r.to_string_lossy()), i)))
+        .collect();
+    for f in nas {
+        match local_rels.get(&key(&f.rel)) {
+            Some(&i) => out[i].on_nas = true,
+            None => {
+                if let Some(mut c) = clip_file(&f.path, f.folder.clone(), false) {
+                    c.location = "nas";
+                    c.source = "NAS".into();
+                    out.push(c);
+                }
+            }
+        }
+    }
+    let mut avoid = vec![clips_dir.to_path_buf()];
+    if !nas_dir.is_empty() {
+        avoid.push(PathBuf::from(nas_dir));
+    }
+    avoid.extend(linked.iter().map(|l| l.path.clone()));
+    let mut seen: std::collections::HashSet<String> = out.iter().map(|c| c.path.to_lowercase()).collect();
+    for root in linked {
+        let mut found = Vec::new();
+        let others: Vec<PathBuf> = avoid.iter().filter(|a| !same_path(a, &root.path)).cloned().collect();
+        scan_linked(root, &others, &mut found);
+        out.extend(found.into_iter().filter(|c| seen.insert(c.path.to_lowercase())));
+    }
+    out.sort_by(|a, b| b.modified.cmp(&a.modified));
+    out
 }
 
 /// Clips folder (and one level of game subfolders) plus files opened from elsewhere.
@@ -543,20 +632,26 @@ pub struct DeleteResult {
 
 /// Only videos that are actually in the library can be deleted: inside the
 /// clips folder, or a file the user opened from elsewhere.
-fn deletable(path: &Path, clips_dir: &Path, external: &[String]) -> Result<(), String> {
+fn deletable(path: &Path, clips_dir: &Path, external: &[String], linked: &[String], nas_dir: &str) -> Result<(), String> {
     if !is_video(path) {
         return Err("Not a video file".into());
     }
-    let inside = match (path.canonicalize(), clips_dir.canonicalize()) {
+    let within = |root: &Path| match (path.canonicalize(), root.canonicalize()) {
         (Ok(p), Ok(c)) => p.starts_with(c),
         _ => false,
     };
+    // Network folders have no Recycle Bin, so a delete there couldn't be undone.
+    let on_network = path.to_string_lossy().starts_with(r"\\") || (!nas_dir.is_empty() && within(Path::new(nas_dir)));
+    if on_network {
+        return Err("It's on the NAS. Network folders have no Recycle Bin, so delete it on the NAS itself.".into());
+    }
+    let inside = within(clips_dir) || linked.iter().any(|l| within(Path::new(l)));
     let listed = external.iter().any(|e| Path::new(e) == path);
     if inside || listed { Ok(()) } else { Err("Not part of your Rewind library".into()) }
 }
 
 /// Move clips to the Recycle Bin (one batch, so Windows can restore them together).
-pub fn delete_clips(paths: &[String], clips_dir: &Path, external: &[String]) -> DeleteResult {
+pub fn delete_clips(paths: &[String], clips_dir: &Path, external: &[String], linked: &[String], nas_dir: &str) -> DeleteResult {
     let mut res = DeleteResult::default();
     let mut ok: Vec<PathBuf> = Vec::new();
     for p in paths {
@@ -565,7 +660,7 @@ pub fn delete_clips(paths: &[String], clips_dir: &Path, external: &[String]) -> 
             res.deleted.push(p.clone()); // already gone: treat as done
             continue;
         }
-        match deletable(path, clips_dir, external) {
+        match deletable(path, clips_dir, external, linked, nas_dir) {
             Ok(()) => ok.push(path.to_path_buf()),
             Err(e) => res.failed.push((p.clone(), e)),
         }
@@ -898,14 +993,14 @@ mod tests {
         }
         let s = |p: &PathBuf| p.to_string_lossy().into_owned();
         let ext = vec![s(&imported)];
-        let r = delete_clips(&[s(&a), s(&b), s(&outside), s(&imported), s(&not_video)], &clips, &ext);
+        let r = delete_clips(&[s(&a), s(&b), s(&outside), s(&imported), s(&not_video)], &clips, &ext, &[], "");
         assert_eq!(r.deleted.len(), 3, "{:?}", r.failed);
         assert!(!a.exists() && !b.exists() && !imported.exists());
         assert!(outside.exists(), "files outside the library are never deleted");
         assert!(not_video.exists(), "non-videos are never deleted");
         assert_eq!(r.failed.len(), 2);
         // Already-deleted paths count as done, not as errors.
-        let again = delete_clips(&[s(&a)], &clips, &ext);
+        let again = delete_clips(&[s(&a)], &clips, &ext, &[], "");
         assert_eq!((again.deleted.len(), again.failed.len()), (1, 0));
         let _ = fs::remove_dir_all(d);
     }
@@ -937,5 +1032,49 @@ mod tests {
         assert_eq!(clips.len(), 1);
         assert_eq!(clips[0].folder, "VALORANT");
         let _ = fs::remove_dir_all(d);
+    }
+}
+
+#[cfg(test)]
+mod library_merge_tests {
+    use super::*;
+
+    fn put(root: &Path, rel: &str) -> PathBuf {
+        let p = root.join(rel);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(&p, b"x").unwrap();
+        p
+    }
+
+    #[test]
+    fn one_library_from_this_pc_the_nas_and_other_recorders() {
+        let d = std::env::temp_dir().join(format!("rewind-merge-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        let (clips, nas, medal, obs) = (d.join("Rewind"), d.join("nas"), d.join("Medal"), d.join("OBS"));
+        put(&clips, "VALORANT/a.mkv");
+        put(&nas, "VALORANT/a.mkv"); // also on the NAS
+        put(&nas, "VALORANT/b - OTHER-PC.mkv"); // only on the NAS
+        put(&medal, "Clips/Valorant/m.mp4");
+        put(&medal, "Thumbnails/m.mp4"); // not a clip folder
+        put(&obs, "2026-11-03 10-00-00.mkv");
+        let nas_files: Vec<crate::nas::NasFile> = vec![
+            crate::nas::NasFile { path: nas.join("VALORANT/a.mkv"), rel: "VALORANT/a.mkv".into(), folder: "VALORANT".into() },
+            crate::nas::NasFile { path: nas.join("VALORANT/b - OTHER-PC.mkv"), rel: "VALORANT/b - OTHER-PC.mkv".into(), folder: "VALORANT".into() },
+        ];
+        let linked = vec![LinkedRoot { path: medal.clone(), label: "Medal".into() }, LinkedRoot { path: obs.clone(), label: "OBS".into() }];
+        let all = scan_all(&clips, &[], &nas_files, &linked, &nas.to_string_lossy());
+        let find = |name: &str| all.iter().find(|c| c.name == name).unwrap_or_else(|| panic!("{name} missing"));
+        assert_eq!(all.len(), 4, "{:?}", all.iter().map(|c| &c.path).collect::<Vec<_>>());
+        let a = find("a");
+        assert!(a.location == "local" && a.on_nas);
+        let b = find("b - OTHER-PC");
+        assert!(b.location == "nas" && b.folder == "VALORANT" && b.source == "NAS");
+        let m = find("m");
+        assert!(m.location == "linked" && m.folder == "Valorant" && m.source == "Medal");
+        assert_eq!(find("2026-11-03 10-00-00").folder, "OBS");
+        // NAS clips can't be deleted from Rewind (no Recycle Bin there); linked ones can.
+        assert!(deletable(&nas.join("VALORANT/b - OTHER-PC.mkv"), &clips, &[], &[], &nas.to_string_lossy()).is_err());
+        assert!(deletable(&medal.join("Clips/Valorant/m.mp4"), &clips, &[], &[medal.to_string_lossy().into_owned()], "").is_ok());
+        let _ = fs::remove_dir_all(&d);
     }
 }

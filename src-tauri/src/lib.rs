@@ -6,6 +6,7 @@ mod ffmpeg;
 mod games;
 mod library;
 mod monitors;
+mod nas;
 mod native;
 mod settings;
 mod sound;
@@ -36,14 +37,18 @@ fn settings_of(app: &AppHandle) -> Settings {
 }
 
 /// Clips folder/<Game or Desktop>/<Game or Desktop> <label><timestamp>.mkv
+/// With a shared NAS, the PC's name is added (" - GAMING-PC") so clips from
+/// several PCs in the same game folder never clash.
 fn output_path(s: &Settings, label: &str) -> PathBuf {
     let folder = games::clip_folder();
     let ts = chrono::Local::now().format("%Y-%m-%d %H-%M-%S");
+    let pc = if s.nas_dir.is_empty() { String::new() } else { nas::pc_suffix() };
     let dir = PathBuf::from(&s.clips_dir).join(&folder);
-    let mut p = dir.join(format!("{folder} {label}{ts}.mkv"));
+    let taken = |p: &PathBuf| p.exists() || nas::exists_on_nas(s, p);
+    let mut p = dir.join(format!("{folder} {label}{ts}{pc}.mkv"));
     let mut n = 2;
-    while p.exists() {
-        p = dir.join(format!("{folder} {label}{ts} ({n}).mkv"));
+    while taken(&p) {
+        p = dir.join(format!("{folder} {label}{ts}{pc} ({n}).mkv"));
         n += 1;
     }
     p
@@ -59,6 +64,9 @@ fn save_now(app: &AppHandle, seconds: Option<u32>) -> Result<String, String> {
     saved?;
     let path = out.to_string_lossy().into_owned();
     let _ = app.emit("clip-saved", &path);
+    if !s.nas_dir.is_empty() {
+        nas::clip_saved();
+    }
     Ok(path)
 }
 
@@ -71,6 +79,7 @@ fn toggle_record_now(app: &AppHandle) -> Result<Option<String>, String> {
             if stopped.is_ok() { sound::saved() } else { sound::failed() }
         }
         let files = stopped?;
+        nas::clip_saved();
         for f in &files {
             let _ = app.emit("clip-saved", f);
         }
@@ -198,10 +207,22 @@ fn set_settings(app: AppHandle, settings: Settings) -> Result<(), String> {
         std::fs::create_dir_all(&settings.clips_dir)
             .map_err(|e| format!("Can't use that clips folder: {e}"))?;
     }
+    if !settings.nas_dir.is_empty() {
+        let (n, c) = (settings.nas_dir.to_lowercase(), settings.clips_dir.trim_end_matches(['\\', '/']).to_lowercase());
+        if n == c || n.starts_with(&format!("{c}\\")) || c.starts_with(&format!("{n}\\")) {
+            return Err("The NAS folder has to be separate from the clips folder on this PC.".into());
+        }
+    }
     settings::save(&st.settings_path, &settings)?;
     *st.settings.lock().unwrap() = settings.clone();
     if old.launch_on_startup != settings.launch_on_startup {
         apply_autostart(&app, settings.launch_on_startup);
+    }
+    if old.nas_dir != settings.nas_dir || old.nas_remove_local != settings.nas_remove_local || old.clips_dir != settings.clips_dir {
+        nas::wake();
+    }
+    if old.linked_folders != settings.linked_folders || old.nas_dir != settings.nas_dir {
+        let _ = app.emit("clips-changed", ());
     }
     let _ = app.emit("settings-changed", &settings);
     Ok(())
@@ -240,7 +261,47 @@ async fn toggle_recording(app: AppHandle) -> Result<Option<String>, String> {
 #[tauri::command]
 async fn list_clips(app: AppHandle) -> Result<Vec<library::ClipFile>, String> {
     let s = settings_of(&app);
-    blocking(move || Ok(library::scan(PathBuf::from(&s.clips_dir).as_path(), &s.external_files))).await
+    blocking(move || {
+        let nas = nas::listing(&s.nas_dir);
+        let linked = linked_roots(&s);
+        Ok(library::scan_all(PathBuf::from(&s.clips_dir).as_path(), &s.external_files, &nas, &linked, &s.nas_dir))
+    })
+    .await
+}
+
+/// Linked folders with a label: the recorder's name if it's that recorder's folder.
+fn linked_roots(s: &Settings) -> Vec<library::LinkedRoot> {
+    if s.linked_folders.is_empty() {
+        return Vec::new();
+    }
+    let known = bench::recorders::clip_folders();
+    s.linked_folders
+        .iter()
+        .map(|p| library::LinkedRoot {
+            path: PathBuf::from(p),
+            label: known
+                .iter()
+                .find(|k| k.path.eq_ignore_ascii_case(p.trim_end_matches(['\\', '/'])))
+                .map(|k| k.label.clone())
+                .unwrap_or_else(|| PathBuf::from(p).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.clone())),
+        })
+        .collect()
+}
+
+#[tauri::command]
+fn get_nas_state() -> nas::NasState {
+    nas::state()
+}
+
+#[tauri::command]
+fn sync_nas_now() {
+    nas::wake();
+}
+
+/// Medal / OBS / NVIDIA clip folders found on this PC.
+#[tauri::command]
+async fn recorder_clip_folders() -> Result<Vec<bench::recorders::ClipFolder>, String> {
+    blocking(|| Ok(bench::recorders::clip_folders())).await
 }
 
 #[tauri::command]
@@ -346,7 +407,7 @@ fn reveal_file(path: String) -> Result<(), String> {
 async fn delete_clips(app: AppHandle, paths: Vec<String>) -> Result<library::DeleteResult, String> {
     let s = settings_of(&app);
     let res = blocking(move || {
-        Ok(library::delete_clips(&paths, PathBuf::from(&s.clips_dir).as_path(), &s.external_files))
+        Ok(library::delete_clips(&paths, PathBuf::from(&s.clips_dir).as_path(), &s.external_files, &s.linked_folders, &s.nas_dir))
     })
     .await?;
     let _ = app.emit("clips-changed", ());
@@ -526,6 +587,7 @@ pub fn run() {
 
             app.manage(updater::Updates::default());
             updater::start(handle.clone());
+            nas::start(handle.clone());
             control::start(handle.clone());
 
             if let Err(e) = apply_hotkeys(&handle, &s.hotkey, &s.record_hotkey) {
@@ -673,6 +735,9 @@ pub fn run() {
             get_update_state,
             check_for_updates,
             install_update,
+            get_nas_state,
+            sync_nas_now,
+            recorder_clip_folders,
             start_bench,
             cancel_bench,
             bench_state,

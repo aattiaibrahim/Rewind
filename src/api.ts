@@ -21,6 +21,9 @@ export type Settings = {
   launchOnStartup: boolean;
   autoUpdate: boolean;
   saveSound: boolean;
+  nasDir: string;
+  nasRemoveLocal: boolean;
+  linkedFolders: string[];
   startMinimized: boolean;
   keepOriginalAfterRemux: boolean;
   replaceOriginalOnEdit: boolean;
@@ -151,7 +154,23 @@ export type ClipFile = {
   size: number;
   modified: number;
   external: boolean;
+  /** "local" = this PC, "nas" = only on the NAS, "linked" = another recorder's folder */
+  location: "local" | "nas" | "linked";
+  onNas: boolean;
+  source: string;
 };
+
+export type NasState = {
+  enabled: boolean;
+  reachable: boolean;
+  pending: number;
+  copying: string | null;
+  copied: number;
+  lastError: string | null;
+  lastSync: number | null;
+};
+
+export type ClipFolder = { label: string; path: string; exists: boolean };
 
 export type Probe = {
   duration: number;
@@ -241,6 +260,9 @@ export const api = {
   getUpdateState: () => invoke<UpdateState>("get_update_state"),
   checkForUpdates: () => invoke<string | null>("check_for_updates"),
   installUpdate: () => invoke<void>("install_update"),
+  getNasState: () => invoke<NasState>("get_nas_state"),
+  syncNasNow: () => invoke<void>("sync_nas_now"),
+  recorderClipFolders: () => invoke<ClipFolder[]>("recorder_clip_folders"),
 };
 
 export const VIDEO_EXTENSIONS = ["mkv", "mp4", "mov", "webm", "m4v", "avi", "ts", "flv"];

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
-use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_BINARY, RRF_RT_REG_DWORD, RegGetValueW};
+use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_BINARY, RRF_RT_REG_DWORD, RRF_RT_REG_SZ, RegGetValueW};
 use windows::core::HSTRING;
 
 use super::measure::App;
@@ -101,8 +101,8 @@ pub fn obs() -> RecorderSettings {
     obs_from(&PathBuf::from(appdata).join("obs-studio"))
 }
 
-pub fn obs_from(dir: &Path) -> RecorderSettings {
-    let mut r = RecorderSettings::empty(App::Obs, "Couldn't read OBS settings");
+/// The current OBS profile: (name, its folder, its basic.ini).
+fn obs_profile(dir: &Path) -> Option<(String, PathBuf, HashMap<String, String>)> {
     // The current profile is in user.ini (OBS 31+) or global.ini.
     let profile = ["user.ini", "global.ini"]
         .iter()
@@ -110,10 +110,15 @@ pub fn obs_from(dir: &Path) -> RecorderSettings {
         .find_map(|g| g.get("Basic.ProfileDir").or_else(|| g.get("Basic.Profile")).cloned())
         .or_else(|| {
             std::fs::read_dir(dir.join("basic").join("profiles")).ok()?.flatten().find(|e| e.path().is_dir()).map(|e| e.file_name().to_string_lossy().into_owned())
-        });
-    let Some(profile) = profile else { return r };
+        })?;
     let pdir = dir.join("basic").join("profiles").join(&profile);
-    let Some(b) = ini(&pdir.join("basic.ini")) else { return r };
+    let b = ini(&pdir.join("basic.ini"))?;
+    Some((profile, pdir, b))
+}
+
+pub fn obs_from(dir: &Path) -> RecorderSettings {
+    let mut r = RecorderSettings::empty(App::Obs, "Couldn't read OBS settings");
+    let Some((profile, pdir, b)) = obs_profile(dir) else { return r };
     let get = |k: &str| b.get(k).map(String::as_str);
     let num = |k: &str| get(k).and_then(|v| v.parse::<u32>().ok());
 
@@ -216,6 +221,64 @@ pub fn medal() -> RecorderSettings {
     r
 }
 
+/// Where another recorder saves its clips, for showing them in Rewind's library.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ClipFolder {
+    /// "Medal" | "OBS" | "NVIDIA"
+    pub label: String,
+    pub path: String,
+    pub exists: bool,
+}
+
+fn reg_string(path: &str, name: &str) -> Option<String> {
+    unsafe {
+        let mut buf = vec![0u8; 2048];
+        let mut len = buf.len() as u32;
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            &HSTRING::from(path),
+            &HSTRING::from(name),
+            RRF_RT_REG_BINARY | RRF_RT_REG_SZ,
+            None,
+            Some(buf.as_mut_ptr() as *mut _),
+            Some(&mut len),
+        )
+        .ok()
+        .ok()?;
+        let wide: Vec<u16> = buf[..len as usize].chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).take_while(|&c| c != 0).collect();
+        Some(String::from_utf16_lossy(&wide)).filter(|s| !s.is_empty())
+    }
+}
+
+/// Medal, OBS and NVIDIA's clip folders, from their own settings.
+pub fn clip_folders() -> Vec<ClipFolder> {
+    let mut out = Vec::new();
+    let mut push = |label: &str, path: Option<String>| {
+        if let Some(p) = path {
+            let p = p.replace('/', "\\").trim_end_matches('\\').to_string();
+            if !p.is_empty() && !out.iter().any(|f: &ClipFolder| f.path.eq_ignore_ascii_case(&p)) {
+                out.push(ClipFolder { label: label.into(), exists: Path::new(&p).is_dir(), path: p });
+            }
+        }
+    };
+    let appdata = std::env::var_os("APPDATA").map(PathBuf::from);
+    let medal = appdata
+        .as_ref()
+        .and_then(|a| std::fs::read_to_string(a.join("Medal").join("store").join("settings.json")).ok())
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|j| find_key(&j, "clipFolder").and_then(|v| v.as_str()).map(str::to_string))
+        .or_else(|| Path::new(r"C:\Medal").is_dir().then(|| r"C:\Medal".to_string()));
+    push("Medal", medal);
+    let obs = appdata.as_ref().and_then(|a| obs_profile(&a.join("obs-studio"))).and_then(|(_, _, b)| {
+        let key = if b.get("Output.Mode").map(String::as_str) == Some("Advanced") { "AdvOut.RecFilePath" } else { "SimpleOutput.FilePath" };
+        b.get(key).cloned()
+    });
+    push("OBS", obs);
+    push("NVIDIA", reg_string(r"Software\NVIDIA Corporation\Global\ShadowPlay\NVSPCAPS", "DefaultPathW"));
+    out
+}
+
 pub fn read(app: App) -> RecorderSettings {
     match app {
         App::Obs => obs(),
@@ -302,6 +365,18 @@ mod tests {
     fn read_live_recorder_settings() {
         for a in [App::Obs, App::Nvidia, App::Medal] {
             println!("{:?}", read(a));
+        }
+    }
+}
+
+#[cfg(test)]
+mod live_folder_tests {
+    /// Prints the clip folders found on this PC (reads settings only).
+    #[test]
+    #[ignore]
+    fn live_clip_folders() {
+        for f in super::clip_folders() {
+            println!("{} | {} | exists={}", f.label, f.path, f.exists);
         }
     }
 }

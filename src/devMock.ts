@@ -2,7 +2,10 @@
 // instead of inside Rewind, fake the backend with sample clips so the
 // interface can be clicked through without touching real files.
 
-type Clip = { path: string; name: string; folder: string; size: number; modified: number; external: boolean };
+type Clip = {
+  path: string; name: string; folder: string; size: number; modified: number; external: boolean;
+  location: string; onNas: boolean; source: string;
+};
 
 export function installDevMock() {
   const w = window as unknown as Record<string, unknown>;
@@ -25,7 +28,16 @@ export function installDevMock() {
     size: (mb as number) * 1024 * 1024,
     modified: now - (ago as number) * day,
     external: false,
+    location: "local",
+    onNas: (ago as number) > 1,
+    source: "",
   }));
+  // A clip from another PC on the NAS, and one from Medal's folder.
+  clips.push(
+    { path: "C:\\Users\\you\\nas\\VALORANT\\VALORANT 2026-11-02 - OTHER-PC.mkv", name: "VALORANT 2026-11-02 - OTHER-PC", folder: "VALORANT", size: 52 << 20, modified: now - 0.5 * day, external: false, location: "nas", onNas: false, source: "NAS" },
+    { path: "C:\\Users\\you\\Medal\\Clips\\Valorant\\Medal clip.mp4", name: "Medal clip", folder: "Valorant", size: 30 << 20, modified: now - 0.6 * day, external: true, location: "linked", onNas: false, source: "Medal" },
+  );
+  clips.sort((a, b) => b.modified - a.modified); // newest first, like Rewind's own list
   const bin: Clip[] = [];
   const settings = {
     clipsDir: "C:\\Users\\you\\Videos\\Rewind", encoder: "av1", quality: 24, fps: 60, bufferSeconds: 120,
@@ -33,7 +45,7 @@ export function installDevMock() {
     recordHotkey: "Alt+F9", bufferEnabled: true, launchOnStartup: false, autoUpdate: true, startMinimized: true,
     keepOriginalAfterRemux: true, replaceOriginalOnEdit: false, externalFiles: [], desktopAudio: true,
     micEnabled: true, micMono: true, micDevice: "", theme: "midnight", accent: "lime", reduceMotion: false,
-    saveSound: true,
+    saveSound: true, nasDir: "", nasRemoveLocal: false, linkedFolders: [] as string[],
   };
   const status = {
     enabled: true, running: true, monitor: "Display 1 · 1920×1080", width: 1920, height: 1080, encoder: "av1",
@@ -62,6 +74,16 @@ export function installDevMock() {
         ? { current: "0.1.12", stage: "ready", version: "0.1.13", notes: "Sample release notes.", error: null }
         : { current: "dev", stage: "up-to-date", version: null, notes: null, error: null },
     "plugin:opener|open_url": () => null,
+    get_nas_state: () =>
+      settings.nasDir
+        ? { enabled: true, reachable: true, pending: 1, copying: null, copied: 3, lastError: null, lastSync: Date.now() - 20_000 }
+        : { enabled: false, reachable: false, pending: 0, copying: null, copied: 0, lastError: null, lastSync: null },
+    sync_nas_now: () => null,
+    recorder_clip_folders: () => [
+      { label: "Medal", path: "C:\\Medal", exists: true },
+      { label: "OBS", path: "C:\\Users\\you\\Videos\\OBS", exists: true },
+      { label: "NVIDIA", path: "C:\\Users\\you\\Videos\\NVIDIA", exists: false },
+    ],
     install_update: () => {
       throw "Preview mode: nothing to install.";
     },

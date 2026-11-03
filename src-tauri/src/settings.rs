@@ -48,6 +48,12 @@ pub struct Settings {
     pub reduce_motion: bool,
     /// Play a short chime when a clip or recording is saved (and a low one if it fails)
     pub save_sound: bool,
+    /// Network folder (e.g. \\nas\clips) that saved clips are copied to in the background; "" = off
+    pub nas_dir: String,
+    /// Delete the copy on this PC once a clip is safely on the NAS
+    pub nas_remove_local: bool,
+    /// Other recorders' folders (Medal, OBS, NVIDIA, any folder) shown in the library in place
+    pub linked_folders: Vec<String>,
 }
 
 impl Default for Settings {
@@ -81,6 +87,9 @@ impl Default for Settings {
             accent: "lime".into(),
             reduce_motion: false,
             save_sound: true,
+            nas_dir: String::new(),
+            nas_remove_local: false,
+            linked_folders: Vec::new(),
         }
     }
 }
@@ -111,6 +120,12 @@ impl Settings {
             self.record_hotkey = d.record_hotkey;
         }
         self.external_files.dedup();
+        self.nas_dir = self.nas_dir.trim().trim_end_matches(['\\', '/']).to_string();
+        if self.nas_dir.is_empty() {
+            self.nas_remove_local = false;
+        }
+        self.linked_folders.retain(|f| !f.trim().is_empty());
+        self.linked_folders.dedup();
         if !["midnight", "graphite", "oled", "light"].contains(&self.theme.as_str()) {
             self.theme = d.theme.clone();
         }

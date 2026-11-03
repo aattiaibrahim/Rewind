@@ -3,6 +3,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useCallback, useEffect, useState } from "react";
 import { Accent, api, bufferEstimateMb, errText, Monitor, Settings, Theme } from "./api";
 import { ConfirmDialog } from "./ConfirmUpdate";
+import { LibrarySettings } from "./LibrarySettings";
 import { Slider } from "./Slider";
 import { useUpdate } from "./hooks";
 
@@ -598,6 +599,8 @@ export function SettingsView({
             </button>
           </div>
         </section>
+
+        <LibrarySettings s={s} set={set} Toggle={Toggle} />
       </div>
     </div>
   );

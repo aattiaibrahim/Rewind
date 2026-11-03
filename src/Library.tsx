@@ -96,25 +96,44 @@ function ClipCard({
           >
             Show
           </span>
-          <span
-            role="button"
-            tabIndex={0}
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete();
-            }}
-            title="Move to the Recycle Bin"
-          >
-            Delete
-          </span>
+          {/* The NAS has no Recycle Bin, so clips only there are deleted on the NAS itself. */}
+          {clip.location !== "nas" && (
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
+              title="Move to the Recycle Bin"
+            >
+              Delete
+            </span>
+          )}
         </div>
       </div>
       <div className="card-title">{clip.name}</div>
       <div className="card-meta">
+        {clip.location === "linked" && <span className="src-tag">{clip.source}</span>}
+        {clip.location === "nas" && (
+          <span className="src-tag" title="Only on the NAS (for example from another PC)">
+            NAS
+          </span>
+        )}
+        {clip.onNas && (
+          <span className="src-tag ok" title="Also safely copied to the NAS">
+            ✓ NAS
+          </span>
+        )}
         {clip.folder} · {time} · {fmtSize(clip.size)}
       </div>
     </button>
   );
+}
+
+/** "Counter-Strike 2" and "counter strike 2" are the same game. */
+function gameKey(folder: string) {
+  return folder.toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
 export function Library({
@@ -138,15 +157,23 @@ export function Library({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const anchor = useRef<string | null>(null);
 
+  // One chip per game, even when recorders spell it differently ("VALORANT" / "Valorant").
+  // Rewind's own folder name wins as the label.
   const folders = useMemo(() => {
-    const set = new Set((clips ?? []).map((c) => c.folder));
-    return ["All", ...[...set].sort((a, b) => (a === "Imported" ? 1 : b === "Imported" ? -1 : a.localeCompare(b)))];
+    const label = new Map<string, string>();
+    for (const c of clips ?? []) {
+      const k = gameKey(c.folder);
+      if (!label.has(k) || c.location === "local") label.set(k, c.folder);
+    }
+    const names = [...label.values()];
+    return ["All", ...names.sort((a, b) => (a === "Imported" ? 1 : b === "Imported" ? -1 : a.localeCompare(b)))];
   }, [clips]);
 
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase();
+    const want = gameKey(folder);
     const list = (clips ?? []).filter(
-      (c) => (folder === "All" || c.folder === folder) && (!q || `${c.name} ${c.folder}`.toLowerCase().includes(q)),
+      (c) => (folder === "All" || gameKey(c.folder) === want) && (!q || `${c.name} ${c.folder} ${c.source}`.toLowerCase().includes(q)),
     );
     const out: { day: string; items: ClipFile[] }[] = [];
     for (const c of list) {
