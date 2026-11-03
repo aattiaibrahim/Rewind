@@ -1,7 +1,8 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, ClipFile, codecLabel, errText, fmtDuration, fmtSize, Probe, VIDEO_EXTENSIONS } from "./api";
+import { api, ClipFile, codecLabel, errText, fmtDuration, fmtSize, Probe, Upload, UploadProgress, VIDEO_EXTENSIONS } from "./api";
 import { useThumb } from "./hooks";
+import { progressText } from "./Share";
 
 function dayLabel(ms: number) {
   const d = new Date(ms);
@@ -26,7 +27,11 @@ function ClipCard({
   onDelete,
   onToast,
   onChanged,
+  upload,
+  linked,
 }: {
+  upload?: UploadProgress;
+  linked: boolean;
   clip: ClipFile;
   selected: boolean;
   onClick: (e: React.MouseEvent) => void;
@@ -96,6 +101,19 @@ function ClipCard({
           >
             Show
           </span>
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={(e) => {
+              e.stopPropagation();
+              api
+                .uploadClip(clip.path)
+                .catch((err) => onToast(errText(err), true));
+            }}
+            title="Upload and copy a link that plays inside Discord"
+          >
+            Share
+          </span>
           {/* The NAS has no Recycle Bin, so clips only there are deleted on the NAS itself. */}
           {clip.location !== "nas" && (
             <span
@@ -114,6 +132,16 @@ function ClipCard({
       </div>
       <div className="card-title">{clip.name}</div>
       <div className="card-meta">
+        {upload && (
+          <span className={`src-tag ${upload.stage === "error" ? "bad" : "ok"}`} title={upload.error ?? undefined}>
+            {progressText(upload)}
+          </span>
+        )}
+        {!upload && linked && (
+          <span className="src-tag ok" title="Shared: the link is in Studio">
+            🔗 Shared
+          </span>
+        )}
         {clip.location === "linked" && <span className="src-tag">{clip.source}</span>}
         {clip.location === "nas" && (
           <span className="src-tag" title="Only on the NAS (for example from another PC)">
@@ -143,7 +171,11 @@ export function Library({
   onChanged,
   onDelete,
   hotkey,
+  uploads,
+  links,
 }: {
+  uploads?: Record<string, UploadProgress>;
+  links?: Record<string, Upload[]>;
   clips: ClipFile[] | null;
   onOpen: (path: string) => void;
   onToast: (t: string, err?: boolean) => void;
@@ -360,6 +392,8 @@ export function Library({
                     onDelete={() => onDelete(selected.has(c.path) ? [...selected] : [c.path])}
                     onToast={onToast}
                     onChanged={onChanged}
+                    upload={uploads?.[c.path]}
+                    linked={!!links?.[c.path]?.length}
                   />
                 ))}
               </div>

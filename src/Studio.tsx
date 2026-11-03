@@ -2,8 +2,9 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, ClipFile, codecLabel, errText, fmtSize, fmtTime, PreviewAudio, Probe, Settings } from "./api";
+import { api, ClipFile, codecLabel, errText, fmtSize, fmtTime, PreviewAudio, Probe, Settings, Upload, UploadProgress } from "./api";
 import { useThumb } from "./hooks";
+import { SharePanel } from "./Share";
 import { Slider } from "./Slider";
 
 type Job = { label: string } | null;
@@ -237,7 +238,11 @@ export function Studio({
   settings,
   update,
   onBack,
+  uploads,
+  links,
 }: {
+  uploads?: Record<string, UploadProgress>;
+  links?: Record<string, Upload[]>;
   path: string | null;
   clips: ClipFile[] | null;
   onBack: () => void;
@@ -870,6 +875,8 @@ export function Studio({
               ))}
             </>
           )}
+          <div className="label">Share</div>
+          <SharePanel path={path} settings={settings} progress={uploads?.[path]} links={links?.[path]} />
           <div className="label">This file only</div>
           <div className="stack">
             <button className="btn block" disabled={busy} onClick={() => run("Remuxing…", () => api.remuxMp4(path))}>

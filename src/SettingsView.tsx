@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Accent, api, bufferEstimateMb, errText, Monitor, Settings, Theme } from "./api";
 import { ConfirmDialog } from "./ConfirmUpdate";
 import { LibrarySettings } from "./LibrarySettings";
+import { SharingSettings } from "./Share";
 import { Slider } from "./Slider";
 import { useUpdate } from "./hooks";
 
@@ -83,6 +84,7 @@ const TABS = [
   ["recording", "Recording"],
   ["audio", "Audio"],
   ["library", "Library"],
+  ["sharing", "Sharing"],
   ["integrations", "Stream Deck"],
   ["advanced", "Advanced"],
 ] as const;
@@ -648,6 +650,7 @@ export function SettingsView({
         </section>
 
         <LibrarySettings s={s} set={set} Toggle={Toggle} hidden={tab !== "library"} />
+        <SharingSettings s={s} set={set} Toggle={Toggle} hidden={tab !== "sharing"} onError={onError} />
       </div>
     </div>
   );

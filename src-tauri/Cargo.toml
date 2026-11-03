@@ -26,6 +26,9 @@ chrono = "0.4"
 trash = "5"
 cpal = "0.15"
 tauri-plugin-updater = "2"
+# Uploads (Catbox / Litterbox / Discord / Streamable). Same reqwest + rustls the updater already uses.
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "multipart", "blocking", "json"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 
 [dependencies.windows]
 version = "0.61"
@@ -56,6 +59,9 @@ features = [
   "Graphics_DirectX_Direct3D11",
   "Win32_Security",
   "Win32_Media_Audio",
+  "Win32_Security_Cryptography",
+  "Win32_System_DataExchange",
+  "Win32_System_Memory",
 ]
 
 [profile.release]

@@ -792,8 +792,11 @@ pub fn replace_original(original: &str, edited: &str, expected_secs: Option<f64>
 
 /// An H.264 + AAC MP4 that plays everywhere (audio tracks mixed into one).
 pub fn export_h264(path: &str) -> Result<String, String> {
+    export_h264_into(path, unique(Path::new(path), " (H.264)", "mp4"))
+}
+
+pub fn export_h264_into(path: &str, out: PathBuf) -> Result<String, String> {
     let info = probe(path)?;
-    let out = unique(Path::new(path), " (H.264)", "mp4");
     let mut args = ffmpeg::args(&["-hide_banner", "-loglevel", "error", "-i"]);
     args.push(path.into());
     map_mixed_audio(&mut args, info.audio_tracks);
@@ -807,6 +810,10 @@ pub fn export_h264(path: &str) -> Result<String, String> {
 
 /// Fit under `target_mb` (e.g. Discord's limit). Drops to 720p when the bitrate gets low.
 pub fn compress(path: &str, target_mb: u32) -> Result<String, String> {
+    compress_into(path, target_mb, unique(Path::new(path), &format!(" ({target_mb} MB)"), "mp4"))
+}
+
+pub fn compress_into(path: &str, target_mb: u32, out: PathBuf) -> Result<String, String> {
     let info = probe(path)?;
     if info.duration <= 0.0 {
         return Err("Couldn't read the video length.".into());
@@ -814,7 +821,6 @@ pub fn compress(path: &str, target_mb: u32) -> Result<String, String> {
     let audio_kbps = if info.audio_tracks > 0 { 128.0 } else { 0.0 };
     let total_kbps = target_mb as f64 * 8.0 * 1024.0 * 0.93 / info.duration;
     let video_kbps = (total_kbps - audio_kbps).max(300.0).round() as u64;
-    let out = unique(Path::new(path), &format!(" ({target_mb} MB)"), "mp4");
     let (b, buf) = (format!("{video_kbps}k"), format!("{}k", video_kbps * 2));
     let mut args = ffmpeg::args(&["-hide_banner", "-loglevel", "error", "-i"]);
     args.push(path.into());

@@ -1,4 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { useUploads } from "./Share";
+import type { UploadProgress } from "./api";
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
 import { api, errText } from "./api";
@@ -26,6 +29,7 @@ export default function App() {
   const [settings, update] = useSettings();
   useAppearance(settings);
   const [clips, refresh] = useClips();
+  const uploads = useUploads();
   const upd = useUpdate();
   const [installing, setInstalling] = useState(false);
   const [dismissed, setDismissed] = useState<string | null>(null);
@@ -121,8 +125,19 @@ export default function App() {
     const b = listen<string>("clip-error", (e) => toast(e.payload, true));
     const c = listen<string>("open-in-studio", (e) => openInStudio(e.payload));
     const d = listen<View>("show-view", (e) => setView(e.payload));
+    // Uploads (also automatic ones): say when the link is ready, or why it failed.
+    const u = listen<UploadProgress>("upload-progress", (e) => {
+      const p = e.payload;
+      const name = p.path.split("\\").pop();
+      if (p.stage === "done" && p.url) {
+        const url = p.url;
+        toast("Link copied", false, `${name} · ${url.replace(/^https?:\/\//, "")}`, { label: "Open", run: () => openUrl(url).catch(() => {}) });
+      } else if (p.stage === "error") {
+        toast(p.error ?? "Upload failed", true, name);
+      }
+    });
     return () => {
-      [a, b, c, d].forEach((p) => p.then((f) => f()));
+      [a, b, c, d, u].forEach((p) => p.then((f) => f()));
     };
   }, [toast, openInStudio]);
 
@@ -189,6 +204,8 @@ export default function App() {
             onChanged={refresh}
             onDelete={requestDelete}
             hotkey={settings?.hotkey ?? "Alt+F10"}
+            uploads={uploads.progress}
+            links={uploads.history}
           />
         )}
         {view === "studio" && (
@@ -201,6 +218,8 @@ export default function App() {
             settings={settings}
             update={update}
             onBack={backToClips}
+            uploads={uploads.progress}
+            links={uploads.history}
           />
         )}
         {view === "performance" && <Performance />}

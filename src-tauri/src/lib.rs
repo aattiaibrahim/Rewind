@@ -9,9 +9,11 @@ mod library;
 mod monitors;
 mod nas;
 mod native;
+mod secrets;
 mod settings;
 mod sound;
 mod updater;
+mod upload;
 
 use settings::Settings;
 use std::path::PathBuf;
@@ -67,6 +69,13 @@ fn save_now(app: &AppHandle, seconds: Option<u32>) -> Result<String, String> {
     let _ = app.emit("clip-saved", &path);
     if !s.nas_dir.is_empty() {
         nas::clip_saved();
+    }
+    if s.auto_upload {
+        // In the background; the link is copied and a toast shows when it's done.
+        let (a, p) = (app.clone(), path.clone());
+        thread::spawn(move || {
+            let _ = upload_now(&a, &p, None);
+        });
     }
     Ok(path)
 }
@@ -402,6 +411,130 @@ async fn undo_last_move(app: AppHandle) -> Result<consolidate::Outcome, String> 
     let out = blocking(move || Ok(consolidate::undo(&log))).await?;
     let _ = app.emit("clips-changed", ());
     Ok(out)
+}
+
+// ---------- Sharing (uploads) ----------
+
+fn data_file(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
+    app.path().app_data_dir().map(|d| d.join(name)).map_err(|e| e.to_string())
+}
+
+/// Clips being uploaded right now (so one clip isn't sent twice at once).
+static UPLOADING: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct UploadProgress {
+    path: String,
+    host: String,
+    /// "preparing" | "uploading" | "done" | "error"
+    stage: &'static str,
+    sent: u64,
+    total: u64,
+    url: Option<String>,
+    error: Option<String>,
+}
+
+/// Prepare, upload, copy the link, remember it. Progress goes out as "upload-progress".
+fn upload_now(app: &AppHandle, path: &str, host: Option<&str>) -> Result<upload::Upload, String> {
+    let s = settings_of(app);
+    let host = upload::Host::parse(host.unwrap_or(&s.upload_host)).ok_or("Unknown upload service.")?;
+    {
+        let mut busy = UPLOADING.lock().unwrap();
+        if busy.iter().any(|p| p == path) {
+            return Err("That clip is already uploading.".into());
+        }
+        busy.push(path.to_string());
+    }
+    let name = serde_json::to_value(host).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
+    let emit = |stage, sent, total, url: Option<String>, error: Option<String>| {
+        let _ = app.emit("upload-progress", UploadProgress { path: path.to_string(), host: name.clone(), stage, sent, total, url, error });
+    };
+    let result = (|| -> Result<upload::Upload, String> {
+        emit("preparing", 0, 0, None, None);
+        let work = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("uploads");
+        let file = upload::prepare(path, host, &work)?;
+        let secrets_file = data_file(app, "secrets.json")?;
+        let folder = std::path::Path::new(path).parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let cfg = upload::Config {
+            litterbox_time: s.litterbox_time.clone(),
+            discord_webhook: secrets::get(&secrets_file, "discord_webhook"),
+            streamable_email: s.streamable_email.clone(),
+            streamable_password: secrets::get(&secrets_file, "streamable_password"),
+            post_link_to_discord: s.post_link_to_discord,
+            message: if folder.is_empty() || folder == "Desktop" { "Clip".into() } else { format!("{folder} clip") },
+        };
+        let (a, p, h) = (app.clone(), path.to_string(), name.clone());
+        let report = Box::new(move |sent: u64, total: u64| {
+            let _ = a.emit("upload-progress", UploadProgress { path: p.clone(), host: h.clone(), stage: "uploading", sent, total, url: None, error: None });
+        });
+        let sent = upload::send(host, &file, &cfg, &upload::Endpoints::default(), report);
+        let bytes = fs_len(&file);
+        if file != std::path::Path::new(path) {
+            let _ = std::fs::remove_file(&file);
+        }
+        let url = sent?;
+        let _ = upload::copy_to_clipboard(&url);
+        let now = chrono::Local::now().timestamp_millis();
+        let u = upload::Upload {
+            host,
+            url,
+            at: now,
+            bytes,
+            expires: (host == upload::Host::Litterbox).then(|| upload::litterbox_expiry(&s.litterbox_time, now)),
+        };
+        upload::remember(&data_file(app, "uploads.json")?, path, u.clone());
+        Ok(u)
+    })();
+    UPLOADING.lock().unwrap().retain(|p| p != path);
+    match &result {
+        Ok(u) => emit("done", u.bytes, u.bytes, Some(u.url.clone()), None),
+        Err(e) => emit("error", 0, 0, None, Some(e.clone())),
+    }
+    result
+}
+
+fn fs_len(p: &std::path::Path) -> u64 {
+    std::fs::metadata(p).map(|m| m.len()).unwrap_or(0)
+}
+
+#[tauri::command]
+async fn upload_clip(app: AppHandle, path: String, host: Option<String>) -> Result<upload::Upload, String> {
+    blocking(move || upload_now(&app, &path, host.as_deref())).await
+}
+
+/// Every clip's links (path → uploads, newest last).
+#[tauri::command]
+fn upload_history(app: AppHandle) -> Result<std::collections::BTreeMap<String, Vec<upload::Upload>>, String> {
+    Ok(upload::history(&data_file(&app, "uploads.json")?))
+}
+
+#[tauri::command]
+fn copy_text(text: String) -> Result<(), String> {
+    upload::copy_to_clipboard(&text)
+}
+
+/// Store a secret (empty removes it). The value never comes back to the interface.
+#[tauri::command]
+fn set_secret(app: AppHandle, name: String, value: String) -> Result<(), String> {
+    let value = value.trim().to_string();
+    if name == "discord_webhook" && !value.is_empty() && !upload::valid_webhook(&value) {
+        return Err("That isn't a Discord webhook address. In Discord: channel settings → Integrations → Webhooks → Copy Webhook URL.".into());
+    }
+    secrets::set(&data_file(&app, "secrets.json")?, &name, &value)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SecretsSet {
+    discord_webhook: bool,
+    streamable_password: bool,
+}
+
+#[tauri::command]
+fn secrets_set(app: AppHandle) -> Result<SecretsSet, String> {
+    let f = data_file(&app, "secrets.json")?;
+    Ok(SecretsSet { discord_webhook: secrets::is_set(&f, "discord_webhook"), streamable_password: secrets::is_set(&f, "streamable_password") })
 }
 
 /// Medal / OBS / NVIDIA clip folders found on this PC.
@@ -844,6 +977,11 @@ pub fn run() {
             get_nas_state,
             sync_nas_now,
             recorder_clip_folders,
+            upload_clip,
+            upload_history,
+            copy_text,
+            set_secret,
+            secrets_set,
             plan_move_into_rewind,
             move_into_rewind,
             last_move,

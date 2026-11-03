@@ -351,6 +351,17 @@ input.slider::-moz-range-thumb { width: 12px; height: 12px; border: 0; border-ra
   border: 1px solid var(--border); color: var(--text-2); vertical-align: 1px;
 }
 .src-tag.ok { color: var(--accent-ink); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.src-tag.bad { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+/* Studio's Share box */
+.share-box { display: flex; flex-direction: column; gap: 8px; }
+.share-box .select { max-width: 130px; }
+.upload-bar { height: 4px; border-radius: 999px; background: var(--track); overflow: hidden; }
+.upload-bar i { display: block; height: 100%; background: var(--accent); border-radius: 999px; transition: width 0.2s linear; }
+.share-link {
+  display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: var(--r-sm, 10px);
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel)); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.link-text { font-family: var(--mono); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: text; }
 
 table.bench { width: 100%; border-collapse: collapse; font-size: 13px; }
 table.bench th { text-align: left; font-size: 11px; font-weight: 600; letter-spacing: 0.5px; color: var(--dim); padding: 8px 10px; border-bottom: 1px solid var(--line-2); white-space: nowrap; }

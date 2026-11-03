@@ -25,6 +25,13 @@ A lightweight replay-buffer clipper for Windows that records on your NVIDIA GPU 
 - **Move into Rewind**: tidies a linked folder into Rewind's layout (`<Game>\<Game> <date time>`), merging game names across spellings.
   - Same-drive moves are instant renames. Other drives copy, check the size, and only then remove the original.
   - Every move is logged as it happens, so **Undo** puts everything back, even after a crash.
+- **Share** (Share on a clip, or the Share box in Studio; set up under Settings → Sharing):
+  - Uploads the clip and copies a link. The clip is first turned into an H.264 MP4 that plays inside Discord for everyone, no Nitro needed.
+  - **Catbox** (free, no account, permanent, up to 200 MB) and **Litterbox** (free, temporary, up to 1 GB) give direct links that play inline in Discord.
+  - A **Discord webhook** posts the clip straight into a channel, compressed under Discord's 10 MB. Links from the other services can be posted there too.
+  - **Streamable** needs an account.
+  - Optional auto-upload of every new clip, ShareX-style.
+  - The webhook address and Streamable password are stored encrypted with Windows DPAPI, never in settings.json.
 - **Save sound**: a short chime when a clip or recording is saved, a low tone if it fails (can be turned off).
 - **Open any video** from any folder; it shows up under "Imported".
 - **Studio**: preview, drag in/out handles, one frame-exact **Save trim** that re-encodes only the moment before the first keyframe (under a second) and copies the rest untouched, so it takes a few seconds and keeps full quality.

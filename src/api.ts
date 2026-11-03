@@ -25,6 +25,11 @@ export type Settings = {
   nasRemoveLocal: boolean;
   linkedFolders: string[];
   benchmarkMode: boolean;
+  uploadHost: UploadHost;
+  litterboxTime: "1h" | "12h" | "24h" | "72h";
+  autoUpload: boolean;
+  postLinkToDiscord: boolean;
+  streamableEmail: string;
   startMinimized: boolean;
   keepOriginalAfterRemux: boolean;
   replaceOriginalOnEdit: boolean;
@@ -173,6 +178,24 @@ export type NasState = {
 
 export type ClipFolder = { label: string; path: string; exists: boolean };
 
+export type UploadHost = "catbox" | "litterbox" | "discord" | "streamable";
+export const UPLOAD_HOSTS: { id: UploadHost; label: string; hint: string }[] = [
+  { id: "catbox", label: "Catbox", hint: "Free, no account, keeps the clip. Plays inside Discord. Up to 200 MB." },
+  { id: "litterbox", label: "Litterbox", hint: "Free, no account, deletes the clip after a while. Up to 1 GB." },
+  { id: "discord", label: "Discord webhook", hint: "Posts the clip into your channel. Compressed under Discord's 10 MB." },
+  { id: "streamable", label: "Streamable", hint: "Clip page with a player. Needs a Streamable account." },
+];
+export type Upload = { host: UploadHost; url: string; at: number; bytes: number; expires: number | null };
+export type UploadProgress = {
+  path: string;
+  host: UploadHost;
+  stage: "preparing" | "uploading" | "done" | "error";
+  sent: number;
+  total: number;
+  url: string | null;
+  error: string | null;
+};
+
 export type MovePlan = {
   label: string;
   count: number;
@@ -273,6 +296,11 @@ export const api = {
   checkForUpdates: () => invoke<string | null>("check_for_updates"),
   installUpdate: () => invoke<void>("install_update"),
   getNasState: () => invoke<NasState>("get_nas_state"),
+  uploadClip: (path: string, host?: UploadHost) => invoke<Upload>("upload_clip", { path, host: host ?? null }),
+  uploadHistory: () => invoke<Record<string, Upload[]>>("upload_history"),
+  copyText: (text: string) => invoke<void>("copy_text", { text }),
+  setSecret: (name: "discord_webhook" | "streamable_password", value: string) => invoke<void>("set_secret", { name, value }),
+  secretsSet: () => invoke<{ discordWebhook: boolean; streamablePassword: boolean }>("secrets_set"),
   syncNasNow: () => invoke<void>("sync_nas_now"),
   recorderClipFolders: () => invoke<ClipFolder[]>("recorder_clip_folders"),
   planMoveIntoRewind: (folders: string[]) => invoke<MovePlan>("plan_move_into_rewind", { folders }),

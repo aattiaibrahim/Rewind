@@ -39,13 +39,15 @@ export function installDevMock() {
   );
   clips.sort((a, b) => b.modified - a.modified); // newest first, like Rewind's own list
   const bin: Clip[] = [];
+  const uploads: Record<string, unknown[]> = {};
+  const secrets: Record<string, boolean> = {};
   const settings = {
     clipsDir: "C:\\Users\\you\\Videos\\Rewind", encoder: "av1", quality: 24, fps: 60, bufferSeconds: 120,
     bufferInRam: true, captureEngine: "native", monitorMode: "primary", fixedMonitor: "", drawCursor: true, hotkey: "Alt+F10",
     recordHotkey: "Alt+F9", bufferEnabled: true, launchOnStartup: false, autoUpdate: true, startMinimized: true,
     keepOriginalAfterRemux: true, replaceOriginalOnEdit: false, externalFiles: [], desktopAudio: true,
     micEnabled: true, micMono: true, micDevice: "", theme: "midnight", accent: "lime", reduceMotion: false,
-    saveSound: true, nasDir: "", nasRemoveLocal: false, linkedFolders: [] as string[], benchmarkMode: false,
+    saveSound: true, nasDir: "", nasRemoveLocal: false, linkedFolders: [] as string[], benchmarkMode: false, uploadHost: "catbox", litterboxTime: "72h", autoUpload: false, postLinkToDiscord: false, streamableEmail: "",
   };
   const status = {
     enabled: true, running: true, monitor: "Display 1 · 1920×1080", width: 1920, height: 1080, encoder: "av1",
@@ -79,6 +81,23 @@ export function installDevMock() {
         ? { enabled: true, reachable: true, pending: 1, copying: null, copied: 3, lastError: null, lastSync: Date.now() - 20_000 }
         : { enabled: false, reachable: false, pending: 0, copying: null, copied: 0, lastError: null, lastSync: null },
     sync_nas_now: () => null,
+    // Uploads (preview only): pretend to prepare and upload, with progress events, then give a fake link.
+    upload_clip: async (a) => {
+      const path = a.path as string, host = (a.host as string) ?? settings.uploadHost;
+      const send = (stage: string, sent = 0, total = 0, url: string | null = null) =>
+        (listeners.get("upload-progress") ?? []).forEach((id) => callbacks.get(id)?.({ event: "upload-progress", id: 0, payload: { path, host, stage, sent, total, url, error: null } }));
+      send("preparing");
+      await new Promise((r) => setTimeout(r, 600));
+      for (let i = 1; i <= 5; i++) { send("uploading", i * 2e6, 1e7); await new Promise((r) => setTimeout(r, 250)); }
+      const up = { host, url: "https://files.catbox.moe/preview.mp4", at: Date.now(), bytes: 1e7, expires: null };
+      (uploads[path] ??= []).push(up);
+      send("done", 1e7, 1e7, up.url);
+      return up;
+    },
+    upload_history: () => uploads,
+    copy_text: () => null,
+    set_secret: (a) => { secrets[a.name as string] = !!a.value; return null; },
+    secrets_set: () => ({ discordWebhook: !!secrets.discord_webhook, streamablePassword: !!secrets.streamable_password }),
     plan_move_into_rewind: () => ({
       label: "Medal", count: 42, bytes: 3.2e9, otherDrive: false,
       folders: [["VALORANT", 30], ["Tom Clancys Rainbow Six Siege", 12]],
@@ -126,7 +145,11 @@ export function installDevMock() {
       listeners.set(ev, [...(listeners.get(ev) ?? []), a.handler as number]);
       return a.handler;
     },
-    "plugin:event|unlisten": () => null,
+    "plugin:event|unlisten": (a) => {
+      const ev = a.event as string;
+      listeners.set(ev, (listeners.get(ev) ?? []).filter((id) => id !== (a.eventId as number)));
+      return null;
+    },
   };
 
   w.__TAURI_INTERNALS__ = {

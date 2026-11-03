@@ -56,6 +56,15 @@ pub struct Settings {
     pub linked_folders: Vec<String>,
     /// Show the Performance page (benchmark against other recorders)
     pub benchmark_mode: bool,
+    /// Where Upload sends clips: "catbox" | "litterbox" | "discord" | "streamable"
+    pub upload_host: String,
+    /// How long Litterbox keeps a clip: "1h" | "12h" | "24h" | "72h"
+    pub litterbox_time: String,
+    /// Upload every newly saved clip in the background (link copied when done)
+    pub auto_upload: bool,
+    /// After uploading to Catbox / Litterbox / Streamable, also post the link to the Discord webhook
+    pub post_link_to_discord: bool,
+    pub streamable_email: String,
 }
 
 impl Default for Settings {
@@ -93,6 +102,11 @@ impl Default for Settings {
             nas_remove_local: false,
             linked_folders: Vec::new(),
             benchmark_mode: false,
+            upload_host: "catbox".into(),
+            litterbox_time: "72h".into(),
+            auto_upload: false,
+            post_link_to_discord: false,
+            streamable_email: String::new(),
         }
     }
 }
@@ -127,6 +141,13 @@ impl Settings {
         if self.nas_dir.is_empty() {
             self.nas_remove_local = false;
         }
+        if !["catbox", "litterbox", "discord", "streamable"].contains(&self.upload_host.as_str()) {
+            self.upload_host = d.upload_host.clone();
+        }
+        if !["1h", "12h", "24h", "72h"].contains(&self.litterbox_time.as_str()) {
+            self.litterbox_time = d.litterbox_time.clone();
+        }
+        self.streamable_email = self.streamable_email.trim().to_string();
         self.linked_folders.retain(|f| !f.trim().is_empty());
         self.linked_folders.dedup();
         if !["midnight", "graphite", "oled", "light"].contains(&self.theme.as_str()) {

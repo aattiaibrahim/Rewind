@@ -121,7 +121,11 @@ fn presentmon(app: &AppHandle) -> PathBuf {
             return p;
         }
     }
-    PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../vendor/presentmon/PresentMon.exe"))
+    // Development fallback only: release builds don't carry this folder's path.
+    #[cfg(debug_assertions)]
+    return PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../vendor/presentmon/PresentMon.exe"));
+    #[cfg(not(debug_assertions))]
+    PathBuf::from("PresentMon.exe")
 }
 
 /// Say something out loud (Windows' built-in voice), without waiting.

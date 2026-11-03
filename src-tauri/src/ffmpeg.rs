@@ -26,7 +26,11 @@ static JOB: OnceLock<usize> = OnceLock::new();
 
 /// Use the copy bundled next to the app, or the one in vendor/ during development.
 pub fn init(resource_dir: Option<PathBuf>) {
+    // Development fallback only: release builds don't carry this folder's path.
+    #[cfg(debug_assertions)]
     let dev = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../vendor/ffmpeg/bin"));
+    #[cfg(not(debug_assertions))]
+    let dev = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("ffmpeg"))).unwrap_or_default();
     let dir = match resource_dir.map(|r| r.join("ffmpeg")) {
         Some(d) if d.join("ffmpeg.exe").exists() => d,
         _ => dev,
