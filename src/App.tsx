@@ -206,6 +206,7 @@ export default function App() {
             hotkey={settings?.hotkey ?? "Alt+F10"}
             uploads={uploads.progress}
             links={uploads.history}
+            focusPath={studioPath}
           />
         )}
         {view === "studio" && (

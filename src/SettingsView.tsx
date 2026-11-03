@@ -78,6 +78,15 @@ function HotkeyInput({ value, label, onPick }: { value: string; label: string; o
   );
 }
 
+/** What each "Which monitor" choice does when screens change (checked every second). */
+const MONITOR_MODE_HINT: Record<Settings["monitorMode"], string> = {
+  primary:
+    "Records whichever screen Windows calls the main display. After Win+P, or plugging a screen in or out, it moves to the new main display within about a second.",
+  cursor: "Records the screen your mouse is on, switching within about a second when you move to another screen.",
+  fixed:
+    "Stays on the screen you pick below, whatever Win+P does. If that screen is unplugged it records the main display until it's back.",
+};
+
 const TABS = [
   ["general", "General"],
   ["appearance", "Appearance"],
@@ -536,14 +545,14 @@ export function SettingsView({
           <label className="setting">
             <span>
               Which monitor
-              <small>Re-picked automatically after Win+P or plugging in a screen</small>
+              <small>{MONITOR_MODE_HINT[s.monitorMode]}</small>
             </span>
             <select
               className="select"
               value={s.monitorMode}
               onChange={(e) => set({ monitorMode: e.target.value as Settings["monitorMode"] })}
             >
-              <option value="primary">Follow primary</option>
+              <option value="primary">Follow main display (Win+P safe)</option>
               <option value="cursor">Follow my cursor</option>
               <option value="fixed">Always one monitor</option>
             </select>

@@ -37,6 +37,16 @@ export function installDevMock() {
     { path: "C:\\Users\\you\\nas\\VALORANT\\VALORANT 2026-11-02 - OTHER-PC.mkv", name: "VALORANT 2026-11-02 - OTHER-PC", folder: "VALORANT", size: 52 << 20, modified: now - 0.5 * day, external: false, location: "nas", onNas: false, source: "NAS" },
     { path: "C:\\Users\\you\\Medal\\Clips\\Valorant\\Medal clip.mp4", name: "Medal clip", folder: "Valorant", size: 30 << 20, modified: now - 0.6 * day, external: true, location: "linked", onNas: false, source: "Medal" },
   );
+  // A few months of older clips, so the date timeline has something to show.
+  const games = ["VALORANT", "Apex Legends", "Counter-Strike 2", "Desktop"];
+  for (let i = 0; i < 40; i++) {
+    const ago = 3 + Math.floor(i * 3.1) + (i % 3) * 0.3;
+    const g = games[i % games.length];
+    clips.push({
+      path: `C:\\Users\\you\\Videos\\Rewind\\${g}\\${g} old ${i}.mkv`, name: `${g} ${i + 1}`, folder: g,
+      size: (20 + (i * 7) % 90) << 20, modified: now - ago * day, external: false, location: "local", onNas: false, source: "",
+    });
+  }
   clips.sort((a, b) => b.modified - a.modified); // newest first, like Rewind's own list
   const bin: Clip[] = [];
   const uploads: Record<string, unknown[]> = {};
