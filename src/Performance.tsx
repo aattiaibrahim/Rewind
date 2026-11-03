@@ -1,6 +1,16 @@
 import { listen } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useEffect, useState } from "react";
 import { api, BenchApp, BenchProgress, BenchReport, Comparison, RecorderSettings, Stat, Verdict, errText } from "./api";
+import { useUpdate } from "./hooks";
+
+/** The repo's "Performance test result" issue form, with the version and game filled in. */
+function shareUrl(r: BenchReport, version: string | undefined) {
+  const q = new URLSearchParams({ template: "benchmark.yml", title: `[Benchmark] ${r.game || "Desktop"}` });
+  if (version) q.set("version", version);
+  if (r.game) q.set("game", r.game);
+  return `https://github.com/aattiaibrahim/Rewind/issues/new?${q}`;
+}
 
 const OTHERS: { app: BenchApp; label: string; how: string }[] = [
   { app: "obs", label: "OBS replay buffer", how: "Started and stopped for you, or a voice asks you to" },
@@ -112,6 +122,8 @@ export function Performance() {
   const [report, setReport] = useState<BenchReport | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [shared, setShared] = useState(false);
+  const upd = useUpdate();
 
   useEffect(() => {
     api.benchState().then(([r, last]) => {
@@ -235,17 +247,43 @@ export function Performance() {
         </section>
       )}
 
-      {report && <Results report={report} copied={copied} onCopy={() => {
-        navigator.clipboard.writeText(asText(report)).then(() => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 2000);
-        });
-      }} />}
+      {report && (
+        <Results
+          report={report}
+          copied={copied}
+          onCopy={() => {
+            navigator.clipboard.writeText(asText(report)).then(() => {
+              setCopied(true);
+              setTimeout(() => setCopied(false), 2000);
+            });
+          }}
+          onShare={async () => {
+            // The results are too long for a link: copy them, then open the form to paste into.
+            await navigator.clipboard.writeText(asText(report)).catch(() => {});
+            setShared(true);
+            setTimeout(() => setShared(false), 6000);
+            openUrl(shareUrl(report, upd?.current)).catch(() => {});
+          }}
+          shared={shared}
+        />
+      )}
     </div>
   );
 }
 
-function Results({ report: r, copied, onCopy }: { report: BenchReport; copied: boolean; onCopy: () => void }) {
+function Results({
+  report: r,
+  copied,
+  onCopy,
+  onShare,
+  shared,
+}: {
+  report: BenchReport;
+  copied: boolean;
+  onCopy: () => void;
+  onShare: () => void;
+  shared: boolean;
+}) {
   const b = r.baseline;
   return (
     <section className="group" style={{ maxWidth: 1060 }}>
@@ -254,10 +292,24 @@ function Results({ report: r, copied, onCopy }: { report: BenchReport; copied: b
           Results{r.game ? `: ${r.game}` : ""}{" "}
           <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>{r.started}</span>
         </h2>
-        <button className="btn small" onClick={onCopy}>
-          {copied ? "Copied" : "Copy results"}
-        </button>
+        <span className="row" style={{ gap: 8 }}>
+          <button className="btn small" onClick={onCopy}>
+            {copied ? "Copied" : "Copy results"}
+          </button>
+          <button
+            className="btn small primary"
+            onClick={onShare}
+            title="Copies the results and opens the benchmark form on GitHub, where you paste them and add screenshots"
+          >
+            Share on GitHub
+          </button>
+        </span>
       </div>
+      {shared && (
+        <p className="muted" style={{ fontSize: 12, margin: "6px 0 0" }}>
+          Results copied. Paste them into the Results box on GitHub, then drag in your screenshots.
+        </p>
+      )}
       {r.error && <div className="err-text" style={{ padding: "8px 0" }}>{r.error} Results below use the runs finished before that.</div>}
 
       <div className="bench-summary">

@@ -46,6 +46,8 @@ pub struct Settings {
     pub accent: String,
     /// Turn off fades and motion in the interface
     pub reduce_motion: bool,
+    /// Play a short chime when a clip or recording is saved (and a low one if it fails)
+    pub save_sound: bool,
 }
 
 impl Default for Settings {
@@ -78,6 +80,7 @@ impl Default for Settings {
             theme: "midnight".into(),
             accent: "lime".into(),
             reduce_motion: false,
+            save_sound: true,
         }
     }
 }

@@ -8,6 +8,7 @@ mod library;
 mod monitors;
 mod native;
 mod settings;
+mod sound;
 mod updater;
 
 use settings::Settings;
@@ -51,9 +52,11 @@ fn output_path(s: &Settings, label: &str) -> PathBuf {
 fn save_now(app: &AppHandle, seconds: Option<u32>) -> Result<String, String> {
     let s = settings_of(app);
     let out = output_path(&s, "");
-    app.state::<AppState>()
-        .engine
-        .save_clip(seconds.unwrap_or(s.buffer_seconds), &out)?;
+    let saved = app.state::<AppState>().engine.save_clip(seconds.unwrap_or(s.buffer_seconds), &out);
+    if s.save_sound {
+        if saved.is_ok() { sound::saved() } else { sound::failed() }
+    }
+    saved?;
     let path = out.to_string_lossy().into_owned();
     let _ = app.emit("clip-saved", &path);
     Ok(path)
@@ -63,7 +66,11 @@ fn save_now(app: &AppHandle, seconds: Option<u32>) -> Result<String, String> {
 fn toggle_record_now(app: &AppHandle) -> Result<Option<String>, String> {
     let st = app.state::<AppState>();
     if st.engine.is_recording() {
-        let files = st.engine.stop_recording()?;
+        let stopped = st.engine.stop_recording();
+        if settings_of(app).save_sound {
+            if stopped.is_ok() { sound::saved() } else { sound::failed() }
+        }
+        let files = stopped?;
         for f in &files {
             let _ = app.emit("clip-saved", f);
         }

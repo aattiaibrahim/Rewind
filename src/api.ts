@@ -20,6 +20,7 @@ export type Settings = {
   bufferEnabled: boolean;
   launchOnStartup: boolean;
   autoUpdate: boolean;
+  saveSound: boolean;
   startMinimized: boolean;
   keepOriginalAfterRemux: boolean;
   replaceOriginalOnEdit: boolean;

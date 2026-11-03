@@ -1,0 +1,72 @@
+name: Performance test result
+description: Share a Rewind Performance test (vs OBS, NVIDIA Instant Replay, Medal) with screenshots.
+title: "[Benchmark] "
+labels: ["benchmark"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing! In Rewind, open **Performance**, run the test, then click **Share on GitHub**:
+        it copies the full results and opens this form. Paste them below and drag in your screenshots.
+
+        For a fair result: turn V-Sync and FPS caps off, use the same spot (or a built-in benchmark),
+        close other recorders you aren't testing, and use 3+ rounds.
+  - type: input
+    id: version
+    attributes:
+      label: Rewind version
+      description: Settings → Updates, or under the logo.
+      placeholder: "0.1.15"
+    validations:
+      required: true
+  - type: input
+    id: game
+    attributes:
+      label: Game and scene
+      description: Which game, and where you stood (or which benchmark).
+      placeholder: "VALORANT, The Range, standing still facing the bots"
+    validations:
+      required: true
+  - type: input
+    id: pc
+    attributes:
+      label: PC
+      description: GPU, driver version, CPU, RAM, monitor resolution and refresh rate.
+      placeholder: "RTX 5080 (581.xx), Ryzen 7 9800X3D, 32 GB, 2560×1440 @ 240 Hz"
+    validations:
+      required: true
+  - type: checkboxes
+    id: recorders
+    attributes:
+      label: Recorders compared
+      options:
+        - label: Rewind
+        - label: OBS replay buffer
+        - label: NVIDIA Instant Replay (NVIDIA App / ShadowPlay)
+        - label: Medal
+  - type: textarea
+    id: results
+    attributes:
+      label: Results
+      description: Paste what "Share on GitHub" (or "Copy results") copied.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: Drag images here, e.g. the Results page, each recorder's settings, or an in-game overlay.
+  - type: checkboxes
+    id: fairness
+    attributes:
+      label: Test conditions
+      options:
+        - label: V-Sync and FPS caps were off
+        - label: Every recorder used the same resolution, frame rate and similar quality
+        - label: Nothing else was recording or streaming
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: Odd results, stutters you noticed, settings you changed.

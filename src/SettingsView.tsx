@@ -219,6 +219,16 @@ export function SettingsView({
             <span>Replay buffer</span>
             <Toggle label="Replay buffer on" checked={s.bufferEnabled} onChange={(v) => set({ bufferEnabled: v })} />
           </label>
+          <label className="setting">
+            <span>
+              Play a sound when a clip is saved
+              <small>
+                A short chime when a clip or recording is saved, and a low tone if saving fails. Desktop audio records
+                everything you hear, so the chime is also in later clips.
+              </small>
+            </span>
+            <Toggle label="Save sound" checked={s.saveSound} onChange={(v) => set({ saveSound: v })} />
+          </label>
           <HotkeyInput label="Save clip hotkey" value={s.hotkey} onPick={(hk) => set({ hotkey: hk })} />
           <HotkeyInput label="Start / stop recording hotkey" value={s.recordHotkey} onPick={(hk) => set({ recordHotkey: hk })} />
         </section>
