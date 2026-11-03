@@ -11,14 +11,18 @@ COPY src ./src
 COPY public ./public
 COPY scripts ./scripts
 
+# Git commit the image was built from; shown at /healthz and in the page.
+ARG VERSION=dev
+
 ENV NODE_ENV=production \
+    REWIND_SERVER_VERSION=$VERSION \
     CLIPS_DIR=/clips \
     CACHE_DIR=/cache \
     PORT=8420
 
-# Run as the unprivileged "node" user (uid 1000). Override with `user:` in compose
-# to match the owner of your dataset (TrueNAS "apps" user is 568).
-# World-writable so a new named volume works whatever `user:` the app runs as.
+# Runs as the unprivileged "node" user (uid 1000) unless `user:` is set, for example
+# "3000:545" on TrueNAS (your SMB user, builtin_users group). /cache is world-writable
+# so a new named volume works for any user.
 RUN mkdir -p /cache && chown node:node /cache && chmod 1777 /cache
 USER node
 

@@ -1,21 +1,24 @@
-# Rewind Server. Local try-out:
-#   node scripts/make-samples.js sample-clips   (or see README for the docker way)
-#   docker compose up --build
-#   open http://localhost:8420
+# Rewind Server.
 #
-# On TrueNAS, point CLIPS at your clips dataset, e.g. /mnt/tank/rewind.
+# On a NAS: uses the published image (ffmpeg included, starts offline once downloaded).
+#   CLIPS=/mnt/tank/clips docker compose up -d
+#
+# Trying it locally from source:
+#   node scripts/make-samples.js sample-clips
+#   docker compose up --build        # then open http://localhost:8420
 services:
   rewind-server:
+    image: ghcr.io/aattiaibrahim/rewind-server:latest
     build: .
-    image: rewind-server:latest
     container_name: rewind-server
     restart: unless-stopped
-    # Match the owner of the clips dataset if it isn't readable by uid 1000.
-    # user: "568:568"
+    # Who reads the clips. On TrueNAS: your SMB user's uid and the builtin_users group (545),
+    # which can read SMB-share datasets. Locally the image default (uid 1000) is fine.
+    # user: "3000:545"
     ports:
       - "8420:8420"
     environment:
-      TZ: ${TZ:-Europe/London}
+      TZ: ${TZ:-America/Los_Angeles}
       RESCAN_SECONDS: "60"
       MAX_CACHE_GB: "20"
       TRANSCODE_JOBS: "1"

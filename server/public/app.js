@@ -64,6 +64,7 @@ async function load() {
     const data = await res.json();
     etag = tag;
     clips = data.clips;
+    document.querySelector(".brand").title = `Rewind Server ${data.version}`;
     fillGames(data.games);
     render();
   } catch (e) {

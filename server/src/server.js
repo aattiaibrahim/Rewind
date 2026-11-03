@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { gamesOf } from "../public/group.js";
 import { Media } from "./media.js";
 
+export const VERSION = (process.env.REWIND_SERVER_VERSION || "dev").slice(0, 7);
 const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "public");
 const TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -74,7 +75,7 @@ export async function createServer({ library, media }) {
     const url = new URL(req.url, "http://x");
     const parts = url.pathname.split("/").filter(Boolean);
 
-    if (url.pathname === "/healthz") return send(res, 200, { ok: true, clips: library.clips.length });
+    if (url.pathname === "/healthz") return send(res, 200, { ok: true, version: VERSION, clips: library.clips.length });
 
     if (url.pathname === "/api/clips") {
       const etag = `"v${library.version}"`;
@@ -82,7 +83,7 @@ export async function createServer({ library, media }) {
         res.writeHead(304, { etag });
         return res.end();
       }
-      return send(res, 200, { clips: library.clips, games: gamesOf(library.clips), scannedAt: library.scannedAt }, {
+      return send(res, 200, { clips: library.clips, games: gamesOf(library.clips), scannedAt: library.scannedAt, version: VERSION }, {
         etag,
         "cache-control": "no-cache",
       });

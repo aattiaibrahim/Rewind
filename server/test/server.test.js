@@ -65,6 +65,10 @@ describe("server", () => {
     assert.ok(data.clips.every((c) => !c.name.includes("rewind-partial")));
     assert.ok(data.clips.some((c) => c.pc === "PC1"));
     assert.deepEqual(data.games, ["Game"]);
+    assert.equal(typeof data.version, "string");
+    const health = await (await fetch(`${base}/healthz`)).json();
+    assert.equal(health.ok, true);
+    assert.equal(health.version, data.version);
     const again = await fetch(`${base}/api/clips`, { headers: { "if-none-match": res.headers.get("etag") } });
     assert.equal(again.status, 304);
   });

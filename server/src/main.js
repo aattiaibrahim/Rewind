@@ -11,7 +11,7 @@
 
 import { Library } from "./state.js";
 import { Media } from "./media.js";
-import { createServer } from "./server.js";
+import { createServer, VERSION } from "./server.js";
 
 const env = process.env;
 const clipsDir = env.CLIPS_DIR || "/clips";
@@ -29,7 +29,7 @@ await media.init();
 await library.start();
 const server = await createServer({ library, media });
 server.listen(port, () => {
-  console.log(`Rewind Server: ${library.clips.length} clips in ${clipsDir}, listening on :${port}`);
+  console.log(`Rewind Server ${VERSION}: ${library.clips.length} clips in ${clipsDir}, listening on :${port}`);
 });
 
 const stop = () => {
