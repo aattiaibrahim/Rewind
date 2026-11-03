@@ -625,7 +625,9 @@ export function Studio({
             <video
               key={`${path}#${reload}`}
               ref={video}
-              src={convertFileSrc(path)}
+              // The version tag makes the player load the file fresh after an edit replaced it
+              // in place (same name); otherwise WebView2 can reuse its cached copy of the old file.
+              src={`${convertFileSrc(path)}?v=${(clips ?? []).find((c) => c.path === path)?.modified ?? 0}-${reload}`}
               onLoadedMetadata={(e) => {
                 const d = e.currentTarget.duration;
                 if (isFinite(d) && d > 0) {

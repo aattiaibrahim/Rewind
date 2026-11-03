@@ -420,6 +420,52 @@ struct CutInfo {
     /// Time of the first video frame (Rewind's clips start at one frame in).
     first: f64,
     audio: usize,
+    /// Codec level as ffprobe reports it (AV1: seq_level_idx, 31 = none; H.264: 41 = 4.1; HEVC: 123 = 4.1)
+    level: i64,
+    profile: String,
+    /// What has to match between the re-encoded start and the copied rest
+    /// (otherwise strict players, like Windows' hardware AV1 decoder, refuse the file).
+    sig: String,
+}
+
+/// The stream properties a decoder sets itself up from.
+fn stream_sig(v: &Value) -> String {
+    let s = |k: &str| v[k].as_str().map(str::to_string).or_else(|| v[k].as_i64().map(|n| n.to_string())).unwrap_or_default();
+    ["profile", "level", "pix_fmt", "color_range", "color_space", "color_primaries", "color_transfer", "width", "height"]
+        .iter()
+        .map(|k| {
+            let mut val = s(k);
+            // Unmarked colour info means the default: limited ("tv") range, unspecified primaries.
+            if val == "unknown" || val == "unspecified" || val == "reserved" {
+                val.clear();
+            }
+            if *k == "color_range" && val.is_empty() {
+                val = "tv".into();
+            }
+            format!("{k}={val}")
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// NVENC options that make a re-encode match the source's profile and level.
+fn match_level_args(ci: &CutInfo) -> Vec<String> {
+    let mut a = Vec::new();
+    match ci.codec.as_str() {
+        // av1_nvenc's level numbers are seq_level_idx; 31 means "no level" = NVENC's auto.
+        "av1" if (0..24).contains(&ci.level) => a.extend(["-level".to_string(), ci.level.to_string()]),
+        "hevc" | "h264" if ci.level > 0 => a.extend(["-level".to_string(), ci.level.to_string()]),
+        _ => {}
+    }
+    if ci.codec == "h264" {
+        let p = match ci.profile.to_lowercase().as_str() {
+            "main" => "main",
+            p if p.contains("baseline") => "baseline",
+            _ => "high",
+        };
+        a.extend(["-profile:v".to_string(), p.to_string()]);
+    }
+    a
 }
 
 fn cut_info(path: &str) -> Result<CutInfo, String> {
@@ -452,7 +498,9 @@ fn cut_info(path: &str) -> Result<CutInfo, String> {
     }
     let first = v["start_time"].as_str().and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
     let audio = streams.iter().filter(|s| s["codec_type"] == "audio").count();
-    Ok(CutInfo { codec, raw, fps, first, audio })
+    let level = v["level"].as_i64().unwrap_or(-99);
+    let profile = v["profile"].as_str().unwrap_or("").to_string();
+    Ok(CutInfo { codec, raw, fps, first, audio, level, profile, sig: stream_sig(v) })
 }
 
 /// Frame numbers (from the first frame) of the keyframes between `from` and `to` seconds.
@@ -518,10 +566,25 @@ fn smart_trim(path: &str, start: f64, end: f64, out: &Path) -> Result<(), String
             a.extend(ffmpeg::args(&["-map", "0:v:0", "-an", "-vf", &format!("trim=start={}:end={}", before(i_start), before(i_key))]));
             a.extend(ffmpeg::args(&[
                 "-c:v", nvenc_for(&ci.codec), "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", "16", "-b:v", "0", "-bf", "0", "-g", &gop,
-                "-pix_fmt", "yuv420p", "-f", ci.raw,
+                "-pix_fmt", "yuv420p",
             ]));
+            // Same level and profile as the original, so the stream doesn't change halfway.
+            a.extend(match_level_args(&ci).into_iter().map(OsString::from));
+            a.extend(ffmpeg::args(&["-f", ci.raw]));
             a.push(head.clone().into());
             ffmpeg::run("ffmpeg", &a)?;
+            // Joining two different-looking streams makes a file some players refuse
+            // (e.g. an OBS clip at AV1 level 4.1 with a start at "no level"):
+            // if anything still differs, re-encode the whole range instead.
+            if i_key < i_end {
+                let mut p = ffmpeg::args(&["-v", "error", "-f", ci.raw, "-print_format", "json", "-show_streams", "-i"]);
+                p.push(head.clone().into());
+                let j: Value = serde_json::from_str(&ffmpeg::run("ffprobe", &p)?).map_err(|e| e.to_string())?;
+                let got = j["streams"].get(0).map(stream_sig).unwrap_or_default();
+                if got != ci.sig {
+                    return Err(format!("the re-encoded start wouldn't match the rest ({got} vs {})", ci.sig));
+                }
+            }
         }
         // 2. From the keyframe on: copied untouched.
         let tail = dir.join("tail.raw");
@@ -826,6 +889,62 @@ mod tests {
         let _ = fs::remove_dir_all(d);
     }
 
+    /// Every AV1 level the stream's sequence headers announce, start to end.
+    fn av1_levels(path: &str) -> std::collections::BTreeSet<String> {
+        let mut a = ffmpeg::args(&["-hide_banner", "-v", "trace", "-i"]);
+        a.push(path.into());
+        a.extend(ffmpeg::args(&["-map", "0:v:0", "-c", "copy", "-bsf:v", "trace_headers", "-f", "null", "-"]));
+        let out = crate::ffmpeg::cmd("ffmpeg").args(&a).output().unwrap();
+        String::from_utf8_lossy(&out.stderr)
+            .lines()
+            .filter(|l| l.contains("seq_level_idx[0]"))
+            .filter_map(|l| l.rsplit('=').next().map(|v| v.trim().to_string()))
+            .collect()
+    }
+
+    /// Clips from other recorders (OBS, NVIDIA) carry a real level, e.g. 4.1, and full-range colour.
+    /// The trimmed file must keep exactly that everywhere, and still copy the untouched frames.
+    #[test]
+    fn smart_trim_keeps_the_source_level_and_profile() {
+        let d = tmp("smart-level");
+        crate::ffmpeg::init(None);
+        fs::create_dir_all(&d).unwrap();
+        for (codec, name, extra) in [
+            ("av1_nvenc", "obs.mkv", vec!["-level", "9", "-color_range", "pc"]),
+            ("hevc_nvenc", "obs-h.mkv", vec!["-level", "123"]),
+            ("h264_nvenc", "obs-x.mkv", vec!["-level", "41", "-profile:v", "main"]),
+        ] {
+            let src = d.join(name);
+            let mut args = ffmpeg::args(&[
+                "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=60",
+                "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", "6", "-map", "0:v", "-map", "1:a",
+                "-c:v", codec, "-g", "250", "-bf", "0", "-pix_fmt", "yuv420p",
+            ]);
+            args.extend(ffmpeg::args(&extra));
+            args.extend(ffmpeg::args(&["-c:a", "aac"]));
+            args.push(src.clone().into());
+            ffmpeg::run("ffmpeg", &args).expect("make sample");
+            // Keyframes every 250 frames (like OBS): 0 and 4.17 s. Start mid-GOP.
+            let src_s = src.to_string_lossy().into_owned();
+            let out = trim(&src_s, 1.5, 5.8, true).unwrap();
+            let sig = |p: &str| {
+                let mut a = ffmpeg::args(&["-v", "error", "-select_streams", "v:0", "-print_format", "json", "-show_streams", "-i"]);
+                a.push(p.into());
+                let j: Value = serde_json::from_str(&ffmpeg::run("ffprobe", &a).unwrap()).unwrap();
+                stream_sig(&j["streams"][0])
+            };
+            assert_eq!(sig(&out), sig(&src_s), "{codec}: same profile, level and colour as the source");
+            if codec == "av1_nvenc" {
+                let levels = av1_levels(&out);
+                assert_eq!(levels.into_iter().collect::<Vec<_>>(), vec!["9".to_string()], "one AV1 level all the way through");
+            }
+            // The keyframe at 250 is copied: identical to the source (smart path used, not a full re-encode).
+            let at = 250 - 90; // trim starts at frame 90 (1.5 s)
+            assert_eq!(frame_hashes(&out, at, 20), frame_hashes(&src_s, 250, 20), "{codec}: copied frames must be bit-identical");
+        }
+        let _ = fs::remove_dir_all(d);
+    }
+
     /// Smart-trims a real clip: REWIND_TRIM_CLIP=path, cuts 5.237 s to 10 s before the end.
     /// cargo test smart_trim_real_clip -- --ignored --nocapture
     #[test]
@@ -838,6 +957,9 @@ mod tests {
         let out = trim(&src, 5.237, len - 10.0, true).unwrap();
         let p = probe(&out).unwrap();
         println!("trimmed {:.1} s of {:.1} s in {:?}: {:.3} s, {} MB, {} audio tracks", len - 15.237, len, t.elapsed(), p.duration, fs::metadata(&out).unwrap().len() / 1_000_000, p.audio_tracks);
+        if p.codec == "av1" {
+            println!("AV1 levels in the source: {:?}, in the trim: {:?}", av1_levels(&src), av1_levels(&out));
+        }
         let _ = fs::remove_file(out);
     }
 
