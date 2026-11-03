@@ -172,6 +172,17 @@ export type NasState = {
 
 export type ClipFolder = { label: string; path: string; exists: boolean };
 
+export type MovePlan = {
+  label: string;
+  count: number;
+  bytes: number;
+  folders: [string, number][];
+  examples: [string, string][];
+  otherDrive: boolean;
+};
+export type MoveOutcome = { moved: number; failed: [string, string][] };
+export type LastMove = { label: string; count: number; when: number };
+
 export type Probe = {
   duration: number;
   codec: string;
@@ -263,6 +274,10 @@ export const api = {
   getNasState: () => invoke<NasState>("get_nas_state"),
   syncNasNow: () => invoke<void>("sync_nas_now"),
   recorderClipFolders: () => invoke<ClipFolder[]>("recorder_clip_folders"),
+  planMoveIntoRewind: (folder: string) => invoke<MovePlan>("plan_move_into_rewind", { folder }),
+  moveIntoRewind: (folder: string) => invoke<MoveOutcome>("move_into_rewind", { folder }),
+  lastMove: () => invoke<LastMove | null>("last_move"),
+  undoLastMove: () => invoke<MoveOutcome>("undo_last_move"),
 };
 
 export const VIDEO_EXTENSIONS = ["mkv", "mp4", "mov", "webm", "m4v", "avi", "ts", "flv"];

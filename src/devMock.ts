@@ -79,6 +79,14 @@ export function installDevMock() {
         ? { enabled: true, reachable: true, pending: 1, copying: null, copied: 3, lastError: null, lastSync: Date.now() - 20_000 }
         : { enabled: false, reachable: false, pending: 0, copying: null, copied: 0, lastError: null, lastSync: null },
     sync_nas_now: () => null,
+    plan_move_into_rewind: () => ({
+      label: "Medal", count: 42, bytes: 3.2e9, otherDrive: false,
+      folders: [["VALORANT", 30], ["Tom Clancys Rainbow Six Siege", 12]],
+      examples: [["Valorant_20261028_213344.mp4", "VALORANT\\VALORANT 2026-10-28 21-33-44.mp4"]],
+    }),
+    move_into_rewind: () => ({ moved: 42, failed: [] }),
+    last_move: () => null,
+    undo_last_move: () => ({ moved: 42, failed: [] }),
     recorder_clip_folders: () => [
       { label: "Medal", path: "C:\\Medal", exists: true },
       { label: "OBS", path: "C:\\Users\\you\\Videos\\OBS", exists: true },

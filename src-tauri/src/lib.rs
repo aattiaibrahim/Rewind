@@ -1,5 +1,6 @@
 mod audio;
 mod bench;
+mod consolidate;
 mod control;
 mod engine;
 mod ffmpeg;
@@ -296,6 +297,105 @@ fn get_nas_state() -> nas::NasState {
 #[tauri::command]
 fn sync_nas_now() {
     nas::wake();
+}
+
+fn linked_root_for(s: &Settings, folder: &str) -> Result<library::LinkedRoot, String> {
+    linked_roots(s)
+        .into_iter()
+        .find(|r| library::same_path(&r.path, std::path::Path::new(folder)))
+        .ok_or_else(|| "That folder isn't shown in your library.".to_string())
+}
+
+fn moves_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path().app_data_dir().map(|d| d.join("moves")).map_err(|e| e.to_string())
+}
+
+/// What "Move into Rewind" would do for one linked folder (nothing is touched).
+#[tauri::command]
+async fn plan_move_into_rewind(app: AppHandle, folder: String) -> Result<consolidate::Plan, String> {
+    let s = settings_of(&app);
+    blocking(move || {
+        let root = linked_root_for(&s, &folder)?;
+        Ok(consolidate::plan(&root, std::path::Path::new(&s.clips_dir), &move_avoid(&s, &root)))
+    })
+    .await
+}
+
+/// Folders a move must never reach into: Rewind's own, the NAS, other linked folders.
+fn move_avoid(s: &Settings, root: &library::LinkedRoot) -> Vec<PathBuf> {
+    let mut v = vec![PathBuf::from(&s.clips_dir)];
+    if !s.nas_dir.is_empty() {
+        v.push(PathBuf::from(&s.nas_dir));
+    }
+    v.extend(s.linked_folders.iter().map(PathBuf::from).filter(|p| !library::same_path(p, &root.path)));
+    v
+}
+
+#[tauri::command]
+async fn move_into_rewind(app: AppHandle, folder: String) -> Result<consolidate::Outcome, String> {
+    let s = settings_of(&app);
+    let dir = moves_dir(&app)?;
+    let a = app.clone();
+    let out = blocking(move || {
+        let root = linked_root_for(&s, &folder)?;
+        let plan = consolidate::plan(&root, std::path::Path::new(&s.clips_dir), &move_avoid(&s, &root));
+        let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+        let log = dir.join(format!("{stamp}-{}.jsonl", root.label.replace(|c: char| !c.is_ascii_alphanumeric(), "_")));
+        Ok(consolidate::run(&plan, &log, |done, total| {
+            let _ = a.emit("move-progress", (done, total));
+        }))
+    })
+    .await?;
+    let _ = app.emit("clips-changed", ());
+    nas::wake();
+    Ok(out)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UndoInfo {
+    label: String,
+    count: usize,
+    /// ms since 1970
+    when: i64,
+}
+
+fn latest_move_log(app: &AppHandle) -> Option<PathBuf> {
+    let mut logs: Vec<PathBuf> = std::fs::read_dir(moves_dir(app).ok()?)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "jsonl"))
+        .collect();
+    logs.sort();
+    logs.pop()
+}
+
+/// The most recent move that can still be undone, if any.
+#[tauri::command]
+fn last_move(app: AppHandle) -> Option<UndoInfo> {
+    let log = latest_move_log(&app)?;
+    let count = consolidate::read_log(&log).len();
+    if count == 0 {
+        return None;
+    }
+    let name = log.file_stem()?.to_string_lossy().into_owned();
+    let label = name.splitn(3, '-').nth(2).unwrap_or("folder").replace('_', " ");
+    let when = std::fs::metadata(&log)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    Some(UndoInfo { label, count, when })
+}
+
+#[tauri::command]
+async fn undo_last_move(app: AppHandle) -> Result<consolidate::Outcome, String> {
+    let log = latest_move_log(&app).ok_or("Nothing to undo.")?;
+    let out = blocking(move || Ok(consolidate::undo(&log))).await?;
+    let _ = app.emit("clips-changed", ());
+    Ok(out)
 }
 
 /// Medal / OBS / NVIDIA clip folders found on this PC.
@@ -738,6 +838,10 @@ pub fn run() {
             get_nas_state,
             sync_nas_now,
             recorder_clip_folders,
+            plan_move_into_rewind,
+            move_into_rewind,
+            last_move,
+            undo_last_move,
             start_bench,
             cancel_bench,
             bench_state,

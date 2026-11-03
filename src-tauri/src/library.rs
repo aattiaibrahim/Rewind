@@ -82,7 +82,7 @@ fn skip_dir(name: &str) -> bool {
 
 /// Videos up to three folders deep (Medal: Clips/<Game>/; NVIDIA: <Game>/; OBS: flat).
 /// The group is the folder a file sits in, or the recorder's name for files at the top.
-fn scan_linked(root: &LinkedRoot, avoid: &[PathBuf], out: &mut Vec<ClipFile>) {
+pub(crate) fn scan_linked(root: &LinkedRoot, avoid: &[PathBuf], out: &mut Vec<ClipFile>) {
     fn walk(dir: &Path, depth: u32, root: &LinkedRoot, avoid: &[PathBuf], out: &mut Vec<ClipFile>) {
         let Ok(entries) = fs::read_dir(dir) else { return };
         for e in entries.flatten() {
@@ -105,7 +105,7 @@ fn scan_linked(root: &LinkedRoot, avoid: &[PathBuf], out: &mut Vec<ClipFile>) {
     walk(&root.path, 0, root, avoid, out);
 }
 
-fn same_path(a: &Path, b: &Path) -> bool {
+pub(crate) fn same_path(a: &Path, b: &Path) -> bool {
     let norm = |p: &Path| p.to_string_lossy().trim_end_matches(['\\', '/']).to_lowercase();
     norm(a) == norm(b)
 }

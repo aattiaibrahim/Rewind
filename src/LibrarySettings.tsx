@@ -1,7 +1,17 @@
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import { useEffect, useState } from "react";
-import { api, ClipFolder, NasState, Settings } from "./api";
+import { useCallback, useEffect, useState } from "react";
+import { api, ClipFolder, errText, fmtSize, LastMove, MovePlan, NasState, Settings } from "./api";
+import { ConfirmDialog } from "./ConfirmUpdate";
+
+type MoveJob = { folder: string; plan: MovePlan | null; running: boolean; done: number; total: number };
+
+function outcomeText(verb: string, o: { moved: number; failed: [string, string][] }) {
+  const base = `${verb} ${o.moved} clip${o.moved === 1 ? "" : "s"}.`;
+  if (!o.failed.length) return base;
+  const [file, why] = o.failed[0];
+  return `${base} ${o.failed.length} couldn't be: ${file.split("\\").pop()} (${why})${o.failed.length > 1 ? " and others" : ""}.`;
+}
 
 function useNasState() {
   const [n, setN] = useState<NasState | null>(null);
@@ -62,6 +72,65 @@ export function LibrarySettings({
   };
   const custom = s.linkedFolders.filter((f) => !found.some((k) => k.path.toLowerCase() === f.toLowerCase()));
 
+  // "Move into Rewind": plan first (nothing touched), confirm, then move with progress.
+  const [job, setJob] = useState<MoveJob | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [last, setLast] = useState<LastMove | null>(null);
+  const refreshLast = useCallback(() => {
+    api.lastMove().then(setLast).catch(() => {});
+  }, []);
+  useEffect(() => {
+    refreshLast();
+    const un = listen<[number, number]>("move-progress", (e) =>
+      setJob((j) => (j ? { ...j, done: e.payload[0], total: e.payload[1] } : j)),
+    );
+    return () => {
+      un.then((f) => f());
+    };
+  }, [refreshLast]);
+  const askMove = async (folder: string) => {
+    setNote(null);
+    setJob({ folder, plan: null, running: false, done: 0, total: 0 });
+    try {
+      const plan = await api.planMoveIntoRewind(folder);
+      if (!plan.count) {
+        setJob(null);
+        setNote("Nothing to move: no finished clips in that folder.");
+      } else setJob({ folder, plan, running: false, done: 0, total: plan.count });
+    } catch (e) {
+      setJob(null);
+      setNote(errText(e));
+    }
+  };
+  const doMove = async () => {
+    if (!job?.plan) return;
+    setJob({ ...job, running: true });
+    try {
+      setNote(outcomeText("Moved", await api.moveIntoRewind(job.folder)));
+    } catch (e) {
+      setNote(errText(e));
+    } finally {
+      setJob(null);
+      refreshLast();
+    }
+  };
+  const undo = async () => {
+    try {
+      setNote(outcomeText("Put back", await api.undoLastMove()));
+    } catch (e) {
+      setNote(errText(e));
+    } finally {
+      refreshLast();
+    }
+  };
+  const closeMove = useCallback(() => setJob((j) => (j?.running ? j : null)), []);
+  const moveButton = (path: string) =>
+    linked(path) && (
+      <button className="btn small" disabled={!!job} onClick={() => askMove(path)} title="Move these clips into Rewind's game folders">
+        Move into Rewind…
+      </button>
+    );
+
   return (
     <section className="group">
       <h2>Library &amp; NAS</h2>
@@ -111,13 +180,16 @@ export function LibrarySettings({
         </button>
       </div>
       {found.map((f) => (
-        <label className="setting sub" key={f.path}>
+        <div className="setting sub" key={f.path}>
           <span>
             {f.label}
             <small style={{ wordBreak: "break-all" }}>{f.exists ? f.path : `${f.path} (not found)`}</small>
           </span>
-          <Toggle label={`Show ${f.label} clips`} checked={linked(f.path)} onChange={(v) => toggleLinked(f.path, v)} />
-        </label>
+          <span className="row" style={{ flexWrap: "nowrap", flexShrink: 0 }}>
+            {moveButton(f.path)}
+            <Toggle label={`Show ${f.label} clips`} checked={linked(f.path)} onChange={(v) => toggleLinked(f.path, v)} />
+          </span>
+        </div>
       ))}
       {custom.map((p) => (
         <div className="setting sub" key={p}>
@@ -125,11 +197,56 @@ export function LibrarySettings({
             {p.split("\\").filter(Boolean).pop()}
             <small style={{ wordBreak: "break-all" }}>{p}</small>
           </span>
-          <button className="btn small" onClick={() => toggleLinked(p, false)} title="Stops showing them. Files are not touched.">
-            Remove
-          </button>
+          <span className="row" style={{ flexWrap: "nowrap", flexShrink: 0 }}>
+            {moveButton(p)}
+            <button className="btn small" onClick={() => toggleLinked(p, false)} title="Stops showing them. Files are not touched.">
+              Remove
+            </button>
+          </span>
         </div>
       ))}
+      {last && (
+        <div className="setting sub">
+          <span>
+            Last move: {last.count} clip{last.count === 1 ? "" : "s"} from {last.label}
+            <small>{new Date(last.when).toLocaleString()} · Undo puts them back where they were, with their old names.</small>
+          </span>
+          <button className="btn small" disabled={!!job} onClick={undo}>
+            Undo
+          </button>
+        </div>
+      )}
+      {note && (
+        <div className="setting sub">
+          <span>
+            <small>{note}</small>
+          </span>
+        </div>
+      )}
+      {job?.plan && (
+        <ConfirmDialog
+          title={`Move ${job.plan.count} ${job.plan.label} clip${job.plan.count === 1 ? "" : "s"} into Rewind?`}
+          confirmLabel={job.running ? `Moving ${Math.min(job.done + 1, job.total)} of ${job.total}…` : `Move ${fmtSize(job.plan.bytes)}`}
+          busy={job.running}
+          onConfirm={doMove}
+          onCancel={closeMove}
+        >
+          <ul className="modal-list wrap">
+            <li>
+              Into {job.plan.folders.slice(0, 4).map(([f, n]) => `${f} (${n})`).join(", ")}
+              {job.plan.folders.length > 4 ? ` and ${job.plan.folders.length - 4} more folders` : ""}, renamed like Rewind's
+              clips, e.g. “{job.plan.examples[0]?.[0]}” → “{job.plan.examples[0]?.[1]}”.
+            </li>
+            <li>
+              {job.plan.otherDrive
+                ? "It's on another drive, so each clip is copied, checked, and only then removed from the old folder. This can take a while."
+                : "Same drive, so it's instant: nothing is copied."}
+            </li>
+            <li>{job.plan.label} won't find these clips in its own app anymore.</li>
+            <li>You can undo it afterwards: everything goes back where it was.</li>
+          </ul>
+        </ConfirmDialog>
+      )}
       {!found.length && !custom.length && (
         <div className="setting sub">
           <span>

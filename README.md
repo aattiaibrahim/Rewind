@@ -22,6 +22,9 @@ A lightweight replay-buffer clipper for Windows that records on your NVIDIA GPU 
   - Several PCs can share one NAS: file names include the PC's name, and clips from other PCs show up in the library.
   - Optionally, the local copy is removed once it's safely on the NAS.
 - **Clips from other recorders**: Medal, OBS and NVIDIA folders are found from their own settings and shown in the library in place, grouped by game. Nothing is moved or copied. Any other folder can be added too.
+- **Move into Rewind**: tidies a linked folder into Rewind's layout (`<Game>\<Game> <date time>`), merging game names across spellings.
+  - Same-drive moves are instant renames. Other drives copy, check the size, and only then remove the original.
+  - Every move is logged as it happens, so **Undo** puts everything back, even after a crash.
 - **Save sound**: a short chime when a clip or recording is saved, a low tone if it fails (can be turned off).
 - **Open any video** from any folder; it shows up under "Imported".
 - **Studio**: preview, drag in/out handles, one frame-exact **Save trim** that re-encodes only the moment before the first keyframe (under a second) and copies the rest untouched, so it takes a few seconds and keeps full quality.

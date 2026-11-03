@@ -1,4 +1,5 @@
 import { ReactNode, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { Status } from "./api";
 
 /** An in-app yes/no dialog. Focus starts on the safe choice; Escape or a click outside cancels. */
@@ -31,7 +32,8 @@ export function ConfirmDialog({
     return () => window.removeEventListener("keydown", onKey);
   }, [onCancel]);
 
-  return (
+  // Rendered on <body>, so a parent's animation or stacking can't put it behind the page.
+  return createPortal(
     <div className="modal-backdrop" onClick={onCancel}>
       <div
         className="modal"
@@ -51,7 +53,8 @@ export function ConfirmDialog({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

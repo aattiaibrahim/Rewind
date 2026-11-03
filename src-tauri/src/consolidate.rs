@@ -1,0 +1,303 @@
+//! "Move into Rewind": tidy another recorder's clips (Medal, OBS, NVIDIA, any
+//! linked folder) into Rewind's own layout, `<clips>/<Game>/<Game> <date time>.<ext>`.
+//!
+//! - Games merge with Rewind's existing folders across spellings ("Valorant"
+//!   joins "VALORANT"); files at the top of a folder (OBS) go in a folder named
+//!   after the recorder.
+//! - Same drive: an instant rename. Another drive: copy to a hidden partial
+//!   file, check the size, rename, and only then delete the original.
+//! - Every finished move is written to an undo log straight away, so even a
+//!   crash halfway can be undone. Undo puts files back where they were.
+//! - Files changed in the last 15 s (still being written) are left alone.
+
+use crate::library::{self, LinkedRoot};
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
+
+const SETTLE: Duration = Duration::from_secs(15);
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Move {
+    pub from: PathBuf,
+    pub to: PathBuf,
+    #[serde(default)]
+    pub size: u64,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Plan {
+    pub label: String,
+    pub count: usize,
+    pub bytes: u64,
+    /// The Rewind folders clips will land in, with how many each
+    pub folders: Vec<(String, usize)>,
+    /// A few "old name → new name" examples
+    pub examples: Vec<(String, String)>,
+    /// Moving to another drive copies the data (slower) instead of renaming
+    pub other_drive: bool,
+    #[serde(skip)]
+    pub moves: Vec<Move>,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Outcome {
+    pub moved: usize,
+    /// (file, reason)
+    pub failed: Vec<(String, String)>,
+}
+
+/// Same idea as the library's game chips: "Counter-Strike 2" == "counter strike 2".
+fn game_key(s: &str) -> String {
+    s.to_lowercase().chars().filter(|c| c.is_ascii_alphanumeric()).collect()
+}
+
+fn safe_name(s: &str) -> String {
+    let cleaned: String = s.chars().map(|c| if r#"<>:"/\|?*"#.contains(c) || c.is_control() { ' ' } else { c }).collect();
+    let t = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    let t = t.trim_end_matches(['.', ' ']).to_string();
+    if t.is_empty() { "Other".into() } else { t }
+}
+
+fn drive(p: &Path) -> String {
+    p.components().next().map(|c| c.as_os_str().to_string_lossy().to_lowercase()).unwrap_or_default()
+}
+
+fn settled(p: &Path) -> bool {
+    fs::metadata(p)
+        .and_then(|m| m.modified())
+        .map(|t| SystemTime::now().duration_since(t).unwrap_or_default() >= SETTLE)
+        .unwrap_or(false)
+}
+
+/// Work out where every clip in `root` would go. Nothing is touched.
+pub fn plan(root: &LinkedRoot, clips_dir: &Path, avoid: &[PathBuf]) -> Plan {
+    let mut found = Vec::new();
+    library::scan_linked(root, avoid, &mut found);
+    // Rewind's existing game folders, by key.
+    let existing: Vec<String> = fs::read_dir(clips_dir)
+        .map(|r| r.flatten().filter(|e| e.path().is_dir()).map(|e| e.file_name().to_string_lossy().into_owned()).collect())
+        .unwrap_or_default();
+    let mut taken: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut plan = Plan { label: root.label.clone(), other_drive: drive(&root.path) != drive(clips_dir), ..Default::default() };
+    found.sort_by_key(|c| c.modified);
+    for c in found {
+        let from = PathBuf::from(&c.path);
+        if !settled(&from) {
+            continue;
+        }
+        let folder = existing
+            .iter()
+            .find(|e| game_key(e) == game_key(&c.folder))
+            .cloned()
+            .unwrap_or_else(|| safe_name(&c.folder));
+        let ext = from.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_else(|| "mp4".into());
+        let when = chrono::DateTime::from_timestamp_millis(c.modified)
+            .map(|t| t.with_timezone(&chrono::Local).format("%Y-%m-%d %H-%M-%S").to_string())
+            .unwrap_or_else(|| "unknown date".into());
+        let dir = clips_dir.join(&folder);
+        let mut to = dir.join(format!("{folder} {when}.{ext}"));
+        let mut n = 2;
+        while to.exists() || taken.contains(&to.to_string_lossy().to_lowercase()) {
+            to = dir.join(format!("{folder} {when} ({n}).{ext}"));
+            n += 1;
+        }
+        taken.insert(to.to_string_lossy().to_lowercase());
+        if plan.examples.len() < 3 {
+            plan.examples.push((
+                from.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+                format!("{folder}\\{}", to.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
+            ));
+        }
+        match plan.folders.iter_mut().find(|(f, _)| *f == folder) {
+            Some((_, k)) => *k += 1,
+            None => plan.folders.push((folder.clone(), 1)),
+        }
+        plan.bytes += c.size;
+        plan.moves.push(Move { from, to, size: c.size });
+    }
+    plan.count = plan.moves.len();
+    plan.folders.sort_by(|a, b| b.1.cmp(&a.1));
+    plan
+}
+
+/// Move one file: rename if possible, else copy + verify + delete the original.
+fn move_file(from: &Path, to: &Path) -> Result<(), String> {
+    if to.exists() {
+        return Err("something with that name already exists".into());
+    }
+    if let Some(dir) = to.parent() {
+        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    if fs::rename(from, to).is_ok() {
+        return Ok(());
+    }
+    // Different drive (or rename refused): copy safely, then remove the original.
+    let size = fs::metadata(from).map_err(|e| e.to_string())?.len();
+    let name = to.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let tmp = to.with_file_name(format!(".{name}.rewind-partial"));
+    let res = (|| {
+        fs::copy(from, &tmp).map_err(|e| e.to_string())?;
+        if fs::metadata(&tmp).map(|m| m.len()).ok() != Some(size) {
+            return Err("the copy came out the wrong size".to_string());
+        }
+        fs::rename(&tmp, to).map_err(|e| e.to_string())
+    })();
+    if let Err(e) = res {
+        let _ = fs::remove_file(&tmp);
+        return Err(e);
+    }
+    if let Err(e) = fs::remove_file(from) {
+        // Keep the original rather than lose anything; the copy is already in place.
+        let _ = fs::remove_file(to);
+        return Err(format!("couldn't remove the original ({e}), so nothing was moved"));
+    }
+    Ok(())
+}
+
+/// Carry out a plan. Each finished move is logged immediately (one JSON line).
+pub fn run(plan: &Plan, log: &Path, mut progress: impl FnMut(usize, usize)) -> Outcome {
+    let mut out = Outcome::default();
+    if let Some(d) = log.parent() {
+        let _ = fs::create_dir_all(d);
+    }
+    let mut f = fs::OpenOptions::new().create(true).append(true).open(log).ok();
+    for (i, m) in plan.moves.iter().enumerate() {
+        progress(i, plan.moves.len());
+        match move_file(&m.from, &m.to) {
+            Ok(()) => {
+                out.moved += 1;
+                if let (Some(f), Ok(line)) = (f.as_mut(), serde_json::to_string(m)) {
+                    let _ = writeln!(f, "{line}");
+                    let _ = f.flush();
+                }
+            }
+            Err(e) => out.failed.push((m.from.to_string_lossy().into_owned(), e)),
+        }
+    }
+    progress(plan.moves.len(), plan.moves.len());
+    out
+}
+
+pub fn read_log(log: &Path) -> Vec<Move> {
+    fs::read_to_string(log).unwrap_or_default().lines().filter_map(|l| serde_json::from_str(l).ok()).collect()
+}
+
+/// Put every file in the log back where it came from (newest first). The log is
+/// removed once everything is back; anything that couldn't go back stays in it.
+pub fn undo(log: &Path) -> Outcome {
+    let mut out = Outcome::default();
+    let mut left = Vec::new();
+    for m in read_log(log).into_iter().rev() {
+        if !m.to.exists() {
+            out.failed.push((m.to.to_string_lossy().into_owned(), "it's not there anymore".into()));
+            continue;
+        }
+        match move_file(&m.to, &m.from) {
+            Ok(()) => out.moved += 1,
+            Err(e) => {
+                out.failed.push((m.to.to_string_lossy().into_owned(), e));
+                left.push(m);
+            }
+        }
+    }
+    if left.is_empty() {
+        let _ = fs::remove_file(log);
+    } else {
+        let text: Vec<String> = left.iter().rev().filter_map(|m| serde_json::to_string(m).ok()).collect();
+        let _ = fs::write(log, text.join("\n") + "\n");
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn old_file(p: &Path, bytes: usize) {
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, vec![1u8; bytes]).unwrap();
+        // Backdate it so it counts as finished.
+        let t = SystemTime::now() - Duration::from_secs(3600);
+        fs::File::options().write(true).open(p).unwrap().set_modified(t).unwrap();
+    }
+
+    #[test]
+    fn moves_into_matching_game_folders_and_undo_puts_everything_back() {
+        let d = std::env::temp_dir().join(format!("rewind-consolidate-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        let (clips, medal) = (d.join("Rewind"), d.join("Medal"));
+        fs::create_dir_all(clips.join("VALORANT")).unwrap();
+        old_file(&medal.join("Clips/Valorant/clip one.mp4"), 100);
+        old_file(&medal.join("Clips/Valorant/clip two.mp4"), 200);
+        old_file(&medal.join("Clips/Tom Clancys Rainbow Six Siege/r6.mp4"), 300);
+        old_file(&medal.join("Thumbnails/t.mp4"), 5); // not a clip folder
+        fs::create_dir_all(medal.join("Clips/Valorant")).unwrap();
+        let fresh = medal.join("Clips/Valorant/still writing.mp4");
+        fs::write(&fresh, b"x").unwrap(); // modified just now: left alone
+
+        let root = LinkedRoot { path: medal.clone(), label: "Medal".into() };
+        let plan = plan(&root, &clips, &[clips.clone()]);
+        assert_eq!(plan.count, 3, "{:?}", plan.moves);
+        assert_eq!(plan.bytes, 600);
+        assert!(!plan.other_drive);
+        // "Valorant" joins Rewind's "VALORANT".
+        let names: Vec<_> = plan.folders.iter().map(|(f, n)| format!("{f}={n}")).collect();
+        assert_eq!(names, vec!["VALORANT=2", "Tom Clancys Rainbow Six Siege=1"]);
+        // Two clips with the same timestamp get distinct names.
+        let tos: std::collections::HashSet<_> = plan.moves.iter().map(|m| m.to.clone()).collect();
+        assert_eq!(tos.len(), 3);
+        assert!(plan.moves.iter().all(|m| m.to.file_name().unwrap().to_string_lossy().starts_with(m.to.parent().unwrap().file_name().unwrap().to_str().unwrap())));
+
+        let log = d.join("moves").join("1.jsonl");
+        let out = run(&plan, &log, |_, _| {});
+        assert_eq!((out.moved, out.failed.len()), (3, 0));
+        assert!(plan.moves.iter().all(|m| m.to.exists() && !m.from.exists()));
+        assert!(fresh.exists(), "a file still being written must not move");
+        assert_eq!(read_log(&log).len(), 3);
+
+        let back = undo(&log);
+        assert_eq!((back.moved, back.failed.len()), (3, 0));
+        assert!(plan.moves.iter().all(|m| m.from.exists() && !m.to.exists()));
+        assert_eq!(fs::metadata(medal.join("Clips/Tom Clancys Rainbow Six Siege/r6.mp4")).unwrap().len(), 300);
+        assert!(!log.exists());
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn top_level_files_go_in_a_folder_named_after_the_recorder() {
+        let d = std::env::temp_dir().join(format!("rewind-consolidate-obs-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        let (clips, obs) = (d.join("Rewind"), d.join("OBS"));
+        fs::create_dir_all(&clips).unwrap();
+        old_file(&obs.join("2026-11-03 10-00-00.mkv"), 10);
+        let plan = plan(&LinkedRoot { path: obs, label: "OBS".into() }, &clips, &[clips.clone()]);
+        assert_eq!(plan.folders, vec![("OBS".to_string(), 1)]);
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn folder_names_are_safe_on_windows() {
+        assert_eq!(safe_name("Rainbow Six: Siege"), "Rainbow Six Siege");
+        assert_eq!(safe_name("  A/B?  "), "A B");
+        assert_eq!(safe_name("..."), "Other");
+    }
+
+    #[test]
+    fn never_overwrites() {
+        let d = std::env::temp_dir().join(format!("rewind-consolidate-ow-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        let (a, b) = (d.join("a.mp4"), d.join("b.mp4"));
+        old_file(&a, 1);
+        old_file(&b, 2);
+        assert!(move_file(&a, &b).is_err());
+        assert_eq!(fs::metadata(&b).unwrap().len(), 2);
+        assert!(a.exists());
+        let _ = fs::remove_dir_all(&d);
+    }
+}
