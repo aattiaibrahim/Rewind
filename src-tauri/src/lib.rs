@@ -433,6 +433,8 @@ struct UploadProgress {
     total: u64,
     url: Option<String>,
     error: Option<String>,
+    /// e.g. "your network blocks files.catbox.moe"
+    warning: Option<String>,
 }
 
 /// Prepare, upload, copy the link, remember it. Progress goes out as "upload-progress".
@@ -447,11 +449,11 @@ fn upload_now(app: &AppHandle, path: &str, host: Option<&str>) -> Result<upload:
         busy.push(path.to_string());
     }
     let name = serde_json::to_value(host).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
-    let emit = |stage, sent, total, url: Option<String>, error: Option<String>| {
-        let _ = app.emit("upload-progress", UploadProgress { path: path.to_string(), host: name.clone(), stage, sent, total, url, error });
+    let emit = |stage, sent, total, url: Option<String>, error: Option<String>, warning: Option<String>| {
+        let _ = app.emit("upload-progress", UploadProgress { path: path.to_string(), host: name.clone(), stage, sent, total, url, error, warning });
     };
     let result = (|| -> Result<upload::Upload, String> {
-        emit("preparing", 0, 0, None, None);
+        emit("preparing", 0, 0, None, None, None);
         let work = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("uploads");
         let file = upload::prepare(path, host, &work)?;
         let secrets_file = data_file(app, "secrets.json")?;
@@ -466,7 +468,7 @@ fn upload_now(app: &AppHandle, path: &str, host: Option<&str>) -> Result<upload:
         };
         let (a, p, h) = (app.clone(), path.to_string(), name.clone());
         let report = Box::new(move |sent: u64, total: u64| {
-            let _ = a.emit("upload-progress", UploadProgress { path: p.clone(), host: h.clone(), stage: "uploading", sent, total, url: None, error: None });
+            let _ = a.emit("upload-progress", UploadProgress { path: p.clone(), host: h.clone(), stage: "uploading", sent, total, url: None, error: None, warning: None });
         });
         let sent = upload::send(host, &file, &cfg, &upload::Endpoints::default(), report);
         let bytes = fs_len(&file);
@@ -476,20 +478,19 @@ fn upload_now(app: &AppHandle, path: &str, host: Option<&str>) -> Result<upload:
         let url = sent?;
         let _ = upload::copy_to_clipboard(&url);
         let now = chrono::Local::now().timestamp_millis();
-        let u = upload::Upload {
-            host,
-            url,
-            at: now,
-            bytes,
-            expires: (host == upload::Host::Litterbox).then(|| upload::litterbox_expiry(&s.litterbox_time, now)),
+        let expires = match host {
+            upload::Host::Litterbox => Some(upload::litterbox_expiry(&s.litterbox_time, now)),
+            upload::Host::Discord => upload::discord_link_expiry(&url),
+            _ => None,
         };
+        let u = upload::Upload { host, url, at: now, bytes, expires };
         upload::remember(&data_file(app, "uploads.json")?, path, u.clone());
         Ok(u)
     })();
     UPLOADING.lock().unwrap().retain(|p| p != path);
     match &result {
-        Ok(u) => emit("done", u.bytes, u.bytes, Some(u.url.clone()), None),
-        Err(e) => emit("error", 0, 0, None, Some(e.clone())),
+        Ok(u) => emit("done", u.bytes, u.bytes, Some(u.url.clone()), None, upload::link_warning(&u.url)),
+        Err(e) => emit("error", 0, 0, None, Some(e.clone()), None),
     }
     result
 }
@@ -515,13 +516,51 @@ fn copy_text(text: String) -> Result<(), String> {
 }
 
 /// Store a secret (empty removes it). The value never comes back to the interface.
+/// A Discord webhook is checked with Discord first, and only saved if it works.
 #[tauri::command]
-fn set_secret(app: AppHandle, name: String, value: String) -> Result<(), String> {
+async fn set_secret(app: AppHandle, name: String, value: String) -> Result<Option<upload::WebhookInfo>, String> {
     let value = value.trim().to_string();
-    if name == "discord_webhook" && !value.is_empty() && !upload::valid_webhook(&value) {
-        return Err("That isn't a Discord webhook address. In Discord: channel settings → Integrations → Webhooks → Copy Webhook URL.".into());
-    }
-    secrets::set(&data_file(&app, "secrets.json")?, &name, &value)
+    blocking(move || {
+        let file = data_file(&app, "secrets.json")?;
+        let mut info = None;
+        if name == "discord_webhook" {
+            let mut s = settings_of(&app);
+            if value.is_empty() {
+                s.discord_webhook_name.clear();
+            } else {
+                let i = upload::check_webhook(&value)?;
+                s.discord_webhook_name = i.name.clone();
+                info = Some(i);
+            }
+            secrets::set(&file, &name, &value)?;
+            set_settings(app.clone(), s)?;
+        } else {
+            secrets::set(&file, &name, &value)?;
+        }
+        Ok(info)
+    })
+    .await
+}
+
+/// Can this PC reach each upload service, and open its links? Uploads nothing.
+#[tauri::command]
+async fn check_sharing(app: AppHandle) -> Result<Vec<(upload::Host, Vec<upload::Reach>)>, String> {
+    let hook = secrets::get(&data_file(&app, "secrets.json")?, "discord_webhook");
+    blocking(move || {
+        let mut out: Vec<(upload::Host, Vec<upload::Reach>)> = [upload::Host::Catbox, upload::Host::Litterbox, upload::Host::Discord, upload::Host::Streamable]
+            .into_iter()
+            .map(|h| (h, upload::needed_hosts(h).iter().map(|n| upload::reach(n)).collect()))
+            .collect();
+        // A saved webhook that Discord no longer knows (deleted) shows up here too.
+        if let Some(h) = hook
+            && let Err(e) = upload::check_webhook(&h)
+            && let Some((_, r)) = out.iter_mut().find(|(h, _)| *h == upload::Host::Discord)
+        {
+            r.push(upload::Reach { host: e, state: "webhook" });
+        }
+        Ok(out)
+    })
+    .await
 }
 
 #[derive(serde::Serialize)]
@@ -982,6 +1021,7 @@ pub fn run() {
             copy_text,
             set_secret,
             secrets_set,
+            check_sharing,
             plan_move_into_rewind,
             move_into_rewind,
             last_move,

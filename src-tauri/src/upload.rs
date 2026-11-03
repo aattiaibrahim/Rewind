@@ -254,6 +254,95 @@ pub fn send(host: Host, file: &Path, cfg: &Config, ep: &Endpoints, report: Box<d
     Ok(url)
 }
 
+/// Can this PC reach a host? Ad-blocking DNS (Pi-hole, AdGuard, some routers)
+/// answers 0.0.0.0 for sites on its blocklist; files.catbox.moe is on many.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Reach {
+    pub host: String,
+    /// "ok" | "blocked" (DNS says 0.0.0.0) | "unreachable" (no answer)
+    pub state: &'static str,
+}
+
+pub fn reach(host: &str) -> Reach {
+    use std::net::ToSocketAddrs;
+    let state = match (host, 443).to_socket_addrs() {
+        Ok(addrs) => {
+            let v: Vec<_> = addrs.collect();
+            if v.is_empty() {
+                "unreachable"
+            } else if v.iter().all(|a| a.ip().is_unspecified() || a.ip().is_loopback()) {
+                "blocked"
+            } else {
+                "ok"
+            }
+        }
+        Err(_) => "unreachable",
+    };
+    Reach { host: host.to_string(), state }
+}
+
+/// The names each service needs: where uploads go, and where the links point.
+pub fn needed_hosts(h: Host) -> &'static [&'static str] {
+    match h {
+        Host::Catbox => &["catbox.moe", "files.catbox.moe"],
+        Host::Litterbox => &["litterbox.catbox.moe", "litter.catbox.moe"],
+        Host::Discord => &["discord.com", "cdn.discordapp.com"],
+        Host::Streamable => &["api.streamable.com", "streamable.com"],
+    }
+}
+
+/// A plain-words warning if a fresh link won't open on this network.
+pub fn link_warning(url: &str) -> Option<String> {
+    let host = url.split("://").nth(1)?.split('/').next()?;
+    match reach(host).state {
+        "blocked" => Some(format!(
+            "Your network blocks {host} (an ad-blocking DNS like Pi-hole or AdGuard), so the link won't open on this Wi-Fi. Friends elsewhere can watch it. Allow {host} in your blocker, or use Litterbox."
+        )),
+        "unreachable" => Some(format!("This PC can't look up {host} right now, so the link may not open here.")),
+        _ => None,
+    }
+}
+
+/// What a Discord webhook says about itself (GET on its address needs no login).
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct WebhookInfo {
+    pub name: String,
+    pub channel_id: String,
+}
+
+pub fn check_webhook(url: &str) -> Result<WebhookInfo, String> {
+    if !valid_webhook(url) {
+        return Err("That isn't a Discord webhook address. It starts with https://discord.com/api/webhooks/".into());
+    }
+    let r = client()?.get(url).send().map_err(|e| format!("Couldn't reach Discord ({e})."))?;
+    let status = r.status();
+    let body = r.text().unwrap_or_default();
+    if status.as_u16() == 404 || status.as_u16() == 401 {
+        return Err("Discord says that webhook doesn't exist (deleted, or the address was cut off). Copy it again.".into());
+    }
+    if !status.is_success() {
+        return Err(format!("Discord didn't accept that webhook ({status})."));
+    }
+    let j: serde_json::Value = serde_json::from_str(&body).map_err(|_| "Discord sent back something unexpected.".to_string())?;
+    if j["type"].as_i64() != Some(1) || j["token"].as_str().is_none() {
+        return Err("That webhook can't post messages (it's a channel-follower webhook). Make a new one.".into());
+    }
+    Ok(WebhookInfo {
+        name: j["name"].as_str().unwrap_or("Webhook").to_string(),
+        channel_id: j["channel_id"].as_str().unwrap_or_default().to_string(),
+    })
+}
+
+/// Discord attachment links stop working after a while: their "ex" value is the
+/// expiry time (hex seconds since 1970).
+pub fn discord_link_expiry(url: &str) -> Option<i64> {
+    let q = url.split('?').nth(1)?;
+    let ex = q.split('&').find_map(|kv| kv.strip_prefix("ex="))?;
+    i64::from_str_radix(ex, 16).ok().map(|s| s * 1000)
+}
+
 /// Put text on the Windows clipboard (works with the window hidden, unlike the web clipboard).
 pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
     use windows::Win32::Foundation::{HANDLE, HGLOBAL};
@@ -446,6 +535,17 @@ mod tests {
         assert!(e.contains("didn't send back a link"), "{e}");
         let e = send(Host::Discord, &clip_file(500), &Config::default(), &Endpoints::default(), Box::new(|_, _| {})).unwrap_err();
         assert!(e.contains("webhook"), "{e}");
+    }
+
+    #[test]
+    fn blocked_names_and_discord_expiry_are_recognised() {
+        assert_eq!(reach("localhost").state, "blocked", "loopback answer counts as blocked");
+        assert_eq!(reach("no-such-host.invalid").state, "unreachable");
+        assert!(link_warning("https://localhost/x.mp4").unwrap().contains("blocks localhost"));
+        let u = "https://cdn.discordapp.com/attachments/1/2/clip.mp4?ex=6912a3b0&is=69115230&hm=abc";
+        assert_eq!(discord_link_expiry(u), Some(0x6912a3b0 * 1000));
+        assert_eq!(discord_link_expiry("https://files.catbox.moe/a.mp4"), None);
+        assert!(check_webhook("https://example.com/hook").is_err());
     }
 
     #[test]

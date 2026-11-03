@@ -57,7 +57,7 @@ export function installDevMock() {
     recordHotkey: "Alt+F9", bufferEnabled: true, launchOnStartup: false, autoUpdate: true, startMinimized: true,
     keepOriginalAfterRemux: true, replaceOriginalOnEdit: false, externalFiles: [], desktopAudio: true,
     micEnabled: true, micMono: true, micDevice: "", theme: "midnight", accent: "lime", reduceMotion: false,
-    saveSound: true, nasDir: "", nasRemoveLocal: false, linkedFolders: [] as string[], benchmarkMode: false, uploadHost: "catbox", litterboxTime: "72h", autoUpload: false, postLinkToDiscord: false, streamableEmail: "",
+    saveSound: true, nasDir: "", nasRemoveLocal: false, linkedFolders: [] as string[], benchmarkMode: false, uploadHost: "catbox", litterboxTime: "72h", autoUpload: false, postLinkToDiscord: false, streamableEmail: "", discordWebhookName: "", confirmUploads: true,
   };
   const status = {
     enabled: true, running: true, monitor: "Display 1 · 1920×1080", width: 1920, height: 1080, encoder: "av1",
@@ -107,6 +107,7 @@ export function installDevMock() {
     upload_history: () => uploads,
     copy_text: () => null,
     set_secret: (a) => { secrets[a.name as string] = !!a.value; return null; },
+    check_sharing: () => [["catbox", [{ host: "catbox.moe", state: "ok" }, { host: "files.catbox.moe", state: "blocked" }]], ["litterbox", [{ host: "litter.catbox.moe", state: "ok" }]], ["discord", [{ host: "discord.com", state: "ok" }]], ["streamable", [{ host: "streamable.com", state: "ok" }]]],
     secrets_set: () => ({ discordWebhook: !!secrets.discord_webhook, streamablePassword: !!secrets.streamable_password }),
     plan_move_into_rewind: () => ({
       label: "Medal", count: 42, bytes: 3.2e9, otherDrive: false,

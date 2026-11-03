@@ -30,7 +30,6 @@ const THEMES: { id: Theme; label: string; c: [string, string, string] }[] = [
   { id: "midnight", label: "Midnight", c: ["#0e1014", "#1d222b", "#2b323d"] },
   { id: "graphite", label: "Graphite", c: ["#121212", "#252525", "#343434"] },
   { id: "oled", label: "OLED black", c: ["#000000", "#171717", "#262626"] },
-  { id: "light", label: "Light", c: ["#f3f4f7", "#ffffff", "#d3d8e0"] },
 ];
 
 const ACCENTS: { id: Accent; label: string; c: string }[] = [

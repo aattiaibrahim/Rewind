@@ -2,11 +2,11 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, ClipFile, codecLabel, errText, fmtDuration, fmtSize, Probe, Upload, UploadProgress, VIDEO_EXTENSIONS } from "./api";
 import { useThumb } from "./hooks";
-import { progressText } from "./Share";
+import { liveLink, progressText, ShareRequest, timeLeft } from "./Share";
 import { Timeline } from "./Timeline";
 
 /** Where the library was scrolled to, kept while you're in Studio (the page itself unmounts). */
-const memory = { scroll: 0 };
+const memory = { scroll: 0, folder: "All", query: "" };
 
 function dayLabel(ms: number) {
   const d = new Date(ms);
@@ -38,11 +38,14 @@ function ClipCard({
   onToast,
   onChanged,
   upload,
-  linked,
+  link,
+  onShare,
   returned,
 }: {
   upload?: UploadProgress;
-  linked: boolean;
+  /** Its newest link that still works */
+  link: Upload | null;
+  onShare: () => void;
   /** The clip you just came back from: briefly highlighted */
   returned: boolean;
   clip: ClipFile;
@@ -114,9 +117,7 @@ function ClipCard({
             tabIndex={0}
             onClick={(e) => {
               e.stopPropagation();
-              api
-                .uploadClip(clip.path)
-                .catch((err) => onToast(errText(err), true));
+              onShare();
             }}
             title="Upload and copy a link that plays inside Discord"
           >
@@ -144,9 +145,9 @@ function ClipCard({
               {progressText(upload)}
             </span>
           )}
-          {!upload && linked && (
-            <span className="src-tag ok" title="Shared: the link is in Studio">
-              🔗 Shared
+          {!upload && link && (
+            <span className="src-tag ok" title={`Shared on ${link.host}: the link is in Studio`}>
+              🔗 {timeLeft(link) ? `${timeLeft(link)} left` : "Shared"}
             </span>
           )}
           {clip.location === "linked" && <span className="src-tag">{clip.source}</span>}
@@ -188,7 +189,9 @@ export function Library({
   uploads,
   links,
   focusPath,
+  onShare,
 }: {
+  onShare?: (r: ShareRequest) => void;
   /** The clip last opened in Studio: scrolled back to and highlighted */
   focusPath?: string | null;
   uploads?: Record<string, UploadProgress>;
@@ -201,8 +204,17 @@ export function Library({
   onDelete: (paths: string[]) => Promise<boolean>;
   hotkey: string;
 }) {
-  const [folder, setFolder] = useState("All");
-  const [query, setQuery] = useState("");
+  // Filter and search survive a trip to Studio too.
+  const [folder, setFolderState] = useState(memory.folder);
+  const [query, setQueryState] = useState(memory.query);
+  const setFolder = (f: string) => {
+    memory.folder = f;
+    setFolderState(f);
+  };
+  const setQuery = (q: string) => {
+    memory.query = q;
+    setQueryState(q);
+  };
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const anchor = useRef<string | null>(null);
 
@@ -256,6 +268,17 @@ export function Library({
       }
     }
   }, [clips, focusPath]);
+  // "Back" again while already on the clips (mouse back button, Alt+←, Esc, or the
+  // Clips tab): forget the old spot and go to the top.
+  useEffect(() => {
+    const top = () => {
+      memory.scroll = 0;
+      setReturnedTo(null);
+      scroller.current?.scrollTo({ top: 0, behavior: "smooth" });
+    };
+    window.addEventListener("rewind-top", top);
+    return () => window.removeEventListener("rewind-top", top);
+  }, []);
   const onScroll = () => {
     if (scroller.current) memory.scroll = scroller.current.scrollTop;
   };
@@ -317,6 +340,8 @@ export function Library({
         setSelected(new Set(visible));
       } else if (e.key === "Escape" && selected.size) {
         setSelected(new Set());
+      } else if (e.key === "Escape") {
+        window.dispatchEvent(new Event("rewind-top"));
       }
     };
     window.addEventListener("keydown", onKey);
@@ -440,7 +465,8 @@ export function Library({
                     onToast={onToast}
                     onChanged={onChanged}
                     upload={uploads?.[c.path]}
-                    linked={!!links?.[c.path]?.length}
+                    link={liveLink(links?.[c.path])}
+                    onShare={() => onShare?.({ path: c.path })}
                     returned={c.path === returnedTo}
                   />
                 ))}

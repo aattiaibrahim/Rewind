@@ -40,7 +40,7 @@ pub struct Settings {
     pub mic_mono: bool,
     /// "" = Windows default microphone
     pub mic_device: String,
-    /// Look of the app: "midnight" | "graphite" | "oled" | "light"
+    /// Look of the app: "midnight" | "graphite" | "oled" (an old "light" becomes "midnight")
     pub theme: String,
     /// Highlight colour: "lime" | "cyan" | "violet" | "amber" | "rose" | "green"
     pub accent: String,
@@ -65,6 +65,10 @@ pub struct Settings {
     /// After uploading to Catbox / Litterbox / Streamable, also post the link to the Discord webhook
     pub post_link_to_discord: bool,
     pub streamable_email: String,
+    /// The saved Discord webhook's name (just for display; the address itself is a secret)
+    pub discord_webhook_name: String,
+    /// Ask before uploading (a link is public to anyone who has it)
+    pub confirm_uploads: bool,
 }
 
 impl Default for Settings {
@@ -107,6 +111,8 @@ impl Default for Settings {
             auto_upload: false,
             post_link_to_discord: false,
             streamable_email: String::new(),
+            discord_webhook_name: String::new(),
+            confirm_uploads: true,
         }
     }
 }
@@ -150,7 +156,7 @@ impl Settings {
         self.streamable_email = self.streamable_email.trim().to_string();
         self.linked_folders.retain(|f| !f.trim().is_empty());
         self.linked_folders.dedup();
-        if !["midnight", "graphite", "oled", "light"].contains(&self.theme.as_str()) {
+        if !["midnight", "graphite", "oled"].contains(&self.theme.as_str()) {
             self.theme = d.theme.clone();
         }
         if !["lime", "cyan", "violet", "amber", "rose", "green"].contains(&self.accent.as_str()) {

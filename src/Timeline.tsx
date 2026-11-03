@@ -38,12 +38,17 @@ export function Timeline({ scroller, days }: { scroller: RefObject<HTMLDivElemen
       const month = date.toLocaleDateString(undefined, { month: "short" });
       const year = String(date.getFullYear());
       const m: Mark = { key: d.key, ts: d.ts, y };
-      // A label where the month (or year) changes, if there's room for it.
-      if (`${month} ${year}` !== `${lastMonth} ${lastYear}` && y - lastLabelY > 16) {
+      // Like Immich: every year gets a label where it starts (the top too);
+      // months get one where they change, if there's room.
+      if (year !== lastYear) {
+        m.year = year;
+        if (`${month} ${year}` !== `${lastMonth} ${lastYear}` && y - lastLabelY > 26) m.month = month;
+        lastLabelY = y;
+      } else if (month !== lastMonth && y - lastLabelY > 16) {
         m.month = month;
-        if (year !== lastYear && (year !== String(now.getFullYear()) || lastYear)) m.year = year;
         lastLabelY = y;
       }
+      void now;
       lastMonth = month;
       lastYear = year;
       out.push(m);
@@ -126,11 +131,11 @@ export function Timeline({ scroller, days }: { scroller: RefObject<HTMLDivElemen
     >
       <div className="tl-view" style={{ top: view.top, height: Math.max(3, view.height) }} />
       {marks.map((m) => (
-        <span key={m.key} className={`tl-day ${m.month ? "month" : ""}`} style={{ top: m.y }}>
-          {m.month && (
+        <span key={m.key} className={`tl-day ${m.month || m.year ? "month" : ""} ${m.year ? "year" : ""}`} style={{ top: m.y }}>
+          {(m.month || m.year) && (
             <em>
-              {m.month}
               {m.year && <b>{m.year}</b>}
+              {m.month}
             </em>
           )}
         </span>

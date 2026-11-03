@@ -4,7 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ClipFile, codecLabel, errText, fmtSize, fmtTime, PreviewAudio, Probe, Settings, Upload, UploadProgress } from "./api";
 import { useThumb } from "./hooks";
-import { SharePanel } from "./Share";
+import { SharePanel, ShareRequest } from "./Share";
 import { Slider } from "./Slider";
 
 type Job = { label: string } | null;
@@ -240,7 +240,9 @@ export function Studio({
   onBack,
   uploads,
   links,
+  onShare,
 }: {
+  onShare?: (r: ShareRequest) => void;
   uploads?: Record<string, UploadProgress>;
   links?: Record<string, Upload[]>;
   path: string | null;
@@ -258,6 +260,7 @@ export function Studio({
   const bar = useRef<HTMLDivElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const [fullscreen, setFullscreen] = useState(false);
+  const [ar, setAr] = useState(16 / 9);
   const [theater, setTheater] = useState(() => loadJson("rewind.theater", false));
   // Overlay controls: shown while the pointer moves over the video, hidden after a moment of stillness.
   const [hover, setHover] = useState(false);
@@ -617,8 +620,11 @@ export function Studio({
       </div>
       <div className={`studio-body ${theater ? "theater" : ""}`}>
         <div className="stage">
+          {/* The box takes the video's own shape, so its rounded corners are the picture's corners. */}
+          <div className="video-box">
           <div
             ref={wrap}
+            style={{ "--ar": ar } as React.CSSProperties}
             className={`video-wrap ${fullscreen ? "fs" : ""} ${hover && (active || !playing) ? "ui" : ""} ${fullscreen && playing && !active ? "idle" : ""}`}
             onPointerMove={() => {
               setHover(true);
@@ -635,6 +641,8 @@ export function Studio({
               src={`${convertFileSrc(path)}?v=${(clips ?? []).find((c) => c.path === path)?.modified ?? 0}-${reload}`}
               onLoadedMetadata={(e) => {
                 const d = e.currentTarget.duration;
+                const { videoWidth: vw, videoHeight: vh } = e.currentTarget;
+                if (vw && vh) setAr(vw / vh);
                 if (isFinite(d) && d > 0) {
                   setDuration(d);
                   // The player's own length wins over anything set before it loaded.
@@ -742,6 +750,7 @@ export function Studio({
                 </div>
               </div>
             )}
+          </div>
           </div>
           <div className="transport">
             <span className="transport-pill">
@@ -876,7 +885,7 @@ export function Studio({
             </>
           )}
           <div className="label">Share</div>
-          <SharePanel path={path} settings={settings} progress={uploads?.[path]} links={links?.[path]} />
+          <SharePanel path={path} settings={settings} progress={uploads?.[path]} links={links?.[path]} onShare={(r) => onShare?.(r)} />
           <div className="label">This file only</div>
           <div className="stack">
             <button className="btn block" disabled={busy} onClick={() => run("Remuxing…", () => api.remuxMp4(path))}>

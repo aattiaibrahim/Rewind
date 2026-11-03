@@ -28,7 +28,7 @@
   --rec-text: #ffb3b3;
   --accent: #c6f432;
   --on-accent: #0e1014;
-  /* The accent used as text: same on dark themes, deepened on light. */
+  /* The accent used as text. */
   --accent-ink: var(--accent);
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
   --fast: 0.14s;
@@ -55,16 +55,6 @@
   --text: #f2f2f2; --text-2: #cfcfcf; --muted: #9a9a9a; --dim: #767676;
   --stage: #000; --card: #0b0b0b; --border: #1d1d1d; --border-soft: #141414; --track: #222;
   --scroll: #1f1f1f; --float: #0c0c0c; --float-line: #272727; --stripe-a: #111; --stripe-b: #0c0c0c;
-}
-:root[data-theme="light"] {
-  color-scheme: light;
-  --bg: #f3f4f7; --panel: #fff; --raised: #e9ecf1; --line: #e2e5eb; --line-2: #d3d8e0;
-  --text: #14171d; --text-2: #2e3440; --muted: #5b6474; --dim: #788192;
-  --stage: #e7e9ee; --card: #fff; --border: #dde1e8; --border-soft: #eceef2; --track: #dde1e8;
-  --scroll: #c7ccd5; --float: #fff; --float-line: #d3d8e0; --stripe-a: #eceef2; --stripe-b: #e3e6ec;
-  --shadow: rgba(20, 24, 32, 0.16); --playhead: #14171d;
-  --danger: #d23b3b; --rec-text: #c62828;
-  --accent-ink: color-mix(in srgb, var(--accent) 50%, #000);
 }
 
 :root[data-accent="cyan"] { --accent: #38d6ff; --on-accent: #04121a; }
@@ -502,15 +492,6 @@ table.bench td.verdict.dim { color: var(--muted); }
   --surface-raised: linear-gradient(180deg, color-mix(in srgb, var(--text) 8%, var(--panel)), color-mix(in srgb, var(--text) 3%, var(--panel)));
   --glow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent), 0 4px 18px color-mix(in srgb, var(--accent) 28%, transparent);
 }
-:root[data-theme="light"] {
-  --hi: rgba(255, 255, 255, 0.9);
-  --hi-strong: #fff;
-  --elev-1: 0 1px 2px rgba(20, 24, 32, 0.08), 0 2px 8px rgba(20, 24, 32, 0.06);
-  --elev-2: 0 2px 6px rgba(20, 24, 32, 0.08), 0 12px 30px rgba(20, 24, 32, 0.1);
-  --elev-3: 0 10px 30px rgba(20, 24, 32, 0.16), 0 30px 80px rgba(20, 24, 32, 0.18);
-  --surface: linear-gradient(180deg, #fff, #fbfbfd);
-  --surface-raised: linear-gradient(180deg, #fff, #f1f3f7);
-}
 [hidden] { display: none !important; }
 /* A row of buttons on the right of a setting stays a row. */
 .setting > span.row { flex-direction: row; align-items: center; gap: 8px; }
@@ -721,3 +702,27 @@ input.switch:checked:active::after { transform: translateX(12px); }
 }
 .tl-bubble::after { content: ""; position: absolute; right: -14px; top: 50%; width: 14px; height: 1px; background: var(--accent); }
 .timeline-rail:not(.active) .tl-bubble { display: none; }
+/* ---- v0.1.18 polish ---- */
+/* Player: the box takes the video's shape (container units), so its corners are rounded. */
+.video-box { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; container-type: size; }
+.video-box .video-wrap {
+  flex: none; aspect-ratio: var(--ar, 16 / 9); width: min(100cqw, calc(100cqh * var(--ar, 1.7778))); height: auto;
+  border-radius: 14px; box-shadow: var(--elev-2);
+}
+.video-box .video-wrap.fs { width: 100vw; height: 100vh; aspect-ratio: auto; border-radius: 0; box-shadow: none; }
+/* Timeline: bold year labels where a year starts. */
+.tl-day em b { display: block; font-weight: 700; font-size: 11px; color: var(--text); line-height: 12px; }
+.tl-day.year { width: 12px; right: 4px; background: var(--text-2); }
+/* Sharing settings */
+.group-sub { margin: 14px 0 2px; font-size: 13px; font-weight: 600; color: var(--text-2); letter-spacing: 0; }
+.setting.stack-setting { flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 0; }
+.setting.stack-setting > span small b { color: var(--text-2); font-weight: 600; }
+.text-input.grow { flex: 1; min-width: 0; max-width: none; }
+.cred-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px; }
+.cred-row .text-input { max-width: none; width: 100%; }
+.reach-list { margin: 0 0 6px; padding: 8px 12px 8px 26px; border-radius: var(--r-sm, 10px); background: color-mix(in srgb, var(--bg) 60%, var(--panel)); font-size: 12px; display: flex; flex-direction: column; gap: 4px; }
+.reach-list li.ok { color: var(--text-2); }
+.reach-list li.ok::marker { color: var(--accent); content: "✓  "; }
+.reach-list li.bad { color: var(--danger); }
+.reach-list li.bad::marker { content: "!  "; }
+.modal .setting { border-top: 0; }

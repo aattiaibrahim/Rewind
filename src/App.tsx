@@ -1,6 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { useUploads } from "./Share";
+import { ShareConfirm, ShareRequest, useUploads } from "./Share";
 import type { UploadProgress } from "./api";
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
@@ -30,6 +30,7 @@ export default function App() {
   useAppearance(settings);
   const [clips, refresh] = useClips();
   const uploads = useUploads();
+  const [shareReq, setShareReq] = useState<ShareRequest | null>(null);
   const upd = useUpdate();
   const [installing, setInstalling] = useState(false);
   const [dismissed, setDismissed] = useState<string | null>(null);
@@ -42,6 +43,14 @@ export default function App() {
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), err || action ? 8000 : 4500);
   }, []);
   const dropToast = (id: number) => setToasts((t) => t.filter((x) => x.id !== id));
+  // Share: ask first (unless turned off in Settings → Sharing), then upload.
+  const requestShare = useCallback(
+    (r: ShareRequest) => {
+      if (settings && !settings.confirmUploads) api.uploadClip(r.path, r.host).catch((e) => toast(errText(e), true));
+      else setShareReq(r);
+    },
+    [settings, toast],
+  );
 
   const showBanner =
     upd && (upd.stage === "ready" || upd.stage === "available") && upd.version && dismissed !== upd.version;
@@ -131,7 +140,10 @@ export default function App() {
       const name = p.path.split("\\").pop();
       if (p.stage === "done" && p.url) {
         const url = p.url;
-        toast("Link copied", false, `${name} · ${url.replace(/^https?:\/\//, "")}`, { label: "Open", run: () => openUrl(url).catch(() => {}) });
+        toast(p.warning ? "Link copied, but it won't open on this network" : "Link copied", !!p.warning, p.warning ?? `${name} · ${url.replace(/^https?:\/\//, "").split("?")[0]}`, {
+          label: "Open",
+          run: () => openUrl(url).catch(() => {}),
+        });
       } else if (p.stage === "error") {
         toast(p.error ?? "Upload failed", true, name);
       }
@@ -150,6 +162,41 @@ export default function App() {
   ];
   const navOn = (id: View) => view === id || (id === "clips" && view === "studio");
   const backToClips = useCallback(() => setView("clips"), []);
+  // Mouse back / forward (buttons 4 and 5) and Alt+← / Alt+→, like a browser:
+  // back = Studio → your clips, and on the clips → the top;
+  // forward = from the clips, reopen the clip you just left.
+  useEffect(() => {
+    const back = () => {
+      if (document.querySelector(".modal-backdrop")) return;
+      if (view === "studio") setView("clips");
+      else if (view === "clips") window.dispatchEvent(new Event("rewind-top"));
+      else setView("clips");
+    };
+    const forward = () => {
+      if (document.querySelector(".modal-backdrop")) return;
+      if (view === "clips" && studioPath) setView("studio");
+    };
+    const onMouse = (e: MouseEvent) => {
+      if (e.button === 3 || e.button === 4) {
+        e.preventDefault();
+        if (e.button === 3) back();
+        else forward();
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+        e.preventDefault();
+        if (e.key === "ArrowLeft") back();
+        else forward();
+      }
+    };
+    window.addEventListener("mouseup", onMouse);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mouseup", onMouse);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [view, studioPath]);
   // Turning Benchmark mode off while on its page, or the open clip going away
   // (deleted): go back to the clips.
   useEffect(() => {
@@ -165,7 +212,11 @@ export default function App() {
           {upd?.current && <span className="brand-version">v{upd.current}</span>}
         </div>
         {nav.map(([id, label]) => (
-          <button key={id} className={`nav-item ${navOn(id) ? "on" : ""}`} onClick={() => setView(id)}>
+          <button
+            key={id}
+            className={`nav-item ${navOn(id) ? "on" : ""}`}
+            onClick={() => (id === "clips" && view === "clips" ? window.dispatchEvent(new Event("rewind-top")) : setView(id))}
+          >
             {label}
           </button>
         ))}
@@ -207,6 +258,7 @@ export default function App() {
             uploads={uploads.progress}
             links={uploads.history}
             focusPath={studioPath}
+            onShare={requestShare}
           />
         )}
         {view === "studio" && (
@@ -221,6 +273,7 @@ export default function App() {
             onBack={backToClips}
             uploads={uploads.progress}
             links={uploads.history}
+            onShare={requestShare}
           />
         )}
         {view === "performance" && <Performance />}
@@ -234,6 +287,23 @@ export default function App() {
           />
         )}
       </main>
+      {shareReq && settings && (
+        <ShareConfirm
+          req={shareReq}
+          settings={settings}
+          update={update}
+          onClose={() => setShareReq(null)}
+          onOpenSettings={() => {
+            try {
+              localStorage.setItem("rewind.settingsTab", "sharing");
+            } catch {
+              /* only a convenience */
+            }
+            setView("settings");
+          }}
+          onError={(m) => toast(m, true)}
+        />
+      )}
       {askUpdate && upd?.version && (
         <ConfirmUpdate
           version={upd.version}

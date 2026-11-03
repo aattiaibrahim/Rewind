@@ -30,6 +30,8 @@ export type Settings = {
   autoUpload: boolean;
   postLinkToDiscord: boolean;
   streamableEmail: string;
+  discordWebhookName: string;
+  confirmUploads: boolean;
   startMinimized: boolean;
   keepOriginalAfterRemux: boolean;
   replaceOriginalOnEdit: boolean;
@@ -43,7 +45,7 @@ export type Settings = {
   reduceMotion: boolean;
 };
 
-export type Theme = "midnight" | "graphite" | "oled" | "light";
+export type Theme = "midnight" | "graphite" | "oled";
 export type Accent = "lime" | "cyan" | "violet" | "amber" | "rose" | "green";
 
 export type Status = {
@@ -194,7 +196,9 @@ export type UploadProgress = {
   total: number;
   url: string | null;
   error: string | null;
+  warning: string | null;
 };
+export type Reach = { host: string; state: "ok" | "blocked" | "unreachable" | "webhook" };
 
 export type MovePlan = {
   label: string;
@@ -299,7 +303,9 @@ export const api = {
   uploadClip: (path: string, host?: UploadHost) => invoke<Upload>("upload_clip", { path, host: host ?? null }),
   uploadHistory: () => invoke<Record<string, Upload[]>>("upload_history"),
   copyText: (text: string) => invoke<void>("copy_text", { text }),
-  setSecret: (name: "discord_webhook" | "streamable_password", value: string) => invoke<void>("set_secret", { name, value }),
+  setSecret: (name: "discord_webhook" | "streamable_password", value: string) =>
+    invoke<{ name: string; channelId: string } | null>("set_secret", { name, value }),
+  checkSharing: () => invoke<[UploadHost, Reach[]][]>("check_sharing"),
   secretsSet: () => invoke<{ discordWebhook: boolean; streamablePassword: boolean }>("secrets_set"),
   syncNasNow: () => invoke<void>("sync_nas_now"),
   recorderClipFolders: () => invoke<ClipFolder[]>("recorder_clip_folders"),
