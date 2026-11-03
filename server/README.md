@@ -37,10 +37,8 @@ Port: **8420**.
 These steps are for TrueNAS SCALE 24.10 (Electric Eel) or later, where apps run on Docker. They
 were tested on 25.10 (Goldeye).
 
-TrueNAS doesn't build images from a `build:` line: it tries to pull the image and the install
-silently ends with no container. So the app runs on the stock `node:22-alpine` image, with this
-folder mounted read-only as the code. ffmpeg is installed when the container starts, so the first
-start needs internet access and takes about 20 seconds.
+The image is published at **`ghcr.io/aattiaibrahim/rewind-server:latest`** (amd64 and arm64), with
+ffmpeg included. TrueNAS downloads it once. After that, the app starts and runs with no internet.
 
 ### 1. Clips dataset and user
 
@@ -49,38 +47,23 @@ The container reads it as your SMB user and the `builtin_users` group (gid 545).
 read SMB-share datasets by default, so no permission changes are needed. Find your uid under
 Credentials → Users (the first user you create is usually 3000).
 
-### 2. Copy the app to the NAS
-
-Copy this `server/` folder to the NAS. A hidden folder inside the clips share works, because
-Rewind Server skips hidden folders:
-
-```bash
-robocopy server \NAS-NAMEclips.rewind-server /E /XD sample-clips node_modules
-```
-
-### 3. Install with YAML
+### 2. Install with YAML
 
 **Apps → Discover Apps → ⋮ (next to Custom App) → Install via YAML**. Name it `rewind-server` and
-paste this, with your own paths, uid and time zone:
+paste this, with your own path, uid and time zone:
 
 ```yaml
 services:
   rewind-server:
-    image: node:22-alpine
+    image: ghcr.io/aattiaibrahim/rewind-server:latest
     restart: unless-stopped
-    working_dir: /app
-    # Runs as root only to install ffmpeg and own /cache, then drops to uid 3000, gid 545.
-    command:
-      - sh
-      - -c
-      - apk add --no-cache ffmpeg tzdata su-exec && mkdir -p /cache && chown 3000:545 /cache && exec su-exec 3000:545 node src/main.js
+    user: "3000:545"
     ports:
       - "8420:8420"
     environment:
       TZ: America/Los_Angeles
       MAX_CACHE_GB: "20"
     volumes:
-      - /mnt/tank/clips/.rewind-server:/app:ro
       - /mnt/tank/clips:/clips:ro
       - rewind-cache:/cache
 volumes:
@@ -90,23 +73,29 @@ volumes:
 If the app shows **Stopped** after saving, press Start (▶) in the Controls column. Then open
 `http://<nas-ip>:8420`. On a phone, use "Add to Home Screen" to open it like an app.
 
-Thumbnails and phone versions are stored in the `rewind-cache` Docker volume. Phone versions are
-capped at `MAX_CACHE_GB` (default 20 GB), and the copies watched least recently are removed first.
+### Or with the Custom App form
 
-To update later, copy the new `server/` folder over the old one and restart the app.
+**Apps → Discover Apps → Custom App**:
 
-### Custom App form (once an image is in a registry)
-
-If a ready-made image is ever published, for example to `ghcr.io`, you can use **Apps → Discover
-Apps → Custom App** instead of YAML. The image would already include ffmpeg, so there's no startup install:
-
-- Image: the published image and tag
-- Container port **8420** → host port **8420**, TCP
-- Storage: host path `/mnt/tank/clips` → `/clips`, **read-only** ticked; a dataset or ixVolume → `/cache`
+- Image repository `ghcr.io/aattiaibrahim/rewind-server`, tag `latest`
+- User `3000`, group `545`
+- Port: container **8420** → host **8420**, TCP
+- Storage: host path `/mnt/tank/clips` → `/clips`, **read-only** ticked; an ixVolume → `/cache`
 - Environment: `TZ`, plus any settings from the table below
-- User `3000` (your SMB user), group `545`
 
-No image is published yet.
+### Cache
+
+Thumbnails and phone versions go in the `/cache` volume. Phone versions are capped at
+`MAX_CACHE_GB` (default 20 GB), and the copies watched least recently are removed first.
+
+### Updating
+
+New images are published when `server/` changes on GitHub. TrueNAS only downloads an image the
+first time, so to update, run this in **System → Shell**, then restart the app:
+
+```bash
+docker pull ghcr.io/aattiaibrahim/rewind-server:latest
+```
 
 ## Settings
 
