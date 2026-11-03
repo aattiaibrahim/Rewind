@@ -1,5 +1,3 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap");
-
 :root {
   /* Midnight (default) */
   --bg: #0e1014;
@@ -35,9 +33,12 @@
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
   --fast: 0.14s;
   --med: 0.22s;
-  --display: "Space Grotesk", "Segoe UI", sans-serif;
+  --display: "Geist Variable", "Segoe UI Variable", "Segoe UI", sans-serif;
+  --mono: "Geist Mono Variable", ui-monospace, Consolas, monospace;
   color-scheme: dark;
-  font-family: Inter, "Segoe UI", system-ui, sans-serif;
+  font-family: "Geist Variable", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
   font-size: 14px;
   color: var(--text);
   background: var(--bg);
@@ -473,3 +474,169 @@ table.bench td.verdict.dim { color: var(--muted); }
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 
+
+/* ================= Depth (v0.1.17) =================
+   Softer shapes and a little light and shadow, so controls read as raised
+   surfaces instead of flat outlines. Only box-shadow / background / transform,
+   which the GPU composites cheaply. */
+:root {
+  --r-sm: 10px; --r-md: 14px; --r-lg: 18px;
+  /* A faint light edge on top of raised things, and two shadow depths. */
+  --hi: rgba(255, 255, 255, 0.055);
+  --hi-strong: rgba(255, 255, 255, 0.09);
+  --elev-1: 0 1px 2px rgba(0, 0, 0, 0.35), 0 2px 8px rgba(0, 0, 0, 0.18);
+  --elev-2: 0 2px 6px rgba(0, 0, 0, 0.35), 0 10px 30px rgba(0, 0, 0, 0.28);
+  --elev-3: 0 8px 24px rgba(0, 0, 0, 0.4), 0 30px 80px rgba(0, 0, 0, 0.45);
+  --surface: linear-gradient(180deg, color-mix(in srgb, var(--text) 4.5%, var(--panel)), var(--panel));
+  --surface-raised: linear-gradient(180deg, color-mix(in srgb, var(--text) 8%, var(--panel)), color-mix(in srgb, var(--text) 3%, var(--panel)));
+  --glow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent), 0 4px 18px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+:root[data-theme="light"] {
+  --hi: rgba(255, 255, 255, 0.9);
+  --hi-strong: #fff;
+  --elev-1: 0 1px 2px rgba(20, 24, 32, 0.08), 0 2px 8px rgba(20, 24, 32, 0.06);
+  --elev-2: 0 2px 6px rgba(20, 24, 32, 0.08), 0 12px 30px rgba(20, 24, 32, 0.1);
+  --elev-3: 0 10px 30px rgba(20, 24, 32, 0.16), 0 30px 80px rgba(20, 24, 32, 0.18);
+  --surface: linear-gradient(180deg, #fff, #fbfbfd);
+  --surface-raised: linear-gradient(180deg, #fff, #f1f3f7);
+}
+[hidden] { display: none !important; }
+/* A row of buttons on the right of a setting stays a row. */
+.setting > span.row { flex-direction: row; align-items: center; gap: 8px; }
+.mono, .time-readout, .brand-version { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+h1 { letter-spacing: -0.02em; }
+.group h2, .modal h2 { letter-spacing: -0.01em; }
+
+/* Buttons: raised, with a soft press. */
+.btn {
+  border-radius: var(--r-sm); border-color: var(--border);
+  background: var(--surface-raised); box-shadow: inset 0 1px 0 var(--hi), var(--elev-1);
+  transition: transform var(--fast) var(--ease), box-shadow var(--med) var(--ease), background var(--med) var(--ease), border-color var(--med) var(--ease), filter var(--fast);
+}
+.btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--text) 11%, var(--panel)), color-mix(in srgb, var(--text) 5%, var(--panel)));
+  border-color: var(--line-2); transform: translateY(-1px); box-shadow: inset 0 1px 0 var(--hi-strong), var(--elev-2);
+}
+.btn:active:not(:disabled) { transform: translateY(0) scale(0.97); box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25); }
+.btn.primary {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 82%, #fff), var(--accent));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), var(--glow);
+}
+.btn.primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 72%, #fff), var(--accent));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent), 0 8px 26px color-mix(in srgb, var(--accent) 38%, transparent);
+  filter: none;
+}
+.btn.danger { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 4px 16px color-mix(in srgb, var(--danger-strong) 30%, transparent); }
+.btn.pill { border-radius: 999px; height: 34px; padding: 0 14px 0 10px; font-size: 12.5px; }
+.btn.pill svg { width: 16px; height: 16px; }
+.btn.back { height: 32px; padding: 0 12px 0 8px; border-radius: 999px; font-size: 12.5px; color: var(--text-2); }
+.chip { box-shadow: inset 0 1px 0 var(--hi); background: var(--surface); transition: all var(--med) var(--ease); }
+.chip.on { background: linear-gradient(180deg, rgba(255, 255, 255, 0.16), transparent), var(--text); box-shadow: var(--elev-1); }
+
+/* Surfaces: sections, cards, the buffer card, menus and dialogs. */
+.group, .buffer-card {
+  border-radius: var(--r-lg); background: var(--surface); border-color: var(--border-soft);
+  box-shadow: inset 0 1px 0 var(--hi), var(--elev-1);
+}
+.thumb { border-radius: var(--r-md); box-shadow: var(--elev-1); }
+.card:hover .thumb { box-shadow: var(--elev-2), 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent); }
+.modal { border-radius: var(--r-lg); box-shadow: inset 0 1px 0 var(--hi), var(--elev-3); }
+.modal-backdrop { backdrop-filter: blur(6px); }
+.modal-list { border-radius: var(--r-sm); }
+.toast { border-radius: var(--r-md); box-shadow: inset 0 1px 0 var(--hi), var(--elev-2); }
+.update-banner { border-radius: var(--r-md); box-shadow: var(--elev-1); }
+.search, .select, .text-input {
+  border-radius: var(--r-sm); background: color-mix(in srgb, var(--bg) 70%, var(--panel));
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: border-color var(--med) var(--ease), box-shadow var(--med) var(--ease);
+}
+.search:focus-within, .select:focus, .text-input:focus { box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25), 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+
+/* Navigation: the open page sits on a raised pill. */
+.nav-item { border-radius: var(--r-sm); transition: background var(--med) var(--ease), color var(--med) var(--ease), box-shadow var(--med) var(--ease); }
+.nav-item.on { background: var(--surface-raised); box-shadow: inset 0 1px 0 var(--hi), var(--elev-1); }
+
+/* Settings tabs: a segmented control. */
+.tabs {
+  display: inline-flex; flex-wrap: wrap; gap: 4px; padding: 4px; align-self: flex-start;
+  border-radius: 999px; background: color-mix(in srgb, var(--bg) 60%, var(--panel));
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.3), inset 0 0 0 1px var(--border-soft);
+}
+.tab {
+  height: 32px; padding: 0 14px; border: 0; border-radius: 999px; background: transparent;
+  color: var(--muted); font-size: 13px; font-weight: 500;
+  transition: background var(--med) var(--ease), color var(--med) var(--ease), box-shadow var(--med) var(--ease);
+}
+.tab:hover:not(.on) { color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); }
+.tab.on { color: var(--text); background: var(--surface-raised); box-shadow: inset 0 1px 0 var(--hi-strong), var(--elev-1); font-weight: 600; }
+
+/* Toggles: a rounder, raised switch. */
+input.switch {
+  -webkit-appearance: none; appearance: none; position: relative; width: 40px; height: 24px; margin: 0; flex-shrink: 0;
+  border-radius: 999px; background: var(--track); cursor: pointer;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35); transition: background var(--med) var(--ease);
+}
+input.switch::after {
+  content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%;
+  background: linear-gradient(180deg, #fff, #e6e8ec); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  transition: transform var(--med) var(--ease);
+}
+input.switch:checked { background: var(--accent); box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2), 0 0 12px color-mix(in srgb, var(--accent) 30%, transparent); }
+input.switch:checked::after { transform: translateX(16px); }
+input.switch:active::after { width: 22px; }
+input.switch:checked:active::after { transform: translateX(12px); }
+
+/* Studio transport: round controls grouped on floating pills. */
+.transport { gap: 14px; }
+.transport-pill {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px; border-radius: 999px;
+  background: var(--surface); box-shadow: inset 0 1px 0 var(--hi), var(--elev-1); border: 1px solid var(--border-soft);
+}
+.transport-pill .btn { box-shadow: none; background: transparent; border-color: transparent; }
+.transport-pill .btn:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 8%, transparent); box-shadow: none; transform: none; }
+.round {
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: transform var(--fast) var(--ease), background var(--med) var(--ease), box-shadow var(--med) var(--ease), color var(--med);
+}
+.round.icon { width: 36px; height: 36px; border: 0; color: var(--text-2); }
+.round.icon svg { width: 20px; height: 20px; }
+.round.icon:hover { background: color-mix(in srgb, var(--text) 8%, transparent) !important; color: var(--text); }
+.round:active { transform: scale(0.92); }
+.round.play {
+  width: 48px; height: 48px; color: var(--on-accent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 78%, #fff), var(--accent));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), var(--glow);
+}
+.round.play svg { width: 20px; height: 20px; }
+.round.play:hover { filter: none; transform: scale(1.06); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent), 0 8px 26px color-mix(in srgb, var(--accent) 40%, transparent); }
+.round.play:active { transform: scale(0.94); }
+.time-readout { font-size: 13px; color: var(--text); }
+
+/* Timeline: a soft recessed track, with round handles. */
+.timeline { border-radius: var(--r-md); background: color-mix(in srgb, var(--bg) 55%, var(--panel)); box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.35); border-color: var(--border-soft); }
+.tl-range { border-radius: var(--r-md); box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 22%, transparent); }
+.tl-handle { border-radius: 999px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45); transition: transform var(--fast) var(--ease); }
+.tl-handle:hover { transform: scaleX(1.25); }
+.tl-head { border-radius: 2px; box-shadow: 0 0 8px rgba(255, 255, 255, 0.5); }
+.tl-head::before {
+  content: ""; position: absolute; top: -4px; left: 50%; width: 10px; height: 10px; border-radius: 50%;
+  transform: translateX(-50%); background: var(--playhead); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+
+/* Time ruler under the timeline. */
+.ruler { position: relative; height: 24px; margin-top: -6px; cursor: pointer; touch-action: none; }
+.ruler .tick { position: absolute; top: 0; width: 1px; height: 5px; background: color-mix(in srgb, var(--muted) 45%, transparent); pointer-events: none; }
+.ruler .tick.big { height: 9px; background: var(--muted); }
+.ruler .tick em {
+  position: absolute; top: 11px; left: 0; transform: translateX(-50%); font-style: normal;
+  font-family: var(--mono); font-size: 10.5px; color: var(--muted); white-space: nowrap;
+}
+.ruler .tick:first-child em { transform: none; }
+.ruler .tick.end { transform: translateX(-1px); }
+.ruler .tick.end em { transform: translateX(-100%); }
+
+@media (prefers-reduced-motion: reduce) {
+  .btn, .round, .tab, .chip, input.switch, input.switch::after { transition: none !important; }
+}
+:root[data-motion="reduce"] .btn:hover:not(:disabled), :root[data-motion="reduce"] .round.play:hover { transform: none; }

@@ -310,37 +310,43 @@ fn moves_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path().app_data_dir().map(|d| d.join("moves")).map_err(|e| e.to_string())
 }
 
-/// What "Move into Rewind" would do for one linked folder (nothing is touched).
-#[tauri::command]
-async fn plan_move_into_rewind(app: AppHandle, folder: String) -> Result<consolidate::Plan, String> {
-    let s = settings_of(&app);
-    blocking(move || {
-        let root = linked_root_for(&s, &folder)?;
-        Ok(consolidate::plan(&root, std::path::Path::new(&s.clips_dir), &move_avoid(&s, &root)))
-    })
-    .await
-}
-
-/// Folders a move must never reach into: Rewind's own, the NAS, other linked folders.
-fn move_avoid(s: &Settings, root: &library::LinkedRoot) -> Vec<PathBuf> {
+/// Folders a move must never reach into: Rewind's own, the NAS, and the linked
+/// folders (each root being moved skips only the others).
+fn move_avoid(s: &Settings) -> Vec<PathBuf> {
     let mut v = vec![PathBuf::from(&s.clips_dir)];
     if !s.nas_dir.is_empty() {
         v.push(PathBuf::from(&s.nas_dir));
     }
-    v.extend(s.linked_folders.iter().map(PathBuf::from).filter(|p| !library::same_path(p, &root.path)));
+    v.extend(s.linked_folders.iter().map(PathBuf::from));
     v
 }
 
+fn move_plan(s: &Settings, folders: &[String]) -> Result<consolidate::Plan, String> {
+    let roots = folders.iter().map(|f| linked_root_for(s, f)).collect::<Result<Vec<_>, _>>()?;
+    if roots.is_empty() {
+        return Err("No folders to move.".into());
+    }
+    Ok(consolidate::plan_many(&roots, std::path::Path::new(&s.clips_dir), &move_avoid(s)))
+}
+
+/// What "Move into Rewind" would do for one or more linked folders (nothing is touched).
 #[tauri::command]
-async fn move_into_rewind(app: AppHandle, folder: String) -> Result<consolidate::Outcome, String> {
+async fn plan_move_into_rewind(app: AppHandle, folders: Vec<String>) -> Result<consolidate::Plan, String> {
+    let s = settings_of(&app);
+    blocking(move || move_plan(&s, &folders)).await
+}
+
+#[tauri::command]
+async fn move_into_rewind(app: AppHandle, folders: Vec<String>) -> Result<consolidate::Outcome, String> {
     let s = settings_of(&app);
     let dir = moves_dir(&app)?;
     let a = app.clone();
     let out = blocking(move || {
-        let root = linked_root_for(&s, &folder)?;
-        let plan = consolidate::plan(&root, std::path::Path::new(&s.clips_dir), &move_avoid(&s, &root));
+        let plan = move_plan(&s, &folders)?;
         let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
-        let log = dir.join(format!("{stamp}-{}.jsonl", root.label.replace(|c: char| !c.is_ascii_alphanumeric(), "_")));
+        // "Medal, NVIDIA" → "Medal+NVIDIA" in the file name (shown again as "Medal, NVIDIA").
+        let tag = plan.label.replace(", ", "+").replace(|c: char| !c.is_ascii_alphanumeric() && c != '+', "_");
+        let log = dir.join(format!("{stamp}-{tag}.jsonl"));
         Ok(consolidate::run(&plan, &log, |done, total| {
             let _ = a.emit("move-progress", (done, total));
         }))
@@ -380,7 +386,7 @@ fn last_move(app: AppHandle) -> Option<UndoInfo> {
         return None;
     }
     let name = log.file_stem()?.to_string_lossy().into_owned();
-    let label = name.splitn(3, '-').nth(2).unwrap_or("folder").replace('_', " ");
+    let label = name.splitn(3, '-').nth(2).unwrap_or("folder").replace('_', " ").replace('+', ", ");
     let when = std::fs::metadata(&log)
         .and_then(|m| m.modified())
         .ok()

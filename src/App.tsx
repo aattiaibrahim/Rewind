@@ -126,12 +126,20 @@ export default function App() {
     };
   }, [toast, openInStudio]);
 
+  // Studio has no tab of its own: it opens when you click a clip. Performance
+  // only shows in Benchmark mode (Settings → Advanced).
   const nav: [View, string][] = [
     ["clips", "Clips"],
-    ["studio", "Studio"],
-    ["performance", "Performance"],
+    ...(settings?.benchmarkMode ? ([["performance", "Performance"]] as [View, string][]) : []),
     ["settings", "Settings"],
   ];
+  const navOn = (id: View) => view === id || (id === "clips" && view === "studio");
+  const backToClips = useCallback(() => setView("clips"), []);
+  // Turning Benchmark mode off while on its page, or the open clip going away
+  // (deleted): go back to the clips.
+  useEffect(() => {
+    if ((view === "performance" && settings && !settings.benchmarkMode) || (view === "studio" && !studioPath)) setView("clips");
+  }, [view, settings, studioPath]);
 
   return (
     <div className="shell">
@@ -142,7 +150,7 @@ export default function App() {
           {upd?.current && <span className="brand-version">v{upd.current}</span>}
         </div>
         {nav.map(([id, label]) => (
-          <button key={id} className={`nav-item ${view === id ? "on" : ""}`} onClick={() => setView(id)}>
+          <button key={id} className={`nav-item ${navOn(id) ? "on" : ""}`} onClick={() => setView(id)}>
             {label}
           </button>
         ))}
@@ -192,6 +200,7 @@ export default function App() {
             onDelete={requestDelete}
             settings={settings}
             update={update}
+            onBack={backToClips}
           />
         )}
         {view === "performance" && <Performance />}

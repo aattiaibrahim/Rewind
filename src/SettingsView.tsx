@@ -77,6 +77,17 @@ function HotkeyInput({ value, label, onPick }: { value: string; label: string; o
   );
 }
 
+const TABS = [
+  ["general", "General"],
+  ["appearance", "Appearance"],
+  ["recording", "Recording"],
+  ["audio", "Audio"],
+  ["library", "Library"],
+  ["integrations", "Stream Deck"],
+  ["advanced", "Advanced"],
+] as const;
+type TabId = (typeof TABS)[number][0];
+
 export function SettingsView({
   settings,
   update,
@@ -94,6 +105,22 @@ export function SettingsView({
   const [mics, setMics] = useState<string[]>([]);
   const upd = useUpdate();
   const [checking, setChecking] = useState(false);
+  const [tab, setTab] = useState<TabId>(() => {
+    try {
+      const t = localStorage.getItem("rewind.settingsTab") as TabId | null;
+      return t && TABS.some(([id]) => id === t) ? t : "general";
+    } catch {
+      return "general";
+    }
+  });
+  const pickTab = (t: TabId) => {
+    setTab(t);
+    try {
+      localStorage.setItem("rewind.settingsTab", t);
+    } catch {
+      /* private mode: just don't remember */
+    }
+  };
   const [askRamOff, setAskRamOff] = useState(false);
   const keepRam = useCallback(() => setAskRamOff(false), []);
   const checkNow = async () => {
@@ -151,8 +178,28 @@ export function SettingsView({
   return (
     <div className="page">
       <h1>Settings</h1>
-      <div className="settings-grid">
-        <section className="group">
+      <div className="tabs" role="tablist" aria-label="Settings sections">
+        {TABS.map(([id, label]) => (
+          <button key={id} role="tab" aria-selected={tab === id} className={`tab ${tab === id ? "on" : ""}`} onClick={() => pickTab(id)}>
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="settings-grid" key={tab}>
+        <section className="group" hidden={tab !== "advanced"}>
+          <h2>Advanced</h2>
+          <label className="setting">
+            <span>
+              Benchmark mode
+              <small>
+                Shows the Performance page, which measures how much FPS Rewind, OBS, NVIDIA Instant Replay and Medal cost
+                your game.
+              </small>
+            </span>
+            <Toggle label="Benchmark mode" checked={s.benchmarkMode} onChange={(v) => set({ benchmarkMode: v })} />
+          </label>
+        </section>
+        <section className="group" hidden={tab !== "appearance"}>
           <h2>Appearance</h2>
           <div className="themes" role="radiogroup" aria-label="Theme">
             {THEMES.map((t) => (
@@ -203,7 +250,7 @@ export function SettingsView({
           </label>
         </section>
 
-        <section className="group">
+        <section className="group" hidden={tab !== "general"}>
           <h2>General</h2>
           <label className="setting">
             <span>Launch with Windows</span>
@@ -234,7 +281,7 @@ export function SettingsView({
           <HotkeyInput label="Start / stop recording hotkey" value={s.recordHotkey} onPick={(hk) => set({ recordHotkey: hk })} />
         </section>
 
-        <section className="group">
+        <section className="group" hidden={tab !== "general"}>
           <h2>Updates</h2>
           <div className="setting">
             <span>
@@ -271,7 +318,7 @@ export function SettingsView({
           </label>
         </section>
 
-        <section className="group">
+        <section className="group" hidden={tab !== "recording"}>
           <h2>Recording</h2>
           <label className="setting">
             <span>
@@ -392,7 +439,7 @@ export function SettingsView({
           </label>
         </section>
 
-        <section className="group">
+        <section className="group" hidden={tab !== "integrations"}>
           <h2>Stream Deck &amp; other tools</h2>
           <div className="setting">
             <span>
@@ -421,7 +468,7 @@ export function SettingsView({
           </div>
         </section>
 
-        <section className="group">
+        <section className="group" hidden={tab !== "audio"}>
           <h2>Audio</h2>
           <label className="setting">
             <span>
@@ -464,7 +511,7 @@ export function SettingsView({
           </span>
         </section>
 
-        <section className="group">
+        <section className="group" hidden={tab !== "recording"}>
           <h2>Display &amp; capture</h2>
           <label className="setting">
             <span>
@@ -531,7 +578,7 @@ export function SettingsView({
           </div>
         </section>
 
-        <section className="group">
+        <section className="group" hidden={tab !== "library"}>
           <h2>Files</h2>
           <div className="setting">
             <span>
@@ -600,7 +647,7 @@ export function SettingsView({
           </div>
         </section>
 
-        <LibrarySettings s={s} set={set} Toggle={Toggle} />
+        <LibrarySettings s={s} set={set} Toggle={Toggle} hidden={tab !== "library"} />
       </div>
     </div>
   );

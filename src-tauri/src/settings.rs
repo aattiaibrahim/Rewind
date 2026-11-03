@@ -54,6 +54,8 @@ pub struct Settings {
     pub nas_remove_local: bool,
     /// Other recorders' folders (Medal, OBS, NVIDIA, any folder) shown in the library in place
     pub linked_folders: Vec<String>,
+    /// Show the Performance page (benchmark against other recorders)
+    pub benchmark_mode: bool,
 }
 
 impl Default for Settings {
@@ -90,6 +92,7 @@ impl Default for Settings {
             nas_dir: String::new(),
             nas_remove_local: false,
             linked_folders: Vec::new(),
+            benchmark_mode: false,
         }
     }
 }

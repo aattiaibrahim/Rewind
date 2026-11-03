@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, ClipFolder, errText, fmtSize, LastMove, MovePlan, NasState, Settings } from "./api";
 import { ConfirmDialog } from "./ConfirmUpdate";
 
-type MoveJob = { folder: string; plan: MovePlan | null; running: boolean; done: number; total: number };
+type MoveJob = { folders: string[]; plan: MovePlan | null; running: boolean; done: number; total: number };
 
 function outcomeText(verb: string, o: { moved: number; failed: [string, string][] }) {
   const base = `${verb} ${o.moved} clip${o.moved === 1 ? "" : "s"}.`;
@@ -48,7 +48,9 @@ export function LibrarySettings({
   s,
   set,
   Toggle,
+  hidden,
 }: {
+  hidden?: boolean;
   s: Settings;
   set: (p: Partial<Settings>) => void;
   Toggle: (p: { label: string; checked: boolean; onChange: (v: boolean) => void }) => React.ReactElement;
@@ -88,15 +90,15 @@ export function LibrarySettings({
       un.then((f) => f());
     };
   }, [refreshLast]);
-  const askMove = async (folder: string) => {
+  const askMove = async (folders: string[]) => {
     setNote(null);
-    setJob({ folder, plan: null, running: false, done: 0, total: 0 });
+    setJob({ folders, plan: null, running: false, done: 0, total: 0 });
     try {
-      const plan = await api.planMoveIntoRewind(folder);
+      const plan = await api.planMoveIntoRewind(folders);
       if (!plan.count) {
         setJob(null);
         setNote("Nothing to move: no finished clips in that folder.");
-      } else setJob({ folder, plan, running: false, done: 0, total: plan.count });
+      } else setJob({ folders, plan, running: false, done: 0, total: plan.count });
     } catch (e) {
       setJob(null);
       setNote(errText(e));
@@ -106,7 +108,7 @@ export function LibrarySettings({
     if (!job?.plan) return;
     setJob({ ...job, running: true });
     try {
-      setNote(outcomeText("Moved", await api.moveIntoRewind(job.folder)));
+      setNote(outcomeText("Moved", await api.moveIntoRewind(job.folders)));
     } catch (e) {
       setNote(errText(e));
     } finally {
@@ -126,13 +128,13 @@ export function LibrarySettings({
   const closeMove = useCallback(() => setJob((j) => (j?.running ? j : null)), []);
   const moveButton = (path: string) =>
     linked(path) && (
-      <button className="btn small" disabled={!!job} onClick={() => askMove(path)} title="Move these clips into Rewind's game folders">
+      <button className="btn small" disabled={!!job} onClick={() => askMove([path])} title="Move these clips into Rewind's game folders">
         Move into Rewind…
       </button>
     );
 
   return (
-    <section className="group">
+    <section className="group" hidden={hidden}>
       <h2>Library &amp; NAS</h2>
       <div className="setting">
         <span>
@@ -173,11 +175,26 @@ export function LibrarySettings({
       <div className="setting">
         <span>
           Clips from other recorders
-          <small>Shows their clips in your library, grouped by game, without moving or copying anything.</small>
+          <small>
+            Shows their clips in your library, grouped by game, without moving or copying anything. Move them into Rewind's
+            folders to tidy everything into one place.
+          </small>
         </span>
-        <button className="btn small" onClick={addFolder}>
-          Add folder…
-        </button>
+        <span className="row" style={{ flexWrap: "nowrap", flexShrink: 0 }}>
+          {s.linkedFolders.length > 1 && (
+            <button
+              className="btn small primary"
+              disabled={!!job}
+              onClick={() => askMove(s.linkedFolders)}
+              title="Move every shown folder's clips into Rewind's game folders in one go"
+            >
+              Move all into Rewind…
+            </button>
+          )}
+          <button className="btn small" onClick={addFolder}>
+            Add folder…
+          </button>
+        </span>
       </div>
       {found.map((f) => (
         <div className="setting sub" key={f.path}>

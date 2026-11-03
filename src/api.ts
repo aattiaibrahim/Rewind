@@ -24,6 +24,7 @@ export type Settings = {
   nasDir: string;
   nasRemoveLocal: boolean;
   linkedFolders: string[];
+  benchmarkMode: boolean;
   startMinimized: boolean;
   keepOriginalAfterRemux: boolean;
   replaceOriginalOnEdit: boolean;
@@ -274,8 +275,8 @@ export const api = {
   getNasState: () => invoke<NasState>("get_nas_state"),
   syncNasNow: () => invoke<void>("sync_nas_now"),
   recorderClipFolders: () => invoke<ClipFolder[]>("recorder_clip_folders"),
-  planMoveIntoRewind: (folder: string) => invoke<MovePlan>("plan_move_into_rewind", { folder }),
-  moveIntoRewind: (folder: string) => invoke<MoveOutcome>("move_into_rewind", { folder }),
+  planMoveIntoRewind: (folders: string[]) => invoke<MovePlan>("plan_move_into_rewind", { folders }),
+  moveIntoRewind: (folders: string[]) => invoke<MoveOutcome>("move_into_rewind", { folders }),
   lastMove: () => invoke<LastMove | null>("last_move"),
   undoLastMove: () => invoke<MoveOutcome>("undo_last_move"),
 };

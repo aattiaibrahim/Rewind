@@ -45,7 +45,7 @@ export function installDevMock() {
     recordHotkey: "Alt+F9", bufferEnabled: true, launchOnStartup: false, autoUpdate: true, startMinimized: true,
     keepOriginalAfterRemux: true, replaceOriginalOnEdit: false, externalFiles: [], desktopAudio: true,
     micEnabled: true, micMono: true, micDevice: "", theme: "midnight", accent: "lime", reduceMotion: false,
-    saveSound: true, nasDir: "", nasRemoveLocal: false, linkedFolders: [] as string[],
+    saveSound: true, nasDir: "", nasRemoveLocal: false, linkedFolders: [] as string[], benchmarkMode: false,
   };
   const status = {
     enabled: true, running: true, monitor: "Display 1 · 1920×1080", width: 1920, height: 1080, encoder: "av1",

@@ -76,25 +76,46 @@ fn settled(p: &Path) -> bool {
 
 /// Work out where every clip in `root` would go. Nothing is touched.
 pub fn plan(root: &LinkedRoot, clips_dir: &Path, avoid: &[PathBuf]) -> Plan {
+    plan_many(std::slice::from_ref(root), clips_dir, avoid)
+}
+
+/// The same for several folders at once ("Move all"), planned together so two
+/// recorders can never pick the same new name. `avoid` may include the roots
+/// themselves: each root only skips the others.
+pub fn plan_many(roots: &[LinkedRoot], clips_dir: &Path, avoid: &[PathBuf]) -> Plan {
     let mut found = Vec::new();
-    library::scan_linked(root, avoid, &mut found);
+    for root in roots {
+        let others: Vec<PathBuf> = avoid.iter().filter(|a| !library::same_path(a, &root.path)).cloned().collect();
+        library::scan_linked(root, &others, &mut found);
+    }
+    let mut seen = std::collections::HashSet::new();
+    found.retain(|c| seen.insert(c.path.to_lowercase()));
     // Rewind's existing game folders, by key.
-    let existing: Vec<String> = fs::read_dir(clips_dir)
+    let mut existing: Vec<String> = fs::read_dir(clips_dir)
         .map(|r| r.flatten().filter(|e| e.path().is_dir()).map(|e| e.file_name().to_string_lossy().into_owned()).collect())
         .unwrap_or_default();
     let mut taken: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut plan = Plan { label: root.label.clone(), other_drive: drive(&root.path) != drive(clips_dir), ..Default::default() };
+    let mut plan = Plan {
+        label: roots.iter().map(|r| r.label.as_str()).collect::<Vec<_>>().join(", "),
+        other_drive: roots.iter().any(|r| drive(&r.path) != drive(clips_dir)),
+        ..Default::default()
+    };
     found.sort_by_key(|c| c.modified);
     for c in found {
         let from = PathBuf::from(&c.path);
         if !settled(&from) {
             continue;
         }
-        let folder = existing
-            .iter()
-            .find(|e| game_key(e) == game_key(&c.folder))
-            .cloned()
-            .unwrap_or_else(|| safe_name(&c.folder));
+        // Reuse Rewind's folder for this game, or one this plan already created
+        // (so "Valorant" and "VALORANT" from two recorders share one folder).
+        let folder = match existing.iter().find(|e| game_key(e) == game_key(&c.folder)) {
+            Some(f) => f.clone(),
+            None => {
+                let f = safe_name(&c.folder);
+                existing.push(f.clone());
+                f
+            }
+        };
         let ext = from.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_else(|| "mp4".into());
         let when = chrono::DateTime::from_timestamp_millis(c.modified)
             .map(|t| t.with_timezone(&chrono::Local).format("%Y-%m-%d %H-%M-%S").to_string())
@@ -278,6 +299,25 @@ mod tests {
         old_file(&obs.join("2026-11-03 10-00-00.mkv"), 10);
         let plan = plan(&LinkedRoot { path: obs, label: "OBS".into() }, &clips, &[clips.clone()]);
         assert_eq!(plan.folders, vec![("OBS".to_string(), 1)]);
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn moving_several_folders_together_never_picks_the_same_name() {
+        let d = std::env::temp_dir().join(format!("rewind-consolidate-all-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        let (clips, medal, nvidia) = (d.join("Rewind"), d.join("Medal"), d.join("NVIDIA"));
+        fs::create_dir_all(&clips).unwrap();
+        // Same game, same second, from two recorders.
+        old_file(&medal.join("Clips/Valorant/a.mp4"), 10);
+        old_file(&nvidia.join("VALORANT/b.mp4"), 20);
+        let roots = vec![LinkedRoot { path: medal.clone(), label: "Medal".into() }, LinkedRoot { path: nvidia.clone(), label: "NVIDIA".into() }];
+        let avoid = vec![clips.clone(), medal.clone(), nvidia.clone()];
+        let plan = plan_many(&roots, &clips, &avoid);
+        assert_eq!(plan.count, 2);
+        assert_eq!(plan.label, "Medal, NVIDIA");
+        assert_eq!(plan.folders.len(), 1, "one game folder for both spellings: {:?}", plan.folders);
+        assert_ne!(plan.moves[0].to, plan.moves[1].to);
         let _ = fs::remove_dir_all(&d);
     }
 

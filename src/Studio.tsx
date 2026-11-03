@@ -97,7 +97,78 @@ const Icon = {
       <path d="M15 6v12" />
     </svg>
   ),
+  back5: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3" />
+      <path d="M4.5 4.5v3.2h3.2" />
+      <text x="12" y="15.2" textAnchor="middle" fontSize="7.5" fontWeight="700" fill="currentColor" stroke="none">5</text>
+    </svg>
+  ),
+  fwd5: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3" />
+      <path d="M19.5 4.5v3.2h-3.2" />
+      <text x="12" y="15.2" textAnchor="middle" fontSize="7.5" fontWeight="700" fill="currentColor" stroke="none">5</text>
+    </svg>
+  ),
+  markIn: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M10 5H7v14h3" />
+      <path d="M13 12h5M15.5 9.5 18 12l-2.5 2.5" />
+    </svg>
+  ),
+  markOut: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M14 5h3v14h-3" />
+      <path d="M11 12H6M8.5 9.5 6 12l2.5 2.5" />
+    </svg>
+  ),
+  reset: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v4h4" />
+    </svg>
+  ),
 };
+
+/** Tick spacing for the ruler: a labelled tick every `major` seconds, small ones every `minor`. */
+export function rulerSteps(duration: number): { major: number; minor: number } {
+  const steps: [number, number][] = [
+    [1, 0.5], [2, 1], [5, 1], [10, 2], [15, 5], [30, 10], [60, 10], [120, 30], [300, 60], [600, 120], [900, 300], [1800, 600],
+  ];
+  for (const [major, minor] of steps) if (duration / major <= 7) return { major, minor };
+  return { major: 3600, minor: 900 };
+}
+
+function rulerLabel(t: number) {
+  const m = Math.floor(t / 60);
+  const s = Math.round(t % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+/** Time ruler under the timeline: small ticks plus labelled bigger ones, spaced to fit the clip. */
+function Ruler({ duration, onPointerDown }: { duration: number; onPointerDown: (e: React.PointerEvent) => void }) {
+  if (!duration) return <div className="ruler" />;
+  const { major, minor } = rulerSteps(duration);
+  const ticks: { t: number; big: boolean }[] = [];
+  const n = Math.floor(duration / minor + 1e-6);
+  for (let i = 0; i <= n; i++) {
+    const t = i * minor;
+    ticks.push({ t, big: Math.abs(t / major - Math.round(t / major)) < 1e-6 });
+  }
+  return (
+    <div className="ruler" onPointerDown={onPointerDown} aria-hidden="true">
+      {ticks.map(({ t, big }) => (
+        <span key={t} className={`tick ${big ? "big" : ""}`} style={{ left: `${(t / duration) * 100}%` }}>
+          {/* Skip a label that would crowd the clip's end. */}
+          {big && (duration - t) / duration > 0.04 && <em>{rulerLabel(t)}</em>}
+        </span>
+      ))}
+      <span className="tick big end" style={{ left: "100%" }}>
+        <em>{rulerLabel(duration)}</em>
+      </span>
+    </div>
+  );
+}
 
 /** The app window, or null in the browser preview. */
 function appWindow() {
@@ -165,9 +236,11 @@ export function Studio({
   onDelete,
   settings,
   update,
+  onBack,
 }: {
   path: string | null;
   clips: ClipFile[] | null;
+  onBack: () => void;
   onOpen: (path: string) => void;
   onDone: () => void;
   onDelete: (paths: string[]) => Promise<boolean>;
@@ -402,11 +475,12 @@ export function Studio({
       } else if (e.key === "m" || e.key === "M") toggleMute();
       else if ((e.key === "f" || e.key === "F") && !e.ctrlKey && !e.altKey) toggleFullscreen();
       else if (e.key === "Escape" && fullscreen) setFullscreen(false);
+      else if (e.key === "Escape" && !document.querySelector(".modal-backdrop")) onBack();
       else if ((e.key === "t" || e.key === "T") && !e.ctrlKey && !e.altKey && !fullscreen) toggleTheater();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [path, toggle, seek, volume, setVolume, toggleMute, toggleFullscreen, toggleTheater, fullscreen]);
+  }, [path, toggle, seek, volume, setVolume, toggleMute, toggleFullscreen, toggleTheater, fullscreen, onBack]);
 
   // Dragging on the timeline: handles move in/out, anywhere else scrubs.
   const drag = (kind: "in" | "out" | "seek") => (e: React.PointerEvent) => {
@@ -518,6 +592,12 @@ export function Studio({
   return (
     <div className="studio">
       <div className="studio-top">
+        <button className="btn back" onClick={onBack} title="Back to your clips (Esc)">
+          <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M10 3 5 8l5 5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          Clips
+        </button>
         <div className="studio-title" style={{ flex: 1 }} title={path}>
           {name}
         </div>
@@ -657,17 +737,19 @@ export function Studio({
             )}
           </div>
           <div className="transport">
-            <button className="round" aria-label="Back 5 seconds" onClick={() => seek(time - 5)}>
-              «
-            </button>
-            <button className="round play" aria-label={playing ? "Pause" : "Play"} onClick={toggle}>
-              {playing ? "❚❚" : "▶"}
-            </button>
-            <button className="round" aria-label="Forward 5 seconds" onClick={() => seek(time + 5)}>
-              »
-            </button>
-            <span className="mono">
-              {fmtTime(time)} / {fmtTime(duration)}
+            <span className="transport-pill">
+              <button className="round icon" aria-label="Back 5 seconds" title="Back 5 s (←)" onClick={() => seek(time - 5)}>
+                {Icon.back5}
+              </button>
+              <button className="round play" aria-label={playing ? "Pause" : "Play"} title="Play / pause (Space)" onClick={toggle}>
+                {playing ? Icon.pause : Icon.play}
+              </button>
+              <button className="round icon" aria-label="Forward 5 seconds" title="Forward 5 s (→)" onClick={() => seek(time + 5)}>
+                {Icon.fwd5}
+              </button>
+            </span>
+            <span className="mono time-readout">
+              {fmtTime(time)} <span className="muted">/ {fmtTime(duration)}</span>
             </span>
             <div className="volume" role="group" aria-label="Volume">
               <button
@@ -691,15 +773,19 @@ export function Studio({
               </span>
             </div>
             <span style={{ flex: 1 }} />
-            <button className="btn small" onClick={() => setRange(([, y]) => [Math.min(time, y - 0.1), y])}>
-              Set start (I)
-            </button>
-            <button className="btn small" onClick={() => setRange(([x]) => [x, Math.max(time, x + 0.1)])}>
-              Set end (O)
-            </button>
-            <button className="btn small" onClick={() => setRange([0, duration])}>
-              Reset
-            </button>
+            <span className="transport-pill">
+              <button className="btn pill" title="Start the trim here (I)" onClick={() => setRange(([, y]) => [Math.min(time, y - 0.1), y])}>
+                {Icon.markIn}
+                Start
+              </button>
+              <button className="btn pill" title="End the trim here (O)" onClick={() => setRange(([x]) => [x, Math.max(time, x + 0.1)])}>
+                {Icon.markOut}
+                End
+              </button>
+              <button className="round icon" aria-label="Reset trim" title="Use the whole clip" onClick={() => setRange([0, duration])}>
+                {Icon.reset}
+              </button>
+            </span>
           </div>
           <div className="timeline" ref={bar} onPointerDown={drag("seek")}>
             <div className="tl-range" style={{ left: pct(a), width: `calc(${pct(b)} - ${pct(a)})` }}>
@@ -708,6 +794,7 @@ export function Studio({
             </div>
             <div className="tl-head" style={{ left: pct(time) }} />
           </div>
+          <Ruler duration={duration} onPointerDown={drag("seek")} />
           <div className="tl-foot">
             <span className="mono">
               Start {fmtTime(a)} · End {fmtTime(b)} · Length {fmtTime(Math.max(0, b - a))}
