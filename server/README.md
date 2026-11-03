@@ -93,12 +93,17 @@ Thumbnails and phone versions go in the `/cache` volume. Phone versions are capp
 The page shows the running version when you hover over the Rewind logo, and so does
 `http://<nas-ip>:8420/healthz`. It's the Git commit the image was built from.
 
-New images are published when `server/` changes on GitHub. TrueNAS only downloads an image the
-first time, so to update, run this in **System → Shell**, then restart the app:
+A new image is published whenever `server/` changes on GitHub. Each one is tagged `latest` and
+`sha-<commit>`, for example `sha-0ad8517`. The tags are listed on the
+[package page](https://github.com/aattiaibrahim/Rewind/pkgs/container/rewind-server).
 
-```bash
-docker pull ghcr.io/aattiaibrahim/rewind-server:latest
-```
+TrueNAS only downloads an image it doesn't already have, so it won't fetch a newer `latest` on its
+own. To update, open the app's **Edit**, change the image to the new `sha-…` tag and save.
+TrueNAS downloads that image and restarts the app; the cache is kept. Going back is the same:
+put the old tag back.
+
+If you'd rather stay on `latest`, run `sudo docker pull ghcr.io/aattiaibrahim/rewind-server:latest`
+in **System → Shell**, then restart the app.
 
 ## Settings
 
