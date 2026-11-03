@@ -32,6 +32,7 @@ export type Settings = {
   streamableEmail: string;
   discordWebhookName: string;
   confirmUploads: boolean;
+  healthCheck: boolean;
   startMinimized: boolean;
   keepOriginalAfterRemux: boolean;
   replaceOriginalOnEdit: boolean;
@@ -180,6 +181,14 @@ export type NasState = {
 
 export type ClipFolder = { label: string; path: string; exists: boolean };
 
+export type Health = {
+  state: "ok" | "damaged" | "unreadable";
+  damaged: [number, number][];
+  best: [number, number] | null;
+  duration: number;
+};
+export type HealthProgress = { checked: number; total: number; damaged: number; paused: boolean; running: boolean };
+
 export type UploadHost = "catbox" | "litterbox" | "discord" | "streamable";
 export const UPLOAD_HOSTS: { id: UploadHost; label: string; hint: string }[] = [
   { id: "catbox", label: "Catbox", hint: "Free, no account, keeps the clip. Plays inside Discord. Up to 200 MB." },
@@ -306,6 +315,9 @@ export const api = {
   setSecret: (name: "discord_webhook" | "streamable_password", value: string) =>
     invoke<{ name: string; channelId: string } | null>("set_secret", { name, value }),
   checkSharing: () => invoke<[UploadHost, Reach[]][]>("check_sharing"),
+  clipHealth: (paths: string[]) => invoke<Record<string, Health>>("clip_health", { paths }),
+  healthProgress: () => invoke<HealthProgress>("health_progress"),
+  rescueClip: (path: string) => invoke<string>("rescue_clip", { path }),
   secretsSet: () => invoke<{ discordWebhook: boolean; streamablePassword: boolean }>("secrets_set"),
   syncNasNow: () => invoke<void>("sync_nas_now"),
   recorderClipFolders: () => invoke<ClipFolder[]>("recorder_clip_folders"),

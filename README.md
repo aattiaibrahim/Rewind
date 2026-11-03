@@ -56,7 +56,8 @@
 - **Tray icon shows a red dot** while capturing, like OBS.
 - **Save clip hotkey** (default `Alt+F10`). Clips from a detected game go to `Videos\Rewind\<Game>\`; everything else goes to `Videos\Rewind\Desktop\`.
 - **Full recording** (default `Alt+F9`, or the Record buttons). It reuses the same capture, so there's no second encoder. A crash mid-recording is recovered on the next start, and recording stops by itself if the disk drops below 1.5 GB free.
-- **Game detection**: known game exes, game-library installs (Steam, Epic, Riot, Xbox, GOG, Ubisoft, EA, Rockstar, Battle.net) and fullscreen apps. Browsers, Discord, launchers and so on count as Desktop.
+- **Clip health check**: finds clips that won't play properly (common with NVIDIA and OBS MP4s after a driver hiccup or crash), marks them in the library, and rescues the good part into a new file without re-encoding. It runs only while no game is in front, on the GPU's video decoder, and stops the moment a game starts.
+- **Game detection**: known game exes, game-library installs (Steam, Epic, Riot, Xbox, GOG, Ubisoft, EA, Rockstar, Battle.net) and fullscreen apps. Browsers, Discord, launchers and so on count as Desktop. Steam and Epic games get their store names, and a clip saved while you're tabbed out of a game that's still running goes to that game.
 - **Capture always runs at below-normal CPU priority**, so games get the CPU first.
 - **Win+P safe capture**: the monitor is re-picked within about 1 s after Win+P, a resolution change or a monitor being plugged in. Modes: follow primary, follow cursor, or one fixed monitor.
 - **Tray app**: left-click opens a quick flyout (save 30 s / 60 s / full, monitor mode, last clips); right-click shows a menu. Closing the window keeps it running in the tray.

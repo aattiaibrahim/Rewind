@@ -1,9 +1,10 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { api, ClipFile, codecLabel, errText, fmtDuration, fmtSize, Probe, Upload, UploadProgress, VIDEO_EXTENSIONS } from "./api";
+import { api, ClipFile, codecLabel, errText, fmtDuration, fmtSize, Health, Probe, Upload, UploadProgress, VIDEO_EXTENSIONS } from "./api";
 import { useThumb } from "./hooks";
 import { liveLink, progressText, ShareRequest, timeLeft } from "./Share";
 import { Timeline } from "./Timeline";
+import { damagedText } from "./Health";
 
 /** Where the library was scrolled to, kept while you're in Studio (the page itself unmounts). */
 const memory = { scroll: 0, folder: "All", query: "" };
@@ -40,12 +41,14 @@ function ClipCard({
   upload,
   link,
   onShare,
+  damage,
   returned,
 }: {
   upload?: UploadProgress;
   /** Its newest link that still works */
   link: Upload | null;
   onShare: () => void;
+  damage?: Health;
   /** The clip you just came back from: briefly highlighted */
   returned: boolean;
   clip: ClipFile;
@@ -140,6 +143,11 @@ function ClipCard({
         </div>
         {/* Status that matters at a glance stays visible; the rest shows on hover, like Immich. */}
         <div className="card-tags">
+          {damage && damage.state !== "ok" && (
+            <span className="src-tag bad" title={damagedText(damage)}>
+              ⚠ Damaged
+            </span>
+          )}
           {upload && (
             <span className={`src-tag ${upload.stage === "error" ? "bad" : "ok"}`} title={upload.error ?? undefined}>
               {progressText(upload)}
@@ -190,7 +198,9 @@ export function Library({
   links,
   focusPath,
   onShare,
+  health,
 }: {
+  health?: Record<string, Health>;
   onShare?: (r: ShareRequest) => void;
   /** The clip last opened in Studio: scrolled back to and highlighted */
   focusPath?: string | null;
@@ -466,6 +476,7 @@ export function Library({
                     onChanged={onChanged}
                     upload={uploads?.[c.path]}
                     link={liveLink(links?.[c.path])}
+                    damage={health?.[c.path]}
                     onShare={() => onShare?.({ path: c.path })}
                     returned={c.path === returnedTo}
                   />

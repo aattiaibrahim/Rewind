@@ -2,9 +2,10 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, ClipFile, codecLabel, errText, fmtSize, fmtTime, PreviewAudio, Probe, Settings, Upload, UploadProgress } from "./api";
+import { api, ClipFile, codecLabel, errText, fmtSize, fmtTime, Health, PreviewAudio, Probe, Settings, Upload, UploadProgress } from "./api";
 import { useThumb } from "./hooks";
 import { SharePanel, ShareRequest } from "./Share";
+import { HealthNotice } from "./Health";
 import { Slider } from "./Slider";
 
 type Job = { label: string } | null;
@@ -241,7 +242,11 @@ export function Studio({
   uploads,
   links,
   onShare,
+  health,
+  onRescued,
 }: {
+  health?: Health;
+  onRescued?: (path: string) => void;
   onShare?: (r: ShareRequest) => void;
   uploads?: Record<string, UploadProgress>;
   links?: Record<string, Upload[]>;
@@ -888,6 +893,7 @@ export function Studio({
               ))}
             </>
           )}
+          <HealthNotice path={path} health={health} onRescued={(p) => onRescued?.(p)} />
           <div className="label">Share</div>
           <SharePanel path={path} settings={settings} progress={uploads?.[path]} links={links?.[path]} onShare={(r) => onShare?.(r)} />
           <div className="label">This file only</div>

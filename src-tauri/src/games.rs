@@ -99,14 +99,46 @@ pub fn classify(exe_path: &str, window_title: &str, fullscreen: bool) -> Option<
     }
     if fullscreen {
         let t = window_title.trim();
-        if !t.is_empty() && t.chars().count() <= 60 {
+        if !t.is_empty() && t.chars().count() <= 60 && !looks_like_exe(t) {
             return Some(t.to_string());
         }
-        return Some(clean_exe_name(&stem));
+        // No usable title: name it after the program, tidied up, keeping its
+        // original capitals ("SpeciesUnknown-Win64-Shipping" → "Species Unknown").
+        let original = if looks_like_exe(t) {
+            t.to_string()
+        } else {
+            path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()
+        };
+        return Some(nice_name(&clean_exe_name(&original.to_lowercase()), &original));
     }
     None
 }
 
+/// "SpeciesUnknown-Win64-Shipping", "MyGame_x64": a program name, not a title.
+fn looks_like_exe(t: &str) -> bool {
+    !t.contains(' ') && ["-win64", "-shipping", "_x64", "_dx12", "_dx11", "-win32"].iter().any(|s| t.to_lowercase().contains(s))
+}
+
+/// Recover the capitals and spaces from the original spelling: "SpeciesUnknown" → "Species Unknown".
+fn nice_name(cleaned_lower: &str, original: &str) -> String {
+    let orig: String = original.chars().take(cleaned_lower.chars().count()).collect();
+    let mut out = String::new();
+    let mut prev_lower = false;
+    for ch in orig.chars() {
+        if ch == '_' || ch == '-' {
+            out.push(' ');
+            prev_lower = false;
+            continue;
+        }
+        if ch.is_uppercase() && prev_lower {
+            out.push(' ');
+        }
+        prev_lower = ch.is_lowercase() || ch.is_ascii_digit();
+        out.push(ch);
+    }
+    let out = out.split_whitespace().collect::<Vec<_>>().join(" ");
+    if out.is_empty() { cleaned_lower.to_string() } else { out }
+}
 fn clean_exe_name(stem: &str) -> String {
     let mut name = stem.to_string();
     for suffix in ["-win64-shipping", "-win64", "_x64", "-shipping", "_dx12", "_dx11"] {
@@ -133,27 +165,156 @@ pub fn folder_name(name: &str) -> String {
     }
 }
 
-/// The game in front right now, if any.
+/// The game in front right now, if any (store names preferred, see `detect`).
 pub fn foreground_game() -> Option<String> {
-    let (path, title, fullscreen) = foreground_info()?;
-    classify(&path, &title, fullscreen)
+    let (path, title, fullscreen, _) = foreground_info()?;
+    detect(&path, &title, fullscreen)
+}
+
+/// `classify`, but a Steam or Epic game gets the name its store shows
+/// ("Counter-Strike 2", not the install folder's "Counter-Strike Global Offensive").
+pub fn detect(exe_path: &str, title: &str, fullscreen: bool) -> Option<String> {
+    let base = classify(exe_path, title, fullscreen)?;
+    let known = KNOWN.iter().any(|(_, n)| *n == base);
+    Some(if known { base } else { store::name_for(exe_path).unwrap_or(base) })
+}
+
+/// The last game seen in front, so a clip saved while you're tabbed out (to
+/// Discord, a browser…) still goes to the game you were playing.
+struct Seen {
+    game: String,
+    pid: u32,
+    at: std::time::Instant,
+}
+static LAST: std::sync::Mutex<Option<Seen>> = std::sync::Mutex::new(None);
+/// How long after you leave a game it still counts (while it's still running).
+const STICKY: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+/// Look at the window in front (cheap: a few Windows calls). Called every couple of seconds.
+pub fn observe() {
+    if let Some((path, title, fullscreen, pid)) = foreground_info()
+        && let Some(game) = detect(&path, &title, fullscreen)
+    {
+        *LAST.lock().unwrap() = Some(Seen { game, pid, at: std::time::Instant::now() });
+    }
+}
+
+fn still_running(pid: u32) -> bool {
+    use windows::Win32::System::Threading::GetExitCodeProcess;
+    unsafe {
+        let Ok(h) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else { return false };
+        let mut code = 0u32;
+        let ok = GetExitCodeProcess(h, &mut code).is_ok();
+        let _ = CloseHandle(h);
+        ok && code == 259 // STILL_ACTIVE
+    }
+}
+
+/// The game for a clip saved now: the one in front, or the one you were just
+/// playing if it's still running (you alt-tabbed); else "Desktop".
+pub fn current_game() -> Option<String> {
+    if let Some(g) = foreground_game() {
+        return Some(g);
+    }
+    let last = LAST.lock().unwrap();
+    let s = last.as_ref()?;
+    (s.at.elapsed() < STICKY && still_running(s.pid)).then(|| s.game.clone())
 }
 
 /// Clip folder for right now: the game's name, or "Desktop".
 pub fn clip_folder() -> String {
-    foreground_game().map(|g| folder_name(&g)).unwrap_or_else(|| DESKTOP_FOLDER.into())
+    current_game().map(|g| folder_name(&g)).unwrap_or_else(|| DESKTOP_FOLDER.into())
 }
 
-fn foreground_info() -> Option<(String, String, bool)> {
+/// Proper game names from the stores' own install records, read once and cached.
+mod store {
+    use std::collections::HashMap;
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    struct Cache {
+        /// steamapps folder (lowercase) → installdir (lowercase) → name
+        steam: HashMap<String, HashMap<String, String>>,
+        /// install location (lowercase, no trailing slash) → display name
+        epic: Vec<(String, String)>,
+        loaded: Option<Instant>,
+    }
+    static CACHE: Mutex<Option<Cache>> = Mutex::new(None);
+
+    /// `"key"   "value"` lines of a Steam .acf file.
+    pub fn acf_value(text: &str, key: &str) -> Option<String> {
+        text.lines().find_map(|l| {
+            let mut parts = l.split('"').filter(|s| !s.trim().is_empty());
+            (parts.next()? == key).then(|| parts.next().map(str::to_string)).flatten()
+        })
+    }
+
+    fn steam_names(steamapps: &Path) -> HashMap<String, String> {
+        let mut m = HashMap::new();
+        for e in std::fs::read_dir(steamapps).into_iter().flatten().flatten() {
+            let n = e.file_name().to_string_lossy().to_lowercase();
+            if n.starts_with("appmanifest_") && n.ends_with(".acf")
+                && let Ok(t) = std::fs::read_to_string(e.path())
+                && let (Some(dir), Some(name)) = (acf_value(&t, "installdir"), acf_value(&t, "name"))
+            {
+                m.insert(dir.to_lowercase(), name);
+            }
+        }
+        m
+    }
+
+    fn epic_names() -> Vec<(String, String)> {
+        let dir = PathBuf::from(std::env::var("ProgramData").unwrap_or_else(|_| r"C:\ProgramData".into())).join(r"Epic\EpicGamesLauncher\Data\Manifests");
+        std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.path().extension().is_some_and(|x| x.eq_ignore_ascii_case("item")))
+            .filter_map(|e| {
+                let j: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(e.path()).ok()?).ok()?;
+                let loc = j["InstallLocation"].as_str()?.trim_end_matches(['\\', '/']).to_lowercase();
+                Some((loc, j["DisplayName"].as_str()?.to_string()))
+            })
+            .collect()
+    }
+
+    pub fn name_for(exe_path: &str) -> Option<String> {
+        let lower = exe_path.to_lowercase();
+        let mut guard = CACHE.lock().unwrap();
+        let c = guard.get_or_insert_with(|| Cache { steam: HashMap::new(), epic: Vec::new(), loaded: None });
+        // Re-read at most every 10 minutes (a game installed since then gets picked up).
+        if c.loaded.map(|t| t.elapsed() > Duration::from_secs(600)).unwrap_or(true) {
+            c.steam.clear();
+            c.epic = epic_names();
+            c.loaded = Some(Instant::now());
+        }
+        if let Some(i) = lower.find(r"\steamapps\common\") {
+            let steamapps = lower[..i + r"\steamapps".len()].to_string();
+            let install = lower[i + r"\steamapps\common\".len()..].split('\\').next()?.to_string();
+            if !c.steam.contains_key(&steamapps) {
+                let names = steam_names(Path::new(&exe_path[..i + r"\steamapps".len()]));
+                c.steam.insert(steamapps.clone(), names);
+            }
+            if let Some(n) = c.steam.get(&steamapps).and_then(|m| m.get(&install)) {
+                return Some(n.clone());
+            }
+        }
+        c.epic.iter().find(|(loc, _)| !loc.is_empty() && lower.starts_with(&format!("{loc}\\"))).map(|(_, n)| n.clone())
+    }
+}
+
+fn foreground_info() -> Option<(String, String, bool, u32)> {
     unsafe {
         let hwnd = GetForegroundWindow();
         if hwnd.0.is_null() {
             return None;
         }
-        Some((exe_path(hwnd)?, window_title(hwnd), is_fullscreen(hwnd)))
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        Some((exe_path(hwnd)?, window_title(hwnd), is_fullscreen(hwnd), pid))
     }
 }
-
 unsafe fn exe_path(hwnd: HWND) -> Option<String> {
     let mut pid = 0u32;
     unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
@@ -233,5 +394,26 @@ mod tests {
         assert_eq!(folder_name("  ...  "), "Desktop");
         assert_eq!(folder_name("CON"), "Desktop");
         assert_eq!(folder_name("Halo?"), "Halo");
+    }
+
+    #[test]
+    fn exe_style_titles_become_readable_names() {
+        let p = r"C:\Games\SpeciesUnknown\SpeciesUnknown-Win64-Shipping.exe";
+        assert_eq!(classify(p, "SpeciesUnknown-Win64-Shipping", true).as_deref(), Some("Species Unknown"));
+        assert_eq!(classify(r"C:\Games\x\cool_game_x64.exe", "", true).as_deref(), Some("cool game"));
+    }
+
+    #[test]
+    fn steam_manifest_names_are_read() {
+        let acf = "\"AppState\"\n{\n\t\"appid\"\t\t\"730\"\n\t\"name\"\t\t\"Counter-Strike 2\"\n\t\"installdir\"\t\t\"Counter-Strike Global Offensive\"\n}";
+        assert_eq!(store::acf_value(acf, "name").as_deref(), Some("Counter-Strike 2"));
+        assert_eq!(store::acf_value(acf, "installdir").as_deref(), Some("Counter-Strike Global Offensive"));
+        let d = std::env::temp_dir().join(format!("rewind-steam-{}", std::process::id()));
+        let apps = d.join("steamapps");
+        std::fs::create_dir_all(apps.join(r"common\Counter-Strike Global Offensive\game\bin\win64")).unwrap();
+        std::fs::write(apps.join("appmanifest_730.acf"), acf).unwrap();
+        let exe = apps.join(r"common\Counter-Strike Global Offensive\game\bin\win64\notcs2.exe");
+        assert_eq!(detect(&exe.to_string_lossy(), "", false).as_deref(), Some("Counter-Strike 2"));
+        let _ = std::fs::remove_dir_all(d);
     }
 }

@@ -69,6 +69,8 @@ pub struct Settings {
     pub discord_webhook_name: String,
     /// Ask before uploading (a link is public to anyone who has it)
     pub confirm_uploads: bool,
+    /// Check clips for damage in the background (only while no game is in front)
+    pub health_check: bool,
 }
 
 impl Default for Settings {
@@ -113,6 +115,7 @@ impl Default for Settings {
             streamable_email: String::new(),
             discord_webhook_name: String::new(),
             confirm_uploads: true,
+            health_check: true,
         }
     }
 }

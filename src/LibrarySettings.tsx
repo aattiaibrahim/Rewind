@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useState } from "react";
 import { api, ClipFolder, errText, fmtSize, LastMove, MovePlan, NasState, Settings } from "./api";
 import { ConfirmDialog } from "./ConfirmUpdate";
+import { HealthSetting } from "./Health";
 
 type MoveJob = { folders: string[]; plan: MovePlan | null; running: boolean; done: number; total: number };
 
@@ -172,6 +173,7 @@ export function LibrarySettings({
         </label>
       )}
 
+      <HealthSetting on={s.healthCheck} set={(v) => set({ healthCheck: v })} Toggle={Toggle} />
       <div className="setting">
         <span>
           Clips from other recorders

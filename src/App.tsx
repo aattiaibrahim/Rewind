@@ -1,6 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ShareConfirm, ShareRequest, useUploads } from "./Share";
+import { useHealth } from "./Health";
 import type { UploadProgress } from "./api";
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
@@ -30,6 +31,7 @@ export default function App() {
   useAppearance(settings);
   const [clips, refresh] = useClips();
   const uploads = useUploads();
+  const health = useHealth(clips);
   const [shareReq, setShareReq] = useState<ShareRequest | null>(null);
   const upd = useUpdate();
   const [installing, setInstalling] = useState(false);
@@ -259,6 +261,7 @@ export default function App() {
             links={uploads.history}
             focusPath={studioPath}
             onShare={requestShare}
+            health={health}
           />
         )}
         {view === "studio" && (
@@ -274,6 +277,12 @@ export default function App() {
             uploads={uploads.progress}
             links={uploads.history}
             onShare={requestShare}
+            health={health[studioPath ?? ""]}
+            onRescued={(p) => {
+              refresh();
+              openInStudio(p);
+              toast("Rescued the good part", false, p.split("\\").pop());
+            }}
           />
         )}
         {view === "performance" && <Performance />}

@@ -5,6 +5,7 @@ mod control;
 mod engine;
 mod ffmpeg;
 mod games;
+mod health;
 mod library;
 mod monitors;
 mod nas;
@@ -576,6 +577,33 @@ fn secrets_set(app: AppHandle) -> Result<SecretsSet, String> {
     Ok(SecretsSet { discord_webhook: secrets::is_set(&f, "discord_webhook"), streamable_password: secrets::is_set(&f, "streamable_password") })
 }
 
+// ---------- Clip health ----------
+
+/// Health results for these clips (only ones already checked and unchanged).
+#[tauri::command]
+fn clip_health(app: AppHandle, paths: Vec<String>) -> Result<std::collections::BTreeMap<String, health::Health>, String> {
+    Ok(health::results(&data_file(&app, "health.json")?, &paths))
+}
+
+#[tauri::command]
+fn health_progress() -> health::Progress {
+    health::progress()
+}
+
+/// Save the longest undamaged part of a damaged clip as "<name> (rescued)", copied untouched.
+#[tauri::command]
+async fn rescue_clip(app: AppHandle, path: String) -> Result<String, String> {
+    let cache = data_file(&app, "health.json")?;
+    let out = blocking(move || {
+        let h = health::results(&cache, std::slice::from_ref(&path)).remove(&path).ok_or("Check the clip first.")?;
+        let (a, b) = h.best.ok_or("There's no undamaged part long enough to keep.")?;
+        health::rescue(&path, a, b)
+    })
+    .await?;
+    let _ = app.emit("clips-changed", ());
+    Ok(out)
+}
+
 /// Medal / OBS / NVIDIA clip folders found on this PC.
 #[tauri::command]
 async fn recorder_clip_folders() -> Result<Vec<bench::recorders::ClipFolder>, String> {
@@ -866,6 +894,34 @@ pub fn run() {
             app.manage(updater::Updates::default());
             updater::start(handle.clone());
             nas::start(handle.clone());
+            // Remember the game you're playing, so a clip saved while tabbed out still goes to it.
+            thread::spawn(|| loop {
+                games::observe();
+                thread::sleep(Duration::from_secs(2));
+            });
+            // Clip health check: one clip at a time, only while the PC is free.
+            if let Ok(cache) = data_file(&handle, "health.json") {
+                let (h1, h2, h3, h4) = (handle.clone(), handle.clone(), handle.clone(), handle.clone());
+                health::start(
+                    cache,
+                    move || {
+                        let s = settings_of(&h1);
+                        let linked = linked_roots(&s);
+                        library::scan_all(PathBuf::from(&s.clips_dir).as_path(), &s.external_files, &[], &linked, &s.nas_dir)
+                            .into_iter()
+                            .map(|c| c.path)
+                            .collect()
+                    },
+                    move || settings_of(&h2).health_check,
+                    move || {
+                        let st = h3.state::<AppState>();
+                        games::foreground_game().is_some() || st.engine.is_recording() || engine::saves_in_progress() > 0 || bench::run::is_running()
+                    },
+                    move || {
+                        let _ = h4.emit("clips-changed", ());
+                    },
+                );
+            }
             control::start(handle.clone());
 
             if let Err(e) = apply_hotkeys(&handle, &s.hotkey, &s.record_hotkey) {
@@ -1022,6 +1078,9 @@ pub fn run() {
             set_secret,
             secrets_set,
             check_sharing,
+            clip_health,
+            health_progress,
+            rescue_clip,
             plan_move_into_rewind,
             move_into_rewind,
             last_move,
