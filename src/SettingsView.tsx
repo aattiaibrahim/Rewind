@@ -1,7 +1,8 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Accent, api, bufferEstimateMb, errText, Monitor, Settings, Theme } from "./api";
+import { ConfirmDialog } from "./ConfirmUpdate";
 import { useUpdate } from "./hooks";
 
 function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
@@ -78,15 +79,21 @@ export function SettingsView({
   settings,
   update,
   onError,
+  onInstall,
+  installing,
 }: {
   settings: Settings;
   update: (p: Partial<Settings>) => Promise<void>;
   onError: (msg: string) => void;
+  onInstall: () => void;
+  installing: boolean;
 }) {
   const [monitors, setMonitors] = useState<Monitor[]>([]);
   const [mics, setMics] = useState<string[]>([]);
   const upd = useUpdate();
   const [checking, setChecking] = useState(false);
+  const [askRamOff, setAskRamOff] = useState(false);
+  const keepRam = useCallback(() => setAskRamOff(false), []);
   const checkNow = async () => {
     setChecking(true);
     try {
@@ -104,7 +111,7 @@ export function SettingsView({
       case "downloading":
         return `Downloading ${upd.version}…`;
       case "ready":
-        return `Version ${upd.version} is ready. It installs when Rewind restarts.`;
+        return `Version ${upd.version} is downloaded. It installs when Rewind restarts.`;
       case "available":
         return `Version ${upd.version} is available.`;
       case "up-to-date":
@@ -208,27 +215,48 @@ export function SettingsView({
             <Toggle label="Start in tray" checked={s.startMinimized} onChange={(v) => set({ startMinimized: v })} />
           </label>
           <label className="setting">
-            <span>
-              Update automatically
-              <small>Downloads in the background. Never installs during a recording or while a game is open.</small>
-            </span>
-            <Toggle label="Update automatically" checked={s.autoUpdate} onChange={(v) => set({ autoUpdate: v })} />
-          </label>
-          <div className="setting">
-            <span>
-              Version {upd?.current ?? "…"}
-              <small>{updateLine}</small>
-            </span>
-            <button className="btn small" disabled={checking || upd?.stage === "downloading"} onClick={checkNow}>
-              {checking ? "Checking…" : "Check now"}
-            </button>
-          </div>
-          <label className="setting">
             <span>Replay buffer</span>
             <Toggle label="Replay buffer on" checked={s.bufferEnabled} onChange={(v) => set({ bufferEnabled: v })} />
           </label>
           <HotkeyInput label="Save clip hotkey" value={s.hotkey} onPick={(hk) => set({ hotkey: hk })} />
           <HotkeyInput label="Start / stop recording hotkey" value={s.recordHotkey} onPick={(hk) => set({ recordHotkey: hk })} />
+        </section>
+
+        <section className="group">
+          <h2>Updates</h2>
+          <div className="setting">
+            <span>
+              <span className="version-line">
+                Rewind <strong className="mono">{upd?.current ?? "…"}</strong>
+              </span>
+              <small>{updateLine}</small>
+            </span>
+            <span className="row" style={{ flexWrap: "nowrap", flexShrink: 0 }}>
+              {(upd?.stage === "ready" || upd?.stage === "available") && (
+                <button className="btn small primary" disabled={installing} onClick={onInstall}>
+                  {installing ? "Updating…" : "Restart to update"}
+                </button>
+              )}
+              <button className="btn small" disabled={checking || upd?.stage === "downloading"} onClick={checkNow}>
+                {checking ? "Checking…" : "Check now"}
+              </button>
+            </span>
+          </div>
+          {upd?.notes && (upd.stage === "ready" || upd.stage === "available") && (
+            <p className="update-notes">
+              <strong>What's new in {upd.version}:</strong> {upd.notes}
+            </p>
+          )}
+          <label className="setting">
+            <span>
+              Update automatically
+              <small>
+                Downloads in the background and installs when Rewind closes. Never restarts on its own during a recording
+                or while a game is open.
+              </small>
+            </span>
+            <Toggle label="Update automatically" checked={s.autoUpdate} onChange={(v) => set({ autoUpdate: v })} />
+          </label>
         </section>
 
         <section className="group">
@@ -310,8 +338,35 @@ export function SettingsView({
                   : `Uses about ${bufferEstimateMb(s)} MB on disk and rewrites it constantly.`}
               </small>
             </span>
-            <Toggle label="Buffer in RAM" checked={s.bufferInRam} onChange={(v) => set({ bufferInRam: v })} />
+            {/* Turning RAM off moves the buffer to the SSD and rewrites it non-stop: ask first. */}
+            <Toggle
+              label="Buffer in RAM"
+              checked={s.bufferInRam}
+              onChange={(v) => (v ? set({ bufferInRam: true }) : setAskRamOff(true))}
+            />
           </label>
+          {askRamOff && (
+            <ConfirmDialog
+              title="Move the replay buffer to your SSD?"
+              confirmLabel="Use disk"
+              cancelLabel="Keep it in RAM"
+              danger
+              onConfirm={() => {
+                setAskRamOff(false);
+                set({ bufferInRam: false });
+              }}
+              onCancel={keepRam}
+            >
+              <ul className="modal-list wrap">
+                <li>
+                  Rewind would write about {bufferEstimateMb(s)} MB to disk over and over the whole time it runs, which
+                  wears out your SSD over the years.
+                </li>
+                <li>The capture restarts, so what's in the replay buffer now is cleared.</li>
+                <li>Only worth it for very long buffers that don't fit in your memory.</li>
+              </ul>
+            </ConfirmDialog>
+          )}
           {s.bufferInRam && bufferEstimateMb(s) > 4000 && (
             <div className="err-text" style={{ padding: "4px 0" }}>
               That's a lot of memory for one buffer. Consider a shorter replay, or turn RAM off for very long buffers.

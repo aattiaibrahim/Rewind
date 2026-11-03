@@ -2,7 +2,7 @@
 
 A lightweight replay-buffer clipper for Windows that records on your NVIDIA GPU (NVENC), with a built-in trimmer that opens any video on your PC.
 
-**[Download the latest installer](https://github.com/aattiaibrahim/Rewind/releases/latest)**. It needs Windows 10/11 and an NVIDIA GTX 10-series or newer (AV1 needs an RTX 40/50). The installer isn't code-signed yet, so Windows SmartScreen may warn you: click **More info → Run anyway**.
+**[Download the latest installer](https://github.com/aattiaibrahim/Rewind/releases/latest)**. It needs Windows 10/11 and an NVIDIA GTX 10-series or newer (AV1 needs an RTX 40/50). The installer isn't code-signed yet, so Windows SmartScreen may warn you: click **More info â†’ Run anyway**.
 
 ## What works now
 
@@ -23,11 +23,11 @@ A lightweight replay-buffer clipper for Windows that records on your NVIDIA GPU 
 
 - **Audio**: desktop sound (WASAPI loopback, track 1) and the microphone (mono by default, track 2), both on by default. Synced to video within about 10 ms. Exports and compresses mix both tracks into one.
 - **Replace original** option: trims, exports and compresses overwrite the edited file, and the old one goes to the Recycle Bin.
-- **Performance test** (Performance page): compares your game's FPS, 1% lows and GPU time per frame with nothing recording vs Rewind, OBS replay buffer, NVIDIA Instant Replay and Medal. After a warm-up, runs alternate nothing → recorder → nothing over several rounds in a shuffled order; each recorder is compared with the runs either side of it, and results carry 95% confidence ranges, so differences inside the game's own noise are reported as "no measurable cost". Every run is checked (game in front, the right recorder encoding, nothing else encoding), and it warns about drift, V-Sync, FPS caps, CPU-bound scenes and recorders set to a different resolution, FPS or buffer length. Frame times come from Intel PresentMon.
+- **Performance test** (Performance page): compares your game's FPS, 1% lows and GPU time per frame with nothing recording vs Rewind, OBS replay buffer, NVIDIA Instant Replay and Medal. After a warm-up, runs alternate nothing â†’ recorder â†’ nothing over several rounds in a shuffled order; each recorder is compared with the runs either side of it, and results carry 95% confidence ranges, so differences inside the game's own noise are reported as "no measurable cost". Every run is checked (game in front, the right recorder encoding, nothing else encoding), and it warns about drift, V-Sync, FPS caps, CPU-bound scenes and recorders set to a different resolution, FPS or buffer length. Frame times come from Intel PresentMon.
 
 ## Not yet
 
-- Per-game profiles, per-app audio tracks, the in-game overlay, a multi-track editor (text, merge), HDR tone-mapping, and auto-update.
+- Per-game profiles, per-app audio tracks, the in-game overlay, a multi-track editor (text, merge), and HDR tone-mapping.
 
 ## How it works (native engine, default)
 
@@ -37,11 +37,11 @@ The pipeline works the same way OBS's does. Everything stays on the NVIDIA GPU, 
 2. **The D3D11 Video Processor** converts and resizes it to NV12 on the GPU, at any output size including 4K and 720p.
 3. **NVENC, called directly** (`src-tauri/src/native/nvenc.rs`), encodes AV1/HEVC/H.264 with constant quality and a keyframe every second.
 4. Encoded packets go into a **RAM ring**, stamped on the shared high-precision clock (QPC).
-5. **WASAPI audio** chunks carry Windows' own capture timestamps and go into RAM rings at their exact time on the same clock. Saving cuts video and audio for the same time window, so sync is built in (measured within about ±5 ms) and can't drift.
+5. **WASAPI audio** chunks carry Windows' own capture timestamps and go into RAM rings at their exact time on the same clock. Saving cuts video and audio for the same time window, so sync is built in (measured within about Â±5 ms) and can't drift.
 
 Measured on an RTX 5080 at 1080p60: about 2.5 ms of GPU encode per frame, about 3% of one CPU core for the whole capture, and a 12 s clip saved in under 1 s. Recordings stream to disk as they go, so a crash leaves parts that are recovered on the next start.
 
-If the native engine can't start (no NVIDIA GPU, driver problem), Rewind falls back to the FFmpeg engine below. It can also be picked under **Settings → Display & capture → Capture engine**.
+If the native engine can't start (no NVIDIA GPU, driver problem), Rewind falls back to the FFmpeg engine below. It can also be picked under **Settings â†’ Display & capture â†’ Capture engine**.
 
 ## How it works (compatibility engine)
 
@@ -61,7 +61,7 @@ A supervisor thread (`src-tauri/src/engine.rs`) checks the monitor layout every 
 
 ## Quality
 
-Clip resolution can be **same as screen** (captured fully on the GPU), 4K, 1440p, 1080p or 720p. A different size is resized on the CPU, at about 1–5% CPU. Quality presets are Small / Balanced / High / Max, with a CQ slider for fine-tuning.
+Clip resolution can be **same as screen** (captured fully on the GPU), 4K, 1440p, 1080p or 720p. A different size is resized on the CPU, at about 1â€“5% CPU. Quality presets are Small / Balanced / High / Max, with a CQ slider for fine-tuning.
 
 ## Safety
 

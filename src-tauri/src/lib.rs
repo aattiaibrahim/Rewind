@@ -531,9 +531,10 @@ pub fn run() {
             let record = MenuItem::with_id(app, "record", "Start / stop recording", true, None::<&str>)?;
             let open = MenuItem::with_id(app, "open", "Open Rewind", true, None::<&str>)?;
             let toggle = MenuItem::with_id(app, "toggle", "Pause / resume buffer", true, None::<&str>)?;
+            let updates = MenuItem::with_id(app, "updates", "Check for updates", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit Rewind", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
-            let menu = Menu::with_items(app, &[&save, &record, &open, &toggle, &sep, &quit])?;
+            let menu = Menu::with_items(app, &[&save, &record, &open, &toggle, &sep, &updates, &quit])?;
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().cloned().expect("app icon"))
                 .tooltip("Rewind")
@@ -547,6 +548,16 @@ pub fn run() {
                         let mut s = settings_of(app);
                         s.buffer_enabled = !s.buffer_enabled;
                         let _ = set_settings(app.clone(), s);
+                    }
+                    "updates" => {
+                        // Show Settings → Updates and check there; the result appears on that page.
+                        show_main(app);
+                        let _ = app.emit("show-view", "settings");
+                        let app = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let auto = settings_of(&app).auto_update;
+                            let _ = updater::check(&app, auto).await;
+                        });
                     }
                     "quit" => app.exit(0),
                     _ => {}

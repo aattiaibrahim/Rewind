@@ -40,6 +40,8 @@ export function installDevMock() {
     audio: ["Desktop: Headphones", "Mic (mono): USB Mic"], audioError: null, game: null, recording: false,
     recordingSeconds: 0, inRam: true, bufferMb: 410, engine: "native",
   };
+  const pendingUpdate = new URLSearchParams(location.search).has("update");
+  if (pendingUpdate) Object.assign(status, { recording: true, recordingSeconds: 151, game: "VALORANT" });
   const listeners = new Map<string, number[]>();
   const callbacks = new Map<number, (e: unknown) => void>();
   let nextCb = 1;
@@ -53,7 +55,14 @@ export function installDevMock() {
       return null;
     },
     get_status: () => status,
-    get_update_state: () => ({ current: "dev", stage: "up-to-date", version: null, notes: null, error: null }),
+    // ?update in the URL: pretend an update is downloaded while a recording runs.
+    get_update_state: () =>
+      pendingUpdate
+        ? { current: "0.1.12", stage: "ready", version: "0.1.13", notes: "Sample release notes.", error: null }
+        : { current: "dev", stage: "up-to-date", version: null, notes: null, error: null },
+    install_update: () => {
+      throw "Preview mode: nothing to install.";
+    },
     list_clips: () => clips,
     list_monitors: () => [],
     list_audio_inputs: () => [],

@@ -4,6 +4,7 @@ import "./App.css";
 import { api, errText } from "./api";
 import { BufferCard } from "./BufferCard";
 import { ConfirmDelete } from "./ConfirmDelete";
+import { ConfirmUpdate, updateInterrupts } from "./ConfirmUpdate";
 import { useAppearance, useClips, useSettings, useStatus, useUpdate } from "./hooks";
 import { Library } from "./Library";
 import { Performance } from "./Performance";
@@ -40,16 +41,21 @@ export default function App() {
 
   const showBanner =
     upd && (upd.stage === "ready" || upd.stage === "available") && upd.version && dismissed !== upd.version;
+  const [askUpdate, setAskUpdate] = useState(false);
+  const interrupts = updateInterrupts(status);
   const installNow = async () => {
-    if (status?.recording && !confirm("A recording is running. Rewind will save it, then restart to update. Continue?")) return;
     setInstalling(true);
     try {
       await api.installUpdate();
     } catch (e) {
       toast(errText(e), true);
       setInstalling(false);
+      setAskUpdate(false);
     }
   };
+  // Restarting would stop a recording or pause capture mid-game: say so and ask first.
+  const requestInstall = () => (interrupts.length ? setAskUpdate(true) : installNow());
+  const closeAskUpdate = useCallback(() => setAskUpdate(false), []);
 
   const openInStudio = useCallback((path: string) => {
     setStudioPath(path);
@@ -114,8 +120,9 @@ export default function App() {
     );
     const b = listen<string>("clip-error", (e) => toast(e.payload, true));
     const c = listen<string>("open-in-studio", (e) => openInStudio(e.payload));
+    const d = listen<View>("show-view", (e) => setView(e.payload));
     return () => {
-      [a, b, c].forEach((p) => p.then((f) => f()));
+      [a, b, c, d].forEach((p) => p.then((f) => f()));
     };
   }, [toast, openInStudio]);
 
@@ -132,6 +139,7 @@ export default function App() {
         <div className="brand">
           <img src={logo} alt="" width={26} height={26} />
           REWIND
+          {upd?.current && <span className="brand-version">v{upd.current}</span>}
         </div>
         {nav.map(([id, label]) => (
           <button key={id} className={`nav-item ${view === id ? "on" : ""}`} onClick={() => setView(id)}>
@@ -147,15 +155,19 @@ export default function App() {
             <span>
               <strong>Rewind {upd!.version}</strong>{" "}
               {upd!.stage === "ready" ? "is downloaded and ready." : "is available."}{" "}
-              {upd!.stage === "ready" && (
-                <span className="muted">It also installs by itself the next time Rewind closes.</span>
+              {status?.recording ? (
+                <span className="muted">Restarting stops and saves your recording.</span>
+              ) : (
+                upd!.stage === "ready" && (
+                  <span className="muted">It also installs by itself the next time Rewind closes.</span>
+                )
               )}
             </span>
             <span className="row">
               <button className="btn small" onClick={() => setDismissed(upd!.version)}>
                 Later
               </button>
-              <button className="btn small primary" disabled={installing} onClick={installNow}>
+              <button className="btn small primary" disabled={installing} onClick={requestInstall}>
                 {installing ? "Updating…" : "Restart to update"}
               </button>
             </span>
@@ -184,9 +196,24 @@ export default function App() {
         )}
         {view === "performance" && <Performance />}
         {view === "settings" && settings && (
-          <SettingsView settings={settings} update={update} onError={(m) => toast(m, true)} />
+          <SettingsView
+            settings={settings}
+            update={update}
+            onError={(m) => toast(m, true)}
+            onInstall={requestInstall}
+            installing={installing}
+          />
         )}
       </main>
+      {askUpdate && upd?.version && (
+        <ConfirmUpdate
+          version={upd.version}
+          reasons={interrupts.length ? interrupts : ["Rewind closes and reopens on the new version."]}
+          busy={installing}
+          onConfirm={installNow}
+          onCancel={closeAskUpdate}
+        />
+      )}
       {pendingDelete && (
         <ConfirmDelete paths={pendingDelete.paths} busy={deleting} onConfirm={confirmDelete} onCancel={cancelDelete} />
       )}
