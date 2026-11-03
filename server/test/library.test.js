@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, describe, test } from "node:test";
 import { filterClips, gamesOf, groupClips } from "../public/group.js";
-import { isSkipped, makeClip, parseClipName, scanLibrary } from "../src/library.js";
+import { isSkipped, makeClip, parseClipName, scanLibrary, stampFromName } from "../src/library.js";
 
 describe("parseClipName", () => {
   test("plain clip", () => {
@@ -74,6 +74,23 @@ describe("isSkipped", () => {
   });
 });
 
+describe("stampFromName (other recorders)", () => {
+  test("Medal, NVIDIA and other names", () => {
+    assert.equal(stampFromName("MedalTVRust20230605210532.mp4"), "2023-06-05T21:05:32");
+    assert.equal(stampFromName("MedalTVMinecraftWindows10Edition20230331211056-tr-edit.mp4"), "2023-03-31T21:10:56");
+    assert.equal(stampFromName("Sea of Thieves 2024.07.27 - 21.19.42.02.DVR.mp4"), "2024-07-27T21:19:42");
+    assert.equal(stampFromName("Replay 2024-10-24 01-25-00.mp4"), "2024-10-24T01:25:00");
+  });
+  test("no date", () => {
+    for (const n of ["1T0ER7rahNjPIg.mov", "Sequence 01.mp4", "SIDEWAYS_6.mp4", "clip 20231399999999.mp4"]) assert.equal(stampFromName(n), null, n);
+  });
+  test("other recorders' clips get the date from their name", () => {
+    const c = makeClip("Rust/MedalTVRust20230605210532.mp4", { size: 1, mtime: new Date(2026, 0, 1) });
+    assert.equal(c.day, "2023-06-05");
+    assert.equal(c.game, "Rust");
+  });
+});
+
 describe("makeClip", () => {
   test("folder is the game; unparseable names fall back to the file time", () => {
     const mtime = new Date(2026, 10, 3, 9, 8, 7);
@@ -111,6 +128,7 @@ describe("scanLibrary", () => {
     await put(".Trash-1000/files/VALORANT 2026-11-03 10-00-00.mkv");
     await put("VALORANT/.sub/VALORANT 2026-11-03 10-00-00.mkv");
     await put("Loose 2026-11-01 01-02-03.mkv");
+    await put("Tom Clancy's Rainbow Six  Siege/1T0ER7rahNjPIg.mov");
   });
   after(() => rm(root, { recursive: true, force: true }));
 
@@ -119,6 +137,7 @@ describe("scanLibrary", () => {
     assert.deepEqual(clips.map((c) => c.rel).sort(), [
       "Desktop/Desktop 2026-11-02 22-00-00.mp4",
       "Loose 2026-11-01 01-02-03.mkv",
+      "Tom Clancy's Rainbow Six  Siege/1T0ER7rahNjPIg.mov",
       "VALORANT/VALORANT 2026-11-03 10-00-00 - PC1 (2).mkv",
       "VALORANT/VALORANT 2026-11-03 10-00-00 - PC1.mkv",
     ]);

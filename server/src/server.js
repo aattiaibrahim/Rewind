@@ -101,7 +101,7 @@ export async function createServer({ library, media }) {
       const action = parts[3];
       try {
         if (action === "original") {
-          const type = clip.ext === "mp4" ? "video/mp4" : "video/x-matroska";
+          const type = { mp4: "video/mp4", mov: "video/quicktime", webm: "video/webm" }[clip.ext] || "video/x-matroska";
           return sendFile(req, res, file, { type, download: url.searchParams.has("download") ? clip.name : null });
         }
         if (action === "thumb.jpg") {

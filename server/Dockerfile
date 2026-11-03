@@ -18,7 +18,8 @@ ENV NODE_ENV=production \
 
 # Run as the unprivileged "node" user (uid 1000). Override with `user:` in compose
 # to match the owner of your dataset (TrueNAS "apps" user is 568).
-RUN mkdir -p /cache && chown node:node /cache
+# World-writable so a new named volume works whatever `user:` the app runs as.
+RUN mkdir -p /cache && chown node:node /cache && chmod 1777 /cache
 USER node
 
 EXPOSE 8420

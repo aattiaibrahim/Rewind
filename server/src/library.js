@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 
-export const VIDEO_EXTS = new Set([".mkv", ".mp4"]);
+export const VIDEO_EXTS = new Set([".mkv", ".mp4", ".mov", ".webm"]);
 export const PARTIAL = ".rewind-partial";
 
 const NAME_RE =
@@ -42,6 +42,19 @@ export function parseClipName(name) {
   };
 }
 
+/**
+ * A date and time found anywhere in a name from another recorder, as "YYYY-MM-DDTHH:MM:SS".
+ * Medal: "MedalTVRust20230605210532.mp4"; NVIDIA: "Sea of Thieves 2024.07.27 - 21.19.42.02.DVR.mp4";
+ * others: "Replay 2024-10-24 01-25-00.mp4".
+ */
+export function stampFromName(name) {
+  const m = /(20\d{2})[._-]?(\d{2})[._-]?(\d{2})[ _T.-]*(\d{2})[._:-]?(\d{2})[._:-]?(\d{2})/.exec(name);
+  if (!m) return null;
+  const [, y, mo, d, h, mi, s] = m;
+  if (mo < "01" || mo > "12" || d < "01" || d > "31" || h > "23" || mi > "59" || s > "59") return null;
+  return `${y}-${mo}-${d}T${h}:${mi}:${s}`;
+}
+
 /** Local wall-clock time as "YYYY-MM-DDTHH:MM:SS" (used when a name has no timestamp). */
 export function localStamp(date) {
   const p = (v) => String(v).padStart(2, "0");
@@ -60,7 +73,7 @@ export function makeClip(rel, info) {
   const name = path.posix.basename(rel);
   const folder = path.posix.dirname(rel);
   const parsed = parseClipName(name);
-  const takenAt = parsed ? parsed.takenAt : localStamp(info.mtime);
+  const takenAt = parsed?.takenAt ?? stampFromName(name) ?? localStamp(info.mtime);
   const game = folder !== "." ? folder.split("/")[0] : parsed?.game || "Other";
   return {
     id: clipId(rel),

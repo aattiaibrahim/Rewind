@@ -16,6 +16,8 @@ to the NAS folder. Rewind Server only reads that folder:
     Apex Legends Recording 2026-11-03 20-01-10 - GAMING-PC.mkv
 ```
 
+- Also shows clips from other recorders (Medal, NVIDIA, `.mov`/`.webm`), using the date in the
+  file name when there is one.
 - Clips are grouped by day and game. You can search by game, PC name or date, and filter by game.
 - Thumbnails are made with ffmpeg and stored in the **cache** volume. Nothing is ever written to
   the clips folder, which is mounted read-only.
