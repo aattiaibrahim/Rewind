@@ -1,0 +1,9 @@
+{
+  "name": "Rewind Server",
+  "short_name": "Rewind",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0e1014",
+  "theme_color": "#0e1014",
+  "icons": [{ "src": "logo.svg", "sizes": "any", "type": "image/svg+xml" }]
+}

@@ -1,0 +1,29 @@
+# Rewind Server. Local try-out:
+#   node scripts/make-samples.js sample-clips   (or see README for the docker way)
+#   docker compose up --build
+#   open http://localhost:8420
+#
+# On TrueNAS, point CLIPS at your clips dataset, e.g. /mnt/tank/rewind.
+services:
+  rewind-server:
+    build: .
+    image: rewind-server:latest
+    container_name: rewind-server
+    restart: unless-stopped
+    # Match the owner of the clips dataset if it isn't readable by uid 1000.
+    # user: "568:568"
+    ports:
+      - "8420:8420"
+    environment:
+      TZ: ${TZ:-Europe/London}
+      RESCAN_SECONDS: "60"
+      MAX_CACHE_GB: "20"
+      TRANSCODE_JOBS: "1"
+    volumes:
+      # Clips: read-only. The server never writes here.
+      - ${CLIPS:-./sample-clips}:/clips:ro
+      # Thumbnails and phone versions.
+      - rewind-cache:/cache
+
+volumes:
+  rewind-cache:
