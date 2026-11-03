@@ -28,7 +28,13 @@ export type Settings = {
   micEnabled: boolean;
   micMono: boolean;
   micDevice: string;
+  theme: Theme;
+  accent: Accent;
+  reduceMotion: boolean;
 };
+
+export type Theme = "midnight" | "graphite" | "oled" | "light";
+export type Accent = "lime" | "cyan" | "violet" | "amber" | "rose" | "green";
 
 export type Status = {
   enabled: boolean;

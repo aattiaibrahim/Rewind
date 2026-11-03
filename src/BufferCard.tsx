@@ -69,7 +69,7 @@ export function BufferCard({ status, hotkey, recordHotkey }: { status: Status | 
 
   return (
     <div className="buffer-card">
-      <div className="buffer-head" style={{ color: bufferOn ? "var(--accent)" : "var(--muted)" }}>
+      <div className="buffer-head" style={{ color: bufferOn ? "var(--accent-ink)" : "var(--muted)" }}>
         <span className={`dot ${bufferOn ? "on" : status?.lastError && status.enabled ? "err" : ""}`} />
         {bufferOn ? "REPLAY BUFFER ON" : status?.enabled === false ? "BUFFER PAUSED" : "BUFFER STARTING"}
       </div>

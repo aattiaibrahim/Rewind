@@ -4,7 +4,7 @@ import "./App.css";
 import { api, errText } from "./api";
 import { BufferCard } from "./BufferCard";
 import { ConfirmDelete } from "./ConfirmDelete";
-import { useClips, useSettings, useStatus, useUpdate } from "./hooks";
+import { useAppearance, useClips, useSettings, useStatus, useUpdate } from "./hooks";
 import { Library } from "./Library";
 import { Performance } from "./Performance";
 import logo from "./logo.svg";
@@ -23,6 +23,7 @@ export default function App() {
   const nextId = useRef(1);
   const status = useStatus();
   const [settings, update] = useSettings();
+  useAppearance(settings);
   const [clips, refresh] = useClips();
   const upd = useUpdate();
   const [installing, setInstalling] = useState(false);

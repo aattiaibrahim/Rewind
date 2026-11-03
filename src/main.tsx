@@ -4,6 +4,7 @@ import ReactDOM from "react-dom/client";
 import App, { useEscapeToHide } from "./App";
 import "./App.css";
 import { Flyout } from "./Flyout";
+import { applyCachedAppearance } from "./hooks";
 
 function FlyoutRoot() {
   useEscapeToHide();
@@ -11,6 +12,7 @@ function FlyoutRoot() {
 }
 
 async function start() {
+  applyCachedAppearance();
   // In a plain browser during development, use fake sample data.
   if (import.meta.env.DEV) (await import("./devMock")).installDevMock();
   const isFlyout = getCurrentWindow().label === "flyout";

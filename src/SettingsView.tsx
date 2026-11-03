@@ -1,7 +1,7 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useEffect, useState } from "react";
-import { api, bufferEstimateMb, errText, Monitor, Settings } from "./api";
+import { Accent, api, bufferEstimateMb, errText, Monitor, Settings, Theme } from "./api";
 import { useUpdate } from "./hooks";
 
 function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
@@ -20,6 +20,23 @@ function hotkeyFrom(e: React.KeyboardEvent): string | null {
   if (!mods.length && !/^F\d+$/.test(key)) return null;
   return [...mods, key].join("+");
 }
+
+// Preview colours for each theme card (bg, panel, line).
+const THEMES: { id: Theme; label: string; c: [string, string, string] }[] = [
+  { id: "midnight", label: "Midnight", c: ["#0e1014", "#1d222b", "#2b323d"] },
+  { id: "graphite", label: "Graphite", c: ["#121212", "#252525", "#343434"] },
+  { id: "oled", label: "OLED black", c: ["#000000", "#171717", "#262626"] },
+  { id: "light", label: "Light", c: ["#f3f4f7", "#ffffff", "#d3d8e0"] },
+];
+
+const ACCENTS: { id: Accent; label: string; c: string }[] = [
+  { id: "lime", label: "Lime", c: "#c6f432" },
+  { id: "cyan", label: "Cyan", c: "#38d6ff" },
+  { id: "violet", label: "Violet", c: "#a78bfa" },
+  { id: "amber", label: "Amber", c: "#ffb020" },
+  { id: "rose", label: "Rose", c: "#ff5c8a" },
+  { id: "green", label: "Green", c: "#76b900" },
+];
 
 const QUALITY_PRESETS: [string, number][] = [
   ["Small", 30],
@@ -126,6 +143,57 @@ export function SettingsView({
     <div className="page">
       <h1>Settings</h1>
       <div className="settings-grid">
+        <section className="group">
+          <h2>Appearance</h2>
+          <div className="themes" role="radiogroup" aria-label="Theme">
+            {THEMES.map((t) => (
+              <button
+                key={t.id}
+                role="radio"
+                aria-checked={s.theme === t.id}
+                className={`theme-card ${s.theme === t.id ? "on" : ""}`}
+                onClick={() => set({ theme: t.id })}
+              >
+                <div
+                  className="theme-preview"
+                  style={{ "--p-bg": t.c[0], "--p-panel": t.c[1], "--p-line": t.c[2] } as React.CSSProperties}
+                >
+                  <i />
+                  <i />
+                </div>
+                {t.label}
+              </button>
+            ))}
+          </div>
+          <div className="setting">
+            <span>
+              Accent colour
+              <small>{ACCENTS.find((a) => a.id === s.accent)?.label ?? "Lime"}</small>
+            </span>
+            <div className="swatches" role="radiogroup" aria-label="Accent colour">
+              {ACCENTS.map((a) => (
+                <button
+                  key={a.id}
+                  role="radio"
+                  aria-checked={s.accent === a.id}
+                  aria-label={a.label}
+                  title={a.label}
+                  className={`swatch ${s.accent === a.id ? "on" : ""}`}
+                  style={{ "--c": a.c } as React.CSSProperties}
+                  onClick={() => set({ accent: a.id })}
+                />
+              ))}
+            </div>
+          </div>
+          <label className="setting">
+            <span>
+              Reduce motion
+              <small>Turns off fades and hover effects. They're already light: they only run while the window is open.</small>
+            </span>
+            <Toggle label="Reduce motion" checked={s.reduceMotion} onChange={(v) => set({ reduceMotion: v })} />
+          </label>
+        </section>
+
         <section className="group">
           <h2>General</h2>
           <label className="setting">

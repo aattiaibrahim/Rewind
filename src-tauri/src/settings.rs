@@ -40,6 +40,12 @@ pub struct Settings {
     pub mic_mono: bool,
     /// "" = Windows default microphone
     pub mic_device: String,
+    /// Look of the app: "midnight" | "graphite" | "oled" | "light"
+    pub theme: String,
+    /// Highlight colour: "lime" | "cyan" | "violet" | "amber" | "rose" | "green"
+    pub accent: String,
+    /// Turn off fades and motion in the interface
+    pub reduce_motion: bool,
 }
 
 impl Default for Settings {
@@ -69,6 +75,9 @@ impl Default for Settings {
             mic_enabled: true,
             mic_mono: true,
             mic_device: String::new(),
+            theme: "midnight".into(),
+            accent: "lime".into(),
+            reduce_motion: false,
         }
     }
 }
@@ -99,6 +108,12 @@ impl Settings {
             self.record_hotkey = d.record_hotkey;
         }
         self.external_files.dedup();
+        if !["midnight", "graphite", "oled", "light"].contains(&self.theme.as_str()) {
+            self.theme = d.theme.clone();
+        }
+        if !["lime", "cyan", "violet", "amber", "rose", "green"].contains(&self.accent.as_str()) {
+            self.accent = d.accent.clone();
+        }
         self
     }
 }

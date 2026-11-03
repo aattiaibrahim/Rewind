@@ -83,3 +83,36 @@ export function useThumb(path: string, key: string | number = "") {
   }, [path, key]);
   return src;
 }
+
+/** Theme, accent and motion as attributes on <html>, so the CSS can switch
+ *  colours instantly (no re-render). Also remembered locally so the next
+ *  launch paints in the right theme before settings have loaded. */
+export function useAppearance(settings: Settings | null) {
+  useEffect(() => {
+    if (!settings) return;
+    const look = { theme: settings.theme ?? "midnight", accent: settings.accent ?? "lime", motion: settings.reduceMotion ? "reduce" : "full" };
+    applyAppearance(look);
+    try {
+      localStorage.setItem("rewind.appearance", JSON.stringify(look));
+    } catch {
+      /* only a start-up nicety */
+    }
+  }, [settings?.theme, settings?.accent, settings?.reduceMotion]); // eslint-disable-line react-hooks/exhaustive-deps
+}
+
+export function applyAppearance(look: { theme: string; accent: string; motion: string }) {
+  const el = document.documentElement;
+  el.dataset.theme = look.theme;
+  el.dataset.accent = look.accent;
+  el.dataset.motion = look.motion;
+}
+
+/** Paint in the last-used theme before anything loads. */
+export function applyCachedAppearance() {
+  try {
+    const v = localStorage.getItem("rewind.appearance");
+    if (v) applyAppearance(JSON.parse(v));
+  } catch {
+    /* first launch or storage unavailable: defaults */
+  }
+}

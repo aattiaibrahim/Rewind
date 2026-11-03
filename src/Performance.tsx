@@ -216,7 +216,7 @@ export function Performance() {
       {running && (
         <section className="group" style={{ maxWidth: 760 }}>
           <h2>{progress?.step ?? "Starting…"}</h2>
-          <p style={{ margin: "4px 0 12px", fontSize: 14, color: progress?.waitingForUser ? "var(--accent)" : "var(--text-2)" }}>
+          <p style={{ margin: "4px 0 12px", fontSize: 14, color: progress?.waitingForUser ? "var(--accent-ink)" : "var(--text-2)" }}>
             {progress?.detail ?? "Switch to your game."}
           </p>
           <div className="meter" aria-hidden="true">

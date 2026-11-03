@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { api, ClipFile, errText, fmtDuration, Settings } from "./api";
 import { audioLine, folderLine, RecordButton, statusLine } from "./BufferCard";
-import { useClips, useSettings, useStatus, useThumb } from "./hooks";
+import { useAppearance, useClips, useSettings, useStatus, useThumb } from "./hooks";
 
 function MiniClip({ clip }: { clip: ClipFile }) {
   const thumb = useThumb(clip.path, clip.modified);
@@ -22,6 +22,7 @@ function MiniClip({ clip }: { clip: ClipFile }) {
 export function Flyout() {
   const status = useStatus();
   const [settings, update] = useSettings();
+  useAppearance(settings);
   const [clips] = useClips();
   const [busy, setBusy] = useState<number | null>(null);
   const [msg, setMsg] = useState<{ text: string; err?: boolean } | null>(null);

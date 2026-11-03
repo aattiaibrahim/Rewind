@@ -32,7 +32,7 @@ export function installDevMock() {
     bufferInRam: true, captureEngine: "native", monitorMode: "primary", fixedMonitor: "", drawCursor: true, hotkey: "Alt+F10",
     recordHotkey: "Alt+F9", bufferEnabled: true, launchOnStartup: false, autoUpdate: true, startMinimized: true,
     keepOriginalAfterRemux: true, replaceOriginalOnEdit: false, externalFiles: [], desktopAudio: true,
-    micEnabled: true, micMono: true, micDevice: "",
+    micEnabled: true, micMono: true, micDevice: "", theme: "midnight", accent: "lime", reduceMotion: false,
   };
   const status = {
     enabled: true, running: true, monitor: "Display 1 · 1920×1080", width: 1920, height: 1080, encoder: "av1",
@@ -47,7 +47,11 @@ export function installDevMock() {
     (listeners.get(event) ?? []).forEach((id) => callbacks.get(id)?.({ event, id: 0, payload: null }));
 
   const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
-    get_settings: () => settings,
+    get_settings: () => ({ ...settings }),
+    set_settings: (a) => {
+      Object.assign(settings, a.settings as object);
+      return null;
+    },
     get_status: () => status,
     get_update_state: () => ({ current: "dev", stage: "up-to-date", version: null, notes: null, error: null }),
     list_clips: () => clips,
