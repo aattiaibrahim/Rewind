@@ -275,6 +275,12 @@ pub fn remux_mp4(path: &str, keep_original: bool) -> Result<String, String> {
 }
 
 /// Fast = cut on keyframes, no re-encode. Exact = frame-accurate, re-encoded on NVENC.
+/// Trim to [start, end] seconds. `exact` is frame-accurate: a "smart cut"
+/// that re-encodes only the frames before the first keyframe in the range
+/// (under a second for Rewind's clips) and copies everything after it
+/// untouched, so it's nearly as fast as a plain copy and keeps full quality.
+/// If the file isn't suited to that, or any check fails, the whole range is
+/// re-encoded instead. Without `exact`, the cut snaps to a keyframe.
 pub fn trim(path: &str, start: f64, end: f64, exact: bool) -> Result<String, String> {
     if end <= start {
         return Err("The end point has to be after the start point.".into());
@@ -285,15 +291,26 @@ pub fn trim(path: &str, start: f64, end: f64, exact: bool) -> Result<String, Str
         _ => "mp4".into(),
     };
     let out = unique(src, " (trim)", &ext);
+    if exact {
+        match smart_trim(path, start, end, &out) {
+            Ok(()) => return Ok(out.to_string_lossy().into_owned()),
+            Err(e) => {
+                eprintln!("[rewind] smart trim not used ({e}); re-encoding the whole range");
+                let _ = fs::remove_file(&out);
+            }
+        }
+    }
     let (ss, to) = (format!("{start:.3}"), format!("{end:.3}"));
     let mut args = ffmpeg::args(&["-hide_banner", "-loglevel", "error", "-ss", &ss, "-to", &to, "-i"]);
     args.push(path.into());
     args.extend(ffmpeg::args(&["-map", "0:v:0", "-map", "0:a?"]));
     if exact {
-        let codec = probe(path).map(|p| p.codec).unwrap_or_default();
+        let p = probe(path).unwrap_or_default();
+        let gop = (p.fps.round() as i64).max(1).to_string();
         // Audio is re-encoded too: copied audio can't be cut mid-packet and drifts out of sync.
+        // A keyframe every second keeps later trims of this file quick.
         args.extend(ffmpeg::args(&[
-            "-c:v", nvenc_for(&codec), "-preset", "p5", "-cq", "20", "-b:v", "0", "-c:a", "aac", "-b:a", "192k",
+            "-c:v", nvenc_for(&p.codec), "-preset", "p5", "-cq", "20", "-b:v", "0", "-g", &gop, "-c:a", "aac", "-b:a", "192k",
         ]));
     } else {
         args.extend(ffmpeg::args(&["-c", "copy", "-avoid_negative_ts", "make_zero"]));
@@ -303,6 +320,172 @@ pub fn trim(path: &str, start: f64, end: f64, exact: bool) -> Result<String, Str
     }
     args.push(out.clone().into());
     finish(args, out)
+}
+
+/// What a smart cut needs to know about the video stream.
+struct CutInfo {
+    codec: String,
+    /// Raw bitstream format for this codec ("obu", "hevc", "h264").
+    raw: &'static str,
+    fps: f64,
+    /// Time of the first video frame (Rewind's clips start at one frame in).
+    first: f64,
+    audio: usize,
+}
+
+fn cut_info(path: &str) -> Result<CutInfo, String> {
+    let mut a = ffmpeg::args(&["-v", "error", "-print_format", "json", "-show_streams", "-i"]);
+    a.push(path.into());
+    let json: Value = serde_json::from_str(&ffmpeg::run("ffprobe", &a)?).map_err(|e| e.to_string())?;
+    let streams = json["streams"].as_array().cloned().unwrap_or_default();
+    let v = streams.iter().find(|s| s["codec_type"] == "video").ok_or("no video")?;
+    let codec = v["codec_name"].as_str().unwrap_or("").to_string();
+    let raw = match codec.as_str() {
+        "av1" => "obu",
+        "hevc" => "hevc",
+        "h264" => "h264",
+        _ => return Err(format!("codec {codec}")),
+    };
+    let pix = v["pix_fmt"].as_str().unwrap_or("");
+    if pix != "yuv420p" && pix != "nv12" {
+        return Err(format!("pixel format {pix}"));
+    }
+    let rate = |k: &str| -> f64 {
+        let r = v[k].as_str().unwrap_or("0/1");
+        let (n, d) = r.split_once('/').unwrap_or((r, "1"));
+        n.parse::<f64>().unwrap_or(0.0) / d.parse::<f64>().unwrap_or(1.0).max(1e-9)
+    };
+    let (fps, avg) = (rate("r_frame_rate"), rate("avg_frame_rate"));
+    // Raw streams get their timing back from a fixed frame rate, so only
+    // constant-frame-rate files qualify (all of Rewind's own clips are).
+    if fps <= 0.0 || (avg - fps).abs() > fps * 0.002 {
+        return Err(format!("variable frame rate ({fps:.3} vs {avg:.3})"));
+    }
+    let first = v["start_time"].as_str().and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+    let audio = streams.iter().filter(|s| s["codec_type"] == "audio").count();
+    Ok(CutInfo { codec, raw, fps, first, audio })
+}
+
+/// Frame numbers (from the first frame) of the keyframes between `from` and `to` seconds.
+fn keyframes(path: &str, ci: &CutInfo, from: f64, to: f64) -> Result<Vec<i64>, String> {
+    // ffprobe starts reading at the keyframe before `from`; read on past `to`
+    // so even widely spaced keyframes are found.
+    let interval = format!("{:.3}%{:.3}", (from - 1.0).max(0.0), to + 1.0);
+    let mut a = ffmpeg::args(&["-v", "error", "-select_streams", "v:0", "-read_intervals", &interval]);
+    a.extend(ffmpeg::args(&["-show_entries", "packet=pts_time,flags", "-of", "csv=p=0", "-i"]));
+    a.push(path.into());
+    Ok(ffmpeg::run("ffprobe", &a)?
+        .lines()
+        .filter(|l| l.contains(",K"))
+        .filter_map(|l| l.split(',').next()?.parse::<f64>().ok())
+        .map(|t| ((t - ci.first) * ci.fps).round() as i64)
+        .collect())
+}
+
+fn smart_trim(path: &str, start: f64, end: f64, out: &Path) -> Result<(), String> {
+    let ci = cut_info(path)?;
+    let fps = ci.fps;
+    // Work in frame numbers so rounding can't add or drop a frame.
+    // The frame on screen at `start` is the first kept; frames before `end` are kept.
+    let i_start = (((start - ci.first) * fps) + 1e-3).floor().max(0.0) as i64;
+    let i_end = (((end - ci.first) * fps) - 1e-3).ceil() as i64;
+    if i_end <= i_start {
+        return Err("range shorter than a frame".into());
+    }
+    let key = keyframes(path, &ci, start, end)?.into_iter().filter(|k| *k >= i_start && *k < i_end).min();
+    let i_key = key.unwrap_or(i_end); // no keyframe inside: re-encode it all
+    let at = |i: i64| format!("{:.6}", ci.first + i as f64 / fps);
+    // Half a frame early, so a cut lands cleanly between two frames.
+    let before = |i: i64| format!("{:.6}", ci.first + (i as f64 - 0.5) / fps);
+    let pre = |i: i64| format!("{:.3}", (ci.first + i as f64 / fps - 2.0).max(0.0));
+
+    let dir = std::env::temp_dir().join(format!("rewind-trim-{}-{}", std::process::id(), chrono::Local::now().format("%H%M%S%f")));
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let result = (|| {
+        // Audio (all tracks, sample-exact) runs alongside the video steps.
+        let audio_path = dir.join("audio.mka");
+        let audio_job = (ci.audio > 0).then(|| {
+            let mut graph = Vec::new();
+            for i in 0..ci.audio {
+                graph.push(format!("[0:a:{i}]atrim=start={}:end={},asetpts=PTS-STARTPTS[a{i}]", at(i_start), at(i_end)));
+            }
+            let mut a = ffmpeg::args(&["-hide_banner", "-loglevel", "error", "-y", "-i"]);
+            a.push(path.into());
+            a.extend(ffmpeg::args(&["-filter_complex", &graph.join(";")]));
+            for i in 0..ci.audio {
+                a.extend(ffmpeg::args(&["-map", &format!("[a{i}]"), &format!("-map_metadata:s:a:{i}"), &format!("0:s:a:{i}")]));
+            }
+            a.extend(ffmpeg::args(&["-c:a", "aac", "-b:a", "192k", "-f", "matroska"]));
+            a.push(audio_path.clone().into());
+            std::thread::spawn(move || ffmpeg::run("ffmpeg", &a))
+        });
+
+        // 1. Frames before the first keyframe: re-encoded, near-lossless.
+        let head = dir.join("head.raw");
+        if i_key > i_start {
+            let gop = (fps.round() as i64).max(1).to_string();
+            let mut a = ffmpeg::args(&["-hide_banner", "-loglevel", "error", "-y", "-copyts", "-ss", &pre(i_start), "-i"]);
+            a.push(path.into());
+            a.extend(ffmpeg::args(&["-map", "0:v:0", "-an", "-vf", &format!("trim=start={}:end={}", before(i_start), before(i_key))]));
+            a.extend(ffmpeg::args(&[
+                "-c:v", nvenc_for(&ci.codec), "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", "16", "-b:v", "0", "-bf", "0", "-g", &gop,
+                "-pix_fmt", "yuv420p", "-f", ci.raw,
+            ]));
+            a.push(head.clone().into());
+            ffmpeg::run("ffmpeg", &a)?;
+        }
+        // 2. From the keyframe on: copied untouched.
+        let tail = dir.join("tail.raw");
+        if i_key < i_end {
+            let mut a = ffmpeg::args(&["-hide_banner", "-loglevel", "error", "-y", "-copyts", "-ss", &pre(i_key), "-i"]);
+            a.push(path.into());
+            a.extend(ffmpeg::args(&["-ss", &before(i_key), "-to", &before(i_end), "-map", "0:v:0", "-an", "-c", "copy", "-f", ci.raw]));
+            a.push(tail.clone().into());
+            ffmpeg::run("ffmpeg", &a)?;
+        }
+        // 3. One video stream (raw bitstreams join end to end), then mux with the audio.
+        let video = dir.join("video.raw");
+        {
+            let mut v = fs::read(&head).unwrap_or_default();
+            v.extend(fs::read(&tail).unwrap_or_default());
+            fs::write(&video, v).map_err(|e| e.to_string())?;
+        }
+        if let Some(job) = audio_job {
+            job.join().map_err(|_| "audio step crashed".to_string())??;
+        }
+        let mut a = ffmpeg::args(&["-hide_banner", "-loglevel", "error", "-y", "-r", &format!("{fps}"), "-f", ci.raw, "-i"]);
+        a.push(video.clone().into());
+        if ci.audio > 0 {
+            a.push("-i".into());
+            a.push(audio_path.clone().into());
+        }
+        a.extend(ffmpeg::args(&["-map", "0:v"]));
+        if ci.audio > 0 {
+            a.extend(ffmpeg::args(&["-map", "1:a"]));
+        }
+        a.extend(ffmpeg::args(&["-c", "copy"]));
+        if ext_of(out) == "mp4" {
+            a.extend(ffmpeg::args(&["-movflags", "+faststart"]));
+        }
+        a.push(out.into());
+        ffmpeg::run("ffmpeg", &a)?;
+
+        // 4. Checks: the right number of frames, and clean decoding across the join.
+        let mut a = ffmpeg::args(&["-v", "error", "-count_packets", "-select_streams", "v:0", "-show_entries", "stream=nb_read_packets", "-of", "csv=p=0", "-i"]);
+        a.push(out.into());
+        let frames: i64 = ffmpeg::run("ffprobe", &a)?.trim().parse().map_err(|_| "couldn't count frames".to_string())?;
+        if frames != i_end - i_start {
+            return Err(format!("{frames} frames instead of {}", i_end - i_start));
+        }
+        let join = (i_key - i_start) as f64 / fps;
+        let mut a = ffmpeg::args(&["-hide_banner", "-v", "error", "-xerror", "-ss", &format!("{:.3}", (join - 1.0).max(0.0)), "-t", "2.5", "-i"]);
+        a.push(out.into());
+        a.extend(ffmpeg::args(&["-f", "null", "-"]));
+        ffmpeg::run("ffmpeg", &a).map_err(|e| format!("decode check failed: {e}"))?;
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&dir);
+    result
 }
 
 /// Map video plus one audio track: desktop + mic mixed when there are several,
@@ -494,6 +677,75 @@ mod tests {
     use super::*;
 
     /// A 6 s 720p60 test video with two audio tracks (like a real Rewind clip).
+    /// A 6 s, 60 fps clip like Rewind's (keyframe every second, two audio
+    /// tracks, video starting one frame in) in the given codec.
+    fn rewind_like(dir: &Path, name: &str, vcodec: &str) -> String {
+        crate::ffmpeg::init(None);
+        fs::create_dir_all(dir).unwrap();
+        let out = dir.join(name);
+        let mut args = ffmpeg::args(&[
+            "-hide_banner", "-loglevel", "error", "-y",
+            "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=60",
+            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+            "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=48000",
+            "-t", "6", "-map", "0:v", "-map", "1:a", "-map", "2:a",
+            "-c:v", vcodec, "-g", "60", "-bf", "0", "-pix_fmt", "yuv420p", "-c:a", "aac",
+            "-metadata:s:a:0", "title=Desktop audio", "-metadata:s:a:1", "title=Microphone",
+            "-output_ts_offset", "0.017",
+        ]);
+        args.push(out.clone().into());
+        ffmpeg::run("ffmpeg", &args).expect("make sample");
+        out.to_string_lossy().into_owned()
+    }
+
+    /// MD5 of each decoded frame, `from` frame `skip` on, `n` frames.
+    fn frame_hashes(path: &str, skip: usize, n: usize) -> Vec<String> {
+        let mut a = ffmpeg::args(&["-v", "error", "-i"]);
+        a.push(path.into());
+        a.extend(ffmpeg::args(&["-map", "0:v:0", "-vf", &format!("trim=start_frame={skip}:end_frame={}", skip + n), "-f", "framemd5", "-"]));
+        ffmpeg::run("ffmpeg", &a).unwrap().lines().filter(|l| !l.starts_with('#')).map(|l| l.rsplit(',').next().unwrap().trim().to_string()).collect()
+    }
+
+    #[test]
+    fn smart_trim_is_exact_and_copies_untouched_frames() {
+        let d = tmp("smart");
+        for (codec, name) in [("av1_nvenc", "a.mkv"), ("hevc_nvenc", "h.mkv"), ("h264_nvenc", "x.mp4")] {
+            let src = rewind_like(&d, name, codec);
+            // Start between keyframes (frame 76 of the clip), end mid-GOP.
+            let (start, end) = (0.017 + 76.0 / 60.0 + 0.004, 0.017 + 280.0 / 60.0 + 0.004);
+            let t = std::time::Instant::now();
+            let out = trim(&src, start, end, true).unwrap();
+            let took = t.elapsed();
+            let p = probe(&out).unwrap();
+            let mut a = ffmpeg::args(&["-v", "error", "-count_packets", "-select_streams", "v:0", "-show_entries", "stream=nb_read_packets", "-of", "csv=p=0", "-i"]);
+            a.push(out.clone().into());
+            let frames: i64 = ffmpeg::run("ffprobe", &a).unwrap().trim().parse().unwrap();
+            println!("{codec}: {frames} frames, {:.3} s, {} audio tracks, {took:?}", p.duration, p.audio_tracks);
+            assert_eq!(frames, 281 - 76, "{codec}: exact frame count");
+            assert_eq!(p.audio_tracks, 2);
+            // Frames 120.. of the source (keyframe at 2 s) are copied: identical after decoding.
+            let copied = frame_hashes(&out, 120 - 76, 60);
+            let original = frame_hashes(&src, 120, 60);
+            assert_eq!(copied, original, "{codec}: copied frames must be bit-identical");
+        }
+        let _ = fs::remove_dir_all(d);
+    }
+
+    /// Smart-trims a real clip: REWIND_TRIM_CLIP=path, cuts 5.237 s to 10 s before the end.
+    /// cargo test smart_trim_real_clip -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn smart_trim_real_clip() {
+        crate::ffmpeg::init(None);
+        let Ok(src) = std::env::var("REWIND_TRIM_CLIP") else { return };
+        let len = probe(&src).unwrap().duration;
+        let t = std::time::Instant::now();
+        let out = trim(&src, 5.237, len - 10.0, true).unwrap();
+        let p = probe(&out).unwrap();
+        println!("trimmed {:.1} s of {:.1} s in {:?}: {:.3} s, {} MB, {} audio tracks", len - 15.237, len, t.elapsed(), p.duration, fs::metadata(&out).unwrap().len() / 1_000_000, p.audio_tracks);
+        let _ = fs::remove_file(out);
+    }
+
     fn sample(dir: &Path, name: &str) -> String {
         crate::ffmpeg::init(None);
         fs::create_dir_all(dir).unwrap();

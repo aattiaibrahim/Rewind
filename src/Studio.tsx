@@ -247,14 +247,18 @@ export function Studio({
     });
   }, []);
   const [range, setRange] = useState<[number, number]>([0, 0]);
-  const [playError, setPlayError] = useState(false);
+  // Which file the player failed on. Tied to the path, so an error from the
+  // previous clip can't show up on the next one.
+  const [playErrorFor, setPlayErrorFor] = useState<string | null>(null);
+  const playError = !!path && playErrorFor === path;
+  const retried = useRef<string | null>(null);
   const [job, setJob] = useState<Job>(null);
   const [result, setResult] = useState<Result>(null);
   const [targetMb, setTargetMb] = useState(10);
 
   useEffect(() => {
     setInfo(null);
-    setPlayError(false);
+    setPlayErrorFor(null);
     setResult(null);
     setTime(0);
     setRange([0, 0]);
@@ -269,6 +273,8 @@ export function Studio({
     api
       .probe(path, String(reload))
       .then((p) => {
+        // Probes can queue behind thumbnails: ignore one for a clip that's no longer open.
+        if (!alive) return;
         setInfo(p);
         setDuration((d) => d || p.duration);
         setRange((r) => (r[1] ? r : [0, p.duration]));
@@ -450,7 +456,7 @@ export function Studio({
   }
 
   const [a, b] = range;
-  const pct = (t: number) => (duration ? `${(t / duration) * 100}%` : "0%");
+  const pct = (t: number) => (duration ? `${Math.min(100, Math.max(0, (t / duration) * 100))}%` : "0%");
   const name = path.split("\\").pop() ?? path;
   const busy = !!job;
   const wholeFile = a <= 0.01 && duration - b <= 0.05;
@@ -462,20 +468,12 @@ export function Studio({
           {name}
         </div>
         <button
-          className="btn"
-          disabled={busy || wholeFile}
-          title="Cuts on the nearest keyframes. Instant, no quality loss."
-          onClick={() => run("Saving trim…", () => api.trim(path, a, b, false, replace), replace)}
-        >
-          Save trim (fast)
-        </button>
-        <button
           className="btn primary"
           disabled={busy || wholeFile}
-          title="Frame-accurate. Re-encodes on your GPU."
-          onClick={() => run("Saving exact trim…", () => api.trim(path, a, b, true, replace), replace)}
+          title="Cuts exactly at your start and end frames. Only the moment before the first keyframe is re-encoded (under a second for Rewind's clips); the rest is copied untouched, so it's quick and keeps full quality."
+          onClick={() => run("Saving trim…", () => api.trim(path, a, b, true, replace), replace)}
         >
-          Save trim (exact)
+          Save trim
         </button>
       </div>
       <div className={`studio-body ${theater ? "theater" : ""}`}>
@@ -498,7 +496,8 @@ export function Studio({
                 const d = e.currentTarget.duration;
                 if (isFinite(d) && d > 0) {
                   setDuration(d);
-                  setRange((r) => (r[1] ? r : [0, d]));
+                  // The player's own length wins over anything set before it loaded.
+                  setRange((r) => (r[1] && r[1] <= d + 0.05 ? r : [0, d]));
                 }
               }}
               onTimeUpdate={(e) => {
@@ -519,7 +518,13 @@ export function Studio({
               onRateChange={() => syncExtra()}
               onWaiting={() => extraAudio.current.forEach((a) => a.pause())}
               onPlaying={() => syncExtra(true)}
-              onError={() => setPlayError(true)}
+              onError={() => {
+                // A one-off load hiccup (e.g. switching clips quickly): try once more first.
+                if (retried.current !== path) {
+                  retried.current = path;
+                  setReload((k) => k + 1);
+                } else setPlayErrorFor(path);
+              }}
             />
             {!playError && (
               <div
@@ -573,9 +578,18 @@ export function Studio({
             )}
             {playError && (
               <div className="video-msg">
-                <strong style={{ color: "var(--text)" }}>The preview can't play this file's format</strong>
-                <span>Edits still work. To preview it, make an MP4 or H.264 copy:</span>
+                <strong style={{ color: "var(--text)" }}>The preview can't play this file</strong>
+                <span>Edits still work. To preview it, try again, or make an MP4 or H.264 copy:</span>
                 <div className="row">
+                  <button
+                    className="btn"
+                    onClick={() => {
+                      setPlayErrorFor(null);
+                      setReload((k) => k + 1);
+                    }}
+                  >
+                    Try again
+                  </button>
                   <button className="btn" disabled={busy} onClick={() => run("Remuxing…", () => api.remuxMp4(path))}>
                     Remux to MP4
                   </button>

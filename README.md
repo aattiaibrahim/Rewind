@@ -18,7 +18,7 @@ A lightweight replay-buffer clipper for Windows that records on your NVIDIA GPU 
 - **Launch with Windows** (starts in the tray), single instance.
 - **Library**: clips grouped by day and game, with search, thumbnails, codec and length.
 - **Open any video** from any folder; it shows up under "Imported".
-- **Studio**: preview, drag in/out handles, a fast trim (keyframe cut, no re-encode) and an exact trim (re-encoded on the GPU).
+- **Studio**: preview, drag in/out handles, one frame-exact **Save trim** that re-encodes only the moment before the first keyframe (under a second) and copies the rest untouched, so it takes a few seconds and keeps full quality.
 - **Per-file tools**: remux to MP4 (only for the file you pick), export H.264 MP4, compress to 10/25/50/100 MB. Originals are never changed.
 
 - **Audio**: desktop sound (WASAPI loopback, track 1) and the microphone (mono by default, track 2), both on by default. Synced to video within about 10 ms. Exports and compresses mix both tracks into one.
