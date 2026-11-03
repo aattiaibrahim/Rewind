@@ -344,7 +344,8 @@ input.slider::-moz-range-thumb { width: 12px; height: 12px; border: 0; border-ra
 .src-tag.bad { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
 /* Studio's Share box */
 .share-box { display: flex; flex-direction: column; gap: 8px; }
-.share-box .select { max-width: 130px; }
+.share-box .select { max-width: 112px; flex-shrink: 0; }
+.share-box .btn.primary { padding: 0 10px; font-size: 12.5px; }
 .upload-bar { height: 4px; border-radius: 999px; background: var(--track); overflow: hidden; }
 .upload-bar i { display: block; height: 100%; background: var(--accent); border-radius: 999px; transition: width 0.2s linear; }
 .share-link {

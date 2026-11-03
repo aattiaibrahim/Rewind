@@ -261,6 +261,9 @@ export function Studio({
   const wrap = useRef<HTMLDivElement>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [ar, setAr] = useState(16 / 9);
+  // Shown in the player until the first frame is decoded (no black box while a clip loads).
+  const openClip = (clips ?? []).find((c) => c.path === path);
+  const poster = useThumb(path ?? "", openClip?.modified ?? 0);
   const [theater, setTheater] = useState(() => loadJson("rewind.theater", false));
   // Overlay controls: shown while the pointer moves over the video, hidden after a moment of stillness.
   const [hover, setHover] = useState(false);
@@ -636,6 +639,7 @@ export function Studio({
             <video
               key={`${path}#${reload}`}
               ref={video}
+              poster={poster ?? undefined}
               // The version tag makes the player load the file fresh after an edit replaced it
               // in place (same name); otherwise WebView2 can reuse its cached copy of the old file.
               src={`${convertFileSrc(path)}?v=${(clips ?? []).find((c) => c.path === path)?.modified ?? 0}-${reload}`}

@@ -1,10 +1,55 @@
-# Rewind
+<p align="center">
+  <img src="src/logo.svg" width="84" alt="" />
+</p>
 
-A lightweight replay-buffer clipper for Windows that records on your NVIDIA GPU (NVENC), with a built-in trimmer that opens any video on your PC.
+<h1 align="center">Rewind</h1>
 
-**[Download the latest installer](https://github.com/aattiaibrahim/Rewind/releases/latest)**. It needs Windows 10/11 and an NVIDIA GTX 10-series or newer (AV1 needs an RTX 40/50). The installer isn't code-signed yet, so Windows SmartScreen may warn you: click **More info → Run anyway**.
+<p align="center">
+  <b>The lightweight game clipper for Windows.</b><br />
+  Always-on replay buffer on your NVIDIA GPU, a frame-exact trimmer, and one-click sharing that plays inside Discord.
+</p>
 
-## What works now
+<p align="center">
+  <a href="https://github.com/aattiaibrahim/Rewind/releases/latest"><b>⬇ Download for Windows</b></a>
+  &nbsp;·&nbsp;
+  <a href="benchmarks/README.md">Benchmarks</a>
+  &nbsp;·&nbsp;
+  <a href="#stream-deck-and-other-tools">Stream Deck</a>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/studio.jpg" alt="Rewind's Studio: a clip open with the trim timeline and share panel" width="900" />
+</p>
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/library.jpg" alt="Clip library grouped by day with a date timeline" />
+      <p><b>Your clips, by game and day.</b> Thumbnails first, a date timeline to jump through months, and clips from Medal, OBS and NVIDIA in the same place.</p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/sharing.jpg" alt="Sharing settings" />
+      <p><b>Share in one click.</b> Upload to Catbox, Litterbox, Streamable or a Discord channel and get a link that plays inside Discord, no Nitro needed.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/appearance.jpg" alt="Appearance settings with themes and accent colours" />
+      <p><b>Yours to style.</b> Midnight, Graphite or OLED black, six accent colours, and a Reduce motion switch.</p>
+    </td>
+    <td width="50%" valign="top">
+      <p><b>Light on your game.</b></p>
+      <ul>
+        <li>Encodes on the GPU's own NVENC chip: about 2.5 ms per frame and around 3% of one CPU core at 1080p60.</li>
+        <li>The replay buffer lives in RAM, so no constant SSD writes.</li>
+        <li>Saving a 2-minute clip takes under a second.</li>
+        <li>A built-in <a href="benchmarks/README.md">performance test</a> measures the cost against OBS, NVIDIA Instant Replay and Medal on your own PC.</li>
+      </ul>
+      <p>Needs Windows 10/11 and an NVIDIA GTX 10-series or newer (AV1 needs an RTX 40/50). The installer isn't code-signed yet, so SmartScreen may warn you: click <b>More info → Run anyway</b>.</p>
+    </td>
+  </tr>
+</table>
+## Features
 
 - **Replay buffer on NVENC**: AV1, HEVC or H.264, 15 s to 20 min, constant-quality mode.
 - **Buffer in RAM by default**: no constant SSD writes. A disk mode remains for very long buffers.

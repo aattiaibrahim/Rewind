@@ -73,6 +73,7 @@ export function useThumb(path: string, key: string | number = "") {
   useEffect(() => {
     let alive = true;
     setSrc(null);
+    if (!path) return;
     api
       .thumbnail(path, String(key))
       .then((s) => alive && setSrc(s))

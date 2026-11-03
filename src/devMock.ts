@@ -14,13 +14,13 @@ export function installDevMock() {
   const now = Date.now();
   const day = 86_400_000;
   let clips: Clip[] = [
-    ["VALORANT", "Ace on Ascent", 0.1, 61],
+    ["Counter-Strike 2", "Mirage AWP flick", 0.1, 61],
     ["VALORANT", "1v3 clutch", 0.2, 48],
-    ["Apex Legends", "Final ring", 0.3, 92],
-    ["Desktop", "Bug repro", 0.4, 22],
-    ["VALORANT", "Ranked win", 1.1, 75],
-    ["Apex Legends", "Kraber headshot", 1.2, 40],
-    ["Desktop", "Desktop 2026-10-28", 2.2, 18],
+    ["Overwatch 2", "5 kill streak", 0.3, 92],
+    ["Rainbow Six Siege", "Scoped clutch", 0.4, 22],
+    ["Marvel Rivals", "Team-up ult", 1.1, 75],
+    ["Hunt Showdown", "Bayou extract", 1.2, 40],
+    ["Payday The Heist", "Clean heist", 2.2, 18],
   ].map(([folder, name, ago, mb]) => ({
     path: `C:\\Users\\you\\Videos\\Rewind\\${folder}\\${name}.mkv`,
     name: name as string,
@@ -38,7 +38,7 @@ export function installDevMock() {
     { path: "C:\\Users\\you\\Medal\\Clips\\Valorant\\Medal clip.mp4", name: "Medal clip", folder: "Valorant", size: 30 << 20, modified: now - 0.6 * day, external: true, location: "linked", onNas: false, source: "Medal" },
   );
   // A few months of older clips, so the date timeline has something to show.
-  const games = ["VALORANT", "Apex Legends", "Counter-Strike 2", "Desktop"];
+  const games = ["VALORANT", "Counter-Strike 2", "Overwatch 2", "Rainbow Six Siege", "Marvel Rivals", "Hunt Showdown", "Payday The Heist"];
   for (let i = 0; i < 40; i++) {
     const ago = 3 + Math.floor(i * 3.1) + (i % 3) * 0.3;
     const g = games[i % games.length];
@@ -70,7 +70,24 @@ export function installDevMock() {
   const listeners = new Map<string, number[]>();
   const callbacks = new Map<number, (e: unknown) => void>();
   let nextCb = 1;
-  const emit = (event: string) =>
+  // Screenshot helpers (preview only): ?demo=studio opens the first clip,
+  // ?demo=settings-<tab> opens that Settings tab.
+  const demo = new URLSearchParams(location.search).get("demo") ?? "";
+  if (demo.startsWith("settings-")) {
+    try {
+      localStorage.setItem("rewind.settingsTab", demo.slice(9));
+    } catch {
+      /* fine */
+    }
+  }
+  if (demo) {
+    setTimeout(() => {
+      const send = (event: string, payload: unknown) =>
+        (listeners.get(event) ?? []).forEach((id) => callbacks.get(id)?.({ event, id: 0, payload }));
+      if (demo === "studio") send("open-in-studio", clips[0].path);
+      if (demo.startsWith("settings-")) send("show-view", "settings");
+    }, 900);
+  }  const emit = (event: string) =>
     (listeners.get(event) ?? []).forEach((id) => callbacks.get(id)?.({ event, id: 0, payload: null }));
 
   const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
@@ -84,7 +101,7 @@ export function installDevMock() {
     get_update_state: () =>
       pendingUpdate
         ? { current: "0.1.12", stage: "ready", version: "0.1.13", notes: "Sample release notes.", error: null }
-        : { current: "dev", stage: "up-to-date", version: null, notes: null, error: null },
+        : { current: "0.1.19", stage: "up-to-date", version: null, notes: null, error: null },
     "plugin:opener|open_url": () => null,
     get_nas_state: () =>
       settings.nasDir
@@ -129,7 +146,13 @@ export function installDevMock() {
     list_monitors: () => [],
     list_audio_inputs: () => [],
     probe_file: () => ({ duration: 45, codec: "av1", width: 1920, height: 1080, fps: 60, audioTracks: 2, container: "matroska" }),
-    thumbnail: (a) => `/preview-thumb-${((a.path as string).length % 3) + 1}.jpg`,
+    // Thumbnails matched to each game (frames picked from real clips for the README screenshots).
+    thumbnail: (a) => {
+      const p = a.path as string;
+      const by: [string, string[]][] = [["VALORANT", ["valorant"]], ["Counter-Strike", ["cs2a", "cs2b"]], ["Overwatch", ["ow1", "ow2"]], ["Rainbow", ["r6"]], ["Marvel", ["marvel"]], ["Hunt", ["hunt"]], ["Payday", ["payday"]]];
+      const list = by.find(([k]) => p.toLowerCase().includes(k.toLowerCase()))?.[1] ?? ["cs2a"];
+      return `/thumb-${list[p.length % list.length]}.jpg`;
+    },
     preview_audio: () => ({
       firstTitle: "Desktop audio",
       extra: [{ index: 1, title: "Microphone", path: "C:\\Users\\you\\preview\\mic.m4a" }],
