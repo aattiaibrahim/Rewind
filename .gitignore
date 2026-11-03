@@ -31,6 +31,7 @@ streamdeck/dist/
 
 # Sample video for browser preview mode
 public/preview-sample.mp4
+public/preview-sample.mkv
 public/preview-thumb-*.jpg
 public/preview-mic.m4a
 

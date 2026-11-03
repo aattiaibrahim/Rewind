@@ -105,9 +105,10 @@ export function installDevMock() {
       return id;
     },
     unregisterCallback: (id: number) => callbacks.delete(id),
-    // Every sample clip plays the same generated test video (public/preview-sample.mp4).
+    // Every sample clip plays the same generated test video (public/preview-sample.mkv:
+    // AV1 1080p60 with a keyframe every second, like Rewind's own clips).
     convertFileSrc: (p: string) =>
-      p.endsWith("mic.m4a") ? "/preview-mic.m4a" : p.startsWith("C:\\Users\\you\\") ? "/preview-sample.mp4" : p,
+      p.endsWith("mic.m4a") ? "/preview-mic.m4a" : p.startsWith("C:\\Users\\you\\") ? "/preview-sample.mkv" : p,
     invoke: async (cmd: string, args: Record<string, unknown> = {}) => {
       const h = handlers[cmd];
       if (!h) {

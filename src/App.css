@@ -280,6 +280,31 @@ input[type="range"].track { width: auto; }
 .switch { width: 40px; height: 22px; accent-color: var(--accent); }
 input[type="range"] { accent-color: var(--accent); width: 160px; }
 
+/* Sliders: thin track filled with the accent up to a small round handle. */
+input.slider {
+  -webkit-appearance: none; appearance: none; height: 18px; background: transparent; cursor: pointer; margin: 0;
+}
+input.slider::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 999px;
+  background: linear-gradient(to right, var(--accent) var(--fill, 0%), var(--track) var(--fill, 0%));
+}
+input.slider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 12px; height: 12px; margin-top: -4px; border-radius: 50%;
+  background: var(--text); border: 0; box-shadow: 0 1px 3px rgb(0 0 0 / 0.45);
+  transition: transform var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
+}
+input.slider:hover::-webkit-slider-thumb { transform: scale(1.2); }
+input.slider:active::-webkit-slider-thumb {
+  transform: scale(1.2); box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 25%, transparent), 0 1px 3px rgb(0 0 0 / 0.45);
+}
+input.slider:focus { outline: none; }
+input.slider:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 55%, transparent); }
+input.slider:disabled { opacity: 0.5; cursor: default; }
+/* Firefox (not used by Rewind's window, but keeps the browser preview tidy). */
+input.slider::-moz-range-track { height: 4px; border-radius: 999px; background: var(--track); }
+input.slider::-moz-range-progress { height: 4px; border-radius: 999px; background: var(--accent); }
+input.slider::-moz-range-thumb { width: 12px; height: 12px; border: 0; border-radius: 50%; background: var(--text); }
+
 .update-banner {
   display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px;
   margin: 14px 28px 0; padding: 10px 14px; border-radius: 10px; font-size: 13px;

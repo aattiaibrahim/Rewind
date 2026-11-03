@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ClipFile, codecLabel, errText, fmtSize, fmtTime, PreviewAudio, Probe, Settings } from "./api";
 import { useThumb } from "./hooks";
+import { Slider } from "./Slider";
 
 type Job = { label: string } | null;
 
@@ -285,12 +286,54 @@ export function Studio({
     };
   }, [path, reload]);
 
+  // Seeking: one seek at a time, always to the newest spot. Setting currentTime
+  // while a seek is still decoding cancels it, so a fast drag used to show only
+  // the odd keyframe; waiting for each seek to land shows ~40 real frames a second.
+  const pendingSeek = useRef<number | null>(null);
+  const scrubbing = useRef(false);
+  const resumeAfterScrub = useRef(false);
   const seek = useCallback((t: number) => {
     const v = video.current;
     if (!v) return;
-    v.currentTime = Math.max(0, Math.min(t, v.duration || t));
-    setTime(v.currentTime);
+    const to = Math.max(0, Math.min(t, v.duration || t));
+    setTime(to);
+    if (v.seeking) pendingSeek.current = to;
+    else {
+      pendingSeek.current = null;
+      v.currentTime = to;
+    }
   }, []);
+  const beginScrub = () => {
+    const v = video.current;
+    if (!v || scrubbing.current) return;
+    scrubbing.current = true;
+    resumeAfterScrub.current = !v.paused;
+    v.pause();
+  };
+  const endScrub = () => {
+    scrubbing.current = false;
+    const v = video.current;
+    // Resume now if the last seek already landed; otherwise onSeeked resumes once it does.
+    if (v && resumeAfterScrub.current && !v.seeking && pendingSeek.current == null) {
+      resumeAfterScrub.current = false;
+      v.play().catch(() => {});
+    }
+  };
+  const onSeeked = () => {
+    const v = video.current;
+    if (!v) return;
+    if (pendingSeek.current != null) {
+      const to = pendingSeek.current;
+      pendingSeek.current = null;
+      v.currentTime = to;
+      return;
+    }
+    syncExtra(true);
+    if (!scrubbing.current && resumeAfterScrub.current) {
+      resumeAfterScrub.current = false;
+      v.play().catch(() => {});
+    }
+  };
 
   const toggle = useCallback(() => {
     const v = video.current;
@@ -381,14 +424,20 @@ export function Studio({
       else if (kind === "out") setRange(([a]) => [a, Math.max(t, a + 0.1)]);
       seek(t);
     };
+    beginScrub();
     apply(e.clientX);
     const move = (ev: PointerEvent) => apply(ev.clientX);
-    const up = () => {
+    const up = (ev: PointerEvent) => {
+      // Land exactly where the mouse let go.
+      apply(ev.clientX);
+      endScrub();
       el.removeEventListener("pointermove", move);
       el.removeEventListener("pointerup", up);
+      el.removeEventListener("pointercancel", up);
     };
     el.addEventListener("pointermove", move);
     el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", up);
   };
 
   // The fullscreen progress bar: click or drag to jump.
@@ -399,14 +448,19 @@ export function Studio({
       const r = el.getBoundingClientRect();
       seek(Math.max(0, Math.min(1, (x - r.left) / r.width)) * duration);
     };
+    beginScrub();
     to(e.clientX);
     const move = (ev: PointerEvent) => to(ev.clientX);
-    const up = () => {
+    const up = (ev: PointerEvent) => {
+      to(ev.clientX);
+      endScrub();
       el.removeEventListener("pointermove", move);
       el.removeEventListener("pointerup", up);
+      el.removeEventListener("pointercancel", up);
     };
     el.addEventListener("pointermove", move);
     el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", up);
   };
 
   const run = async (label: string, fn: () => Promise<string>, replaces = false) => {
@@ -502,6 +556,8 @@ export function Studio({
               }}
               onTimeUpdate={(e) => {
                 const v = e.currentTarget;
+                // While dragging (or a seek is queued) the playhead follows the mouse, not the decoder.
+                if (scrubbing.current || pendingSeek.current != null) return;
                 setTime(v.currentTime);
                 if (!v.paused && v.currentTime >= range[1]) v.pause();
                 syncExtra();
@@ -514,7 +570,7 @@ export function Studio({
                 setPlaying(false);
                 syncExtra();
               }}
-              onSeeked={() => syncExtra(true)}
+              onSeeked={onSeeked}
               onRateChange={() => syncExtra()}
               onWaiting={() => extraAudio.current.forEach((a) => a.pause())}
               onPlaying={() => syncExtra(true)}
@@ -623,15 +679,11 @@ export function Studio({
               >
                 <SpeakerIcon level={muted ? 0 : volume} />
               </button>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                step={1}
+              <Slider
                 aria-label="Volume"
                 title="Volume (↑ / ↓)"
                 value={muted ? 0 : Math.round(volume * 100)}
-                onChange={(e) => setVolume(Number(e.target.value) / 100)}
+                onValue={(v) => setVolume(v / 100)}
                 style={{ width: 96 }}
               />
               <span className="mono" style={{ width: 38, textAlign: "right" }}>
@@ -699,13 +751,10 @@ export function Studio({
                       <span className="track-name" title={t.title}>
                         {t.title.replace(" audio", "")}
                       </span>
-                      <input
-                        type="range"
-                        min={0}
-                        max={100}
+                      <Slider
                         aria-label={`${t.title} volume`}
                         value={off ? 0 : Math.round(tv(t.title) * 100)}
-                        onChange={(e) => setTrack(t.title, Number(e.target.value) / 100)}
+                        onValue={(v) => setTrack(t.title, v / 100)}
                         style={{ flex: 1, width: 0 }}
                       />
                       <span className="mono" style={{ width: 34, textAlign: "right", fontSize: 11 }}>

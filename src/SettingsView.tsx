@@ -3,6 +3,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useCallback, useEffect, useState } from "react";
 import { Accent, api, bufferEstimateMb, errText, Monitor, Settings, Theme } from "./api";
 import { ConfirmDialog } from "./ConfirmUpdate";
+import { Slider } from "./Slider";
 import { useUpdate } from "./hooks";
 
 function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
@@ -310,14 +311,7 @@ export function SettingsView({
               Fine-tune: CQ {s.quality}
               <small>Lower = sharper and bigger. 20–26 is a good range.</small>
             </span>
-            <input
-              type="range"
-              min={15}
-              max={35}
-              value={s.quality}
-              aria-label="Quality"
-              onChange={(e) => set({ quality: Number(e.target.value) })}
-            />
+            <Slider min={15} max={35} value={s.quality} aria-label="Quality" onValue={(v) => set({ quality: v })} />
           </label>
           <label className="setting">
             <span>Frame rate</span>
