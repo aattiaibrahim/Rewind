@@ -122,7 +122,7 @@ export function ShareConfirm({
       </label>
       <ul className="modal-list wrap">
         <li>{UPLOAD_HOSTS.find((h) => h.id === host)?.hint}</li>
-        <li>Rewind makes an MP4 that plays inside Discord, uploads it, and copies the link.</li>
+        <li>Hindsight makes an MP4 that plays inside Discord, uploads it, and copies the link.</li>
         <li>Anyone who has the link can watch the clip.</li>
         {needsSetup && (
           <li className="err-text">
@@ -356,7 +356,7 @@ export function SharingSettings({
           Discord webhook
           <small>
             A webhook is a private posting address for one channel in your Discord server: whoever has it can post there, nothing
-            else. Rewind uses it to drop your clips into that channel, no bot or login needed.
+            else. Hindsight uses it to drop your clips into that channel, no bot or login needed.
           </small>
           <small>
             Make one in Discord: right-click the channel → <b>Edit Channel</b> → <b>Integrations</b> → <b>Webhooks</b> →{" "}

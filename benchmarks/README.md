@@ -1,10 +1,10 @@
 # Benchmarks
 
-How Rewind compares with other recorders on real PCs, measured with Rewind's built-in **Performance** test.
+How Hindsight compares with other recorders on real PCs, measured with Hindsight's built-in **Performance** test.
 
 ## Share a result
 
-1. In Rewind, open **Performance** and run the test with the recorders you have (OBS replay buffer, NVIDIA Instant Replay, Medal).
+1. In Hindsight, open **Performance** and run the test with the recorders you have (OBS replay buffer, NVIDIA Instant Replay, Medal).
 2. Click **Share on GitHub**. It copies the full results and opens the [benchmark form](https://github.com/aattiaibrahim/Rewind/issues/new?template=benchmark.yml).
 3. Paste the results, fill in your PC, and drag in screenshots: the Results page, each recorder's settings, anything odd.
 
@@ -30,7 +30,7 @@ Every submission is a GitHub issue labelled [`benchmark`](https://github.com/aat
 
 ## Results
 
-| Date | PC (GPU / CPU) | Game | Rewind | OBS | NVIDIA | Medal | Link |
+| Date | PC (GPU / CPU) | Game | Hindsight | OBS | NVIDIA | Medal | Link |
 |------|----------------|------|--------|-----|--------|-------|------|
 | _No submissions yet_ | | | | | | | |
 

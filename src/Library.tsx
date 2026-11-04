@@ -4,10 +4,10 @@ import { api, ClipFile, codecLabel, errText, fmtDuration, fmtSize, Health, Probe
 import { useThumb } from "./hooks";
 import { liveLink, progressText, ShareRequest, timeLeft } from "./Share";
 import { Timeline } from "./Timeline";
-import { damagedText } from "./Health";
+import { DamagedStatus, damagedText } from "./Health";
 
-/** Where the library was scrolled to, kept while you're in Studio (the page itself unmounts). */
-const memory = { scroll: 0, folder: "All", query: "" };
+/** Where each list (all clips, damaged clips) was scrolled to, kept while you're in Studio (the page itself unmounts). */
+const memories: Record<string, { scroll: number; folder: string; query: string }> = {};
 
 function dayLabel(ms: number) {
   const d = new Date(ms);
@@ -199,7 +199,10 @@ export function Library({
   focusPath,
   onShare,
   health,
+  mode = "clips",
 }: {
+  /** "damaged": the Damaged section (the clips given are only the damaged ones). */
+  mode?: "clips" | "damaged";
   health?: Record<string, Health>;
   onShare?: (r: ShareRequest) => void;
   /** The clip last opened in Studio: scrolled back to and highlighted */
@@ -214,6 +217,8 @@ export function Library({
   onDelete: (paths: string[]) => Promise<boolean>;
   hotkey: string;
 }) {
+  const memory = (memories[mode] ??= { scroll: 0, folder: "All", query: "" });
+  const damagedMode = mode === "damaged";
   // Filter and search survive a trip to Studio too.
   const [folder, setFolderState] = useState(memory.folder);
   const [query, setQueryState] = useState(memory.query);
@@ -229,7 +234,7 @@ export function Library({
   const anchor = useRef<string | null>(null);
 
   // One chip per game, even when recorders spell it differently ("VALORANT" / "Valorant").
-  // Rewind's own folder name wins as the label.
+  // Hindsight's own folder name wins as the label.
   const folders = useMemo(() => {
     const label = new Map<string, string>();
     for (const c of clips ?? []) {
@@ -380,17 +385,20 @@ export function Library({
     <div className="lib">
     <div className={`page lib-page ${selecting ? "selecting" : ""}`} ref={scroller} onScroll={onScroll}>
       <div className="toolbar">
-        <h1 style={{ flex: 1 }}>Clips</h1>
+        <h1 style={{ flex: 1 }}>{damagedMode ? "Damaged clips" : "Clips"}</h1>
         <label className="search">
           <span className="muted" style={{ fontSize: 12 }}>
             Search
           </span>
           <input placeholder="clips, games…" value={query} onChange={(e) => setQuery(e.target.value)} />
         </label>
-        <button className="btn" onClick={openAny}>
-          Open any video…
-        </button>
+        {!damagedMode && (
+          <button className="btn" onClick={openAny}>
+            Open any video…
+          </button>
+        )}
       </div>
+      {damagedMode && <DamagedStatus count={clips?.length ?? 0} />}
 
       {selecting ? (
         <div className="select-bar" role="toolbar" aria-label="Selected clips">
@@ -423,7 +431,12 @@ export function Library({
         )
       )}
 
-      {clips === null ? null : clips.length === 0 ? (
+      {clips === null ? null : clips.length === 0 && damagedMode ? (
+        <div className="empty">
+          <strong>No damaged clips</strong>
+          <span>Every clip checked so far plays properly. Anything that doesn't will show up here.</span>
+        </div>
+      ) : clips.length === 0 ? (
         <div className="empty">
           <strong>No clips yet</strong>
           <span>

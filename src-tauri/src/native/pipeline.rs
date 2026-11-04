@@ -443,7 +443,7 @@ pub fn save(runs: &[Arc<Buffers>], seconds: u32, out: &Path, scratch: &Path) -> 
     result
 }
 
-/// What a save's staging folder needs to be finished later, if Rewind is
+/// What a save's staging folder needs to be finished later, if Hindsight is
 /// closed (or crashes) between writing the raw files and the MKV.
 #[derive(Serialize, Deserialize)]
 struct SaveMeta {
@@ -484,7 +484,7 @@ fn mux_span(s: &Span, out: &Path, staging: &Path, resumable: bool) -> Result<(),
     mux(&video_path, format, fps, &tracks, out, Duration::from_secs_f64(60.0 + secs))
 }
 
-/// Finish saves that were cut off (Rewind closed or crashed mid-save).
+/// Finish saves that were cut off (Hindsight closed or crashed mid-save).
 /// Returns the clips written.
 pub fn recover_saves(clips_dir: &Path) -> Vec<String> {
     let mut done = Vec::new();
@@ -594,7 +594,7 @@ pub fn mux_recording_parts(dir: &Path) {
 mod tests {
     use super::*;
 
-    /// A save cut off after its raw files were written (Rewind closed or
+    /// A save cut off after its raw files were written (Hindsight closed or
     /// crashed) is finished on the next start, and its folder removed.
     #[test]
     fn unfinished_save_is_finished_on_next_start() {

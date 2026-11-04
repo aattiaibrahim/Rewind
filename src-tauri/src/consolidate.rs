@@ -1,7 +1,7 @@
-//! "Move into Rewind": tidy another recorder's clips (Medal, OBS, NVIDIA, any
-//! linked folder) into Rewind's own layout, `<clips>/<Game>/<Game> <date time>.<ext>`.
+//! "Move into Hindsight": tidy another recorder's clips (Medal, OBS, NVIDIA, any
+//! linked folder) into Hindsight's own layout, `<clips>/<Game>/<Game> <date time>.<ext>`.
 //!
-//! - Games merge with Rewind's existing folders across spellings ("Valorant"
+//! - Games merge with Hindsight's existing folders across spellings ("Valorant"
 //!   joins "VALORANT"); files at the top of a folder (OBS) go in a folder named
 //!   after the recorder.
 //! - Same drive: an instant rename. Another drive: copy to a hidden partial
@@ -33,7 +33,7 @@ pub struct Plan {
     pub label: String,
     pub count: usize,
     pub bytes: u64,
-    /// The Rewind folders clips will land in, with how many each
+    /// The Hindsight folders clips will land in, with how many each
     pub folders: Vec<(String, usize)>,
     /// A few "old name → new name" examples
     pub examples: Vec<(String, String)>,
@@ -90,7 +90,7 @@ pub fn plan_many(roots: &[LinkedRoot], clips_dir: &Path, avoid: &[PathBuf]) -> P
     }
     let mut seen = std::collections::HashSet::new();
     found.retain(|c| seen.insert(c.path.to_lowercase()));
-    // Rewind's existing game folders, by key.
+    // Hindsight's existing game folders, by key.
     let mut existing: Vec<String> = fs::read_dir(clips_dir)
         .map(|r| r.flatten().filter(|e| e.path().is_dir()).map(|e| e.file_name().to_string_lossy().into_owned()).collect())
         .unwrap_or_default();
@@ -106,7 +106,7 @@ pub fn plan_many(roots: &[LinkedRoot], clips_dir: &Path, avoid: &[PathBuf]) -> P
         if !settled(&from) {
             continue;
         }
-        // Reuse Rewind's folder for this game, or one this plan already created
+        // Reuse Hindsight's folder for this game, or one this plan already created
         // (so "Valorant" and "VALORANT" from two recorders share one folder).
         let folder = match existing.iter().find(|e| game_key(e) == game_key(&c.folder)) {
             Some(f) => f.clone(),
@@ -252,7 +252,7 @@ mod tests {
     fn moves_into_matching_game_folders_and_undo_puts_everything_back() {
         let d = std::env::temp_dir().join(format!("rewind-consolidate-{}", std::process::id()));
         let _ = fs::remove_dir_all(&d);
-        let (clips, medal) = (d.join("Rewind"), d.join("Medal"));
+        let (clips, medal) = (d.join("Hindsight"), d.join("Medal"));
         fs::create_dir_all(clips.join("VALORANT")).unwrap();
         old_file(&medal.join("Clips/Valorant/clip one.mp4"), 100);
         old_file(&medal.join("Clips/Valorant/clip two.mp4"), 200);
@@ -267,7 +267,7 @@ mod tests {
         assert_eq!(plan.count, 3, "{:?}", plan.moves);
         assert_eq!(plan.bytes, 600);
         assert!(!plan.other_drive);
-        // "Valorant" joins Rewind's "VALORANT".
+        // "Valorant" joins Hindsight's "VALORANT".
         let names: Vec<_> = plan.folders.iter().map(|(f, n)| format!("{f}={n}")).collect();
         assert_eq!(names, vec!["VALORANT=2", "Tom Clancys Rainbow Six Siege=1"]);
         // Two clips with the same timestamp get distinct names.
@@ -294,7 +294,7 @@ mod tests {
     fn top_level_files_go_in_a_folder_named_after_the_recorder() {
         let d = std::env::temp_dir().join(format!("rewind-consolidate-obs-{}", std::process::id()));
         let _ = fs::remove_dir_all(&d);
-        let (clips, obs) = (d.join("Rewind"), d.join("OBS"));
+        let (clips, obs) = (d.join("Hindsight"), d.join("OBS"));
         fs::create_dir_all(&clips).unwrap();
         old_file(&obs.join("2026-11-03 10-00-00.mkv"), 10);
         let plan = plan(&LinkedRoot { path: obs, label: "OBS".into() }, &clips, &[clips.clone()]);
@@ -306,7 +306,7 @@ mod tests {
     fn moving_several_folders_together_never_picks_the_same_name() {
         let d = std::env::temp_dir().join(format!("rewind-consolidate-all-{}", std::process::id()));
         let _ = fs::remove_dir_all(&d);
-        let (clips, medal, nvidia) = (d.join("Rewind"), d.join("Medal"), d.join("NVIDIA"));
+        let (clips, medal, nvidia) = (d.join("Hindsight"), d.join("Medal"), d.join("NVIDIA"));
         fs::create_dir_all(&clips).unwrap();
         // Same game, same second, from two recorders.
         old_file(&medal.join("Clips/Valorant/a.mp4"), 10);

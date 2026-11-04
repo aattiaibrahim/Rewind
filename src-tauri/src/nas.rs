@@ -34,7 +34,7 @@ pub struct NasState {
     pub pending: usize,
     /// File being copied right now
     pub copying: Option<String>,
-    /// Clips copied since Rewind started
+    /// Clips copied since Hindsight started
     pub copied: usize,
     pub last_error: Option<String>,
     /// When the last full pass finished (ms since 1970)

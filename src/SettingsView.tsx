@@ -1,7 +1,7 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useCallback, useEffect, useState } from "react";
-import { Accent, api, bufferEstimateMb, errText, Monitor, Settings, Theme } from "./api";
+import { Accent, api, bufferEstimateMb, errText, fmtDb, Monitor, Settings, Theme } from "./api";
 import { ConfirmDialog } from "./ConfirmUpdate";
 import { LibrarySettings } from "./LibrarySettings";
 import { SharingSettings } from "./Share";
@@ -150,7 +150,7 @@ export function SettingsView({
       case "downloading":
         return `Downloading ${upd.version}…`;
       case "ready":
-        return `Version ${upd.version} is downloaded. It installs when Rewind restarts.`;
+        return `Version ${upd.version} is downloaded. It installs when Hindsight restarts.`;
       case "available":
         return `Version ${upd.version} is available.`;
       case "up-to-date":
@@ -202,7 +202,7 @@ export function SettingsView({
             <span>
               Benchmark mode
               <small>
-                Shows the Performance page, which measures how much FPS Rewind, OBS, NVIDIA Instant Replay and Medal cost
+                Shows the Performance page, which measures how much FPS Hindsight, OBS, NVIDIA Instant Replay and Medal cost
                 your game.
               </small>
             </span>
@@ -296,7 +296,7 @@ export function SettingsView({
           <div className="setting">
             <span>
               <span className="version-line">
-                Rewind <strong className="mono">{upd?.current ?? "…"}</strong>
+                Hindsight <strong className="mono">{upd?.current ?? "…"}</strong>
               </span>
               <small>{updateLine}</small>
             </span>
@@ -320,7 +320,7 @@ export function SettingsView({
             <span>
               Update automatically
               <small>
-                Downloads in the background and installs when Rewind closes. Never restarts on its own during a recording
+                Downloads in the background and installs when Hindsight closes. Never restarts on its own during a recording
                 or while a game is open.
               </small>
             </span>
@@ -421,7 +421,7 @@ export function SettingsView({
             >
               <ul className="modal-list wrap">
                 <li>
-                  Rewind would write about {bufferEstimateMb(s)} MB to disk over and over the whole time it runs, which
+                  Hindsight would write about {bufferEstimateMb(s)} MB to disk over and over the whole time it runs, which
                   wears out your SSD over the years.
                 </li>
                 <li>The capture restarts, so what's in the replay buffer now is cleared.</li>
@@ -453,13 +453,13 @@ export function SettingsView({
           <h2>Stream Deck &amp; other tools</h2>
           <div className="setting">
             <span>
-              Rewind plugin for Stream Deck
+              Hindsight plugin for Stream Deck
               <small>Buttons for Save clip, Record (lights up red), Replay buffer and Quality.</small>
             </span>
             <button
               className="btn small"
               onClick={() =>
-                openUrl("https://github.com/aattiaibrahim/Rewind/releases/latest/download/Rewind.streamDeckPlugin").catch((e) =>
+                openUrl("https://github.com/aattiaibrahim/Rewind/releases/latest/download/Hindsight.streamDeckPlugin").catch((e) =>
                   onError(errText(e)),
                 )
               }
@@ -513,6 +513,34 @@ export function SettingsView({
                   <small>Your voice in both ears instead of one side</small>
                 </span>
                 <Toggle label="Mono microphone" checked={s.micMono} onChange={(v) => set({ micMono: v })} />
+              </label>
+              <label className="setting">
+                <span>
+                  Mic volume
+                  <small>
+                    Louder or quieter than Windows gives it, for new clips and recordings. Changes apply straight away. You can
+                    still adjust each clip in the editor.
+                  </small>
+                </span>
+                <span className="row" style={{ gap: 10 }}>
+                  <Slider
+                    aria-label="Mic volume"
+                    min={-20}
+                    max={20}
+                    step={0.5}
+                    value={s.micGainDb}
+                    onValue={(v) => set({ micGainDb: v })}
+                    style={{ width: 160 }}
+                  />
+                  <span className="muted" style={{ fontSize: 12, minWidth: 54, textAlign: "right" }}>
+                    {fmtDb(s.micGainDb)}
+                  </span>
+                  {s.micGainDb !== 0 && (
+                    <button className="btn small" onClick={() => set({ micGainDb: 0 })}>
+                      Reset
+                    </button>
+                  )}
+                </span>
               </label>
             </>
           )}

@@ -13,10 +13,32 @@ use cpal::{FromSample, Sample, SampleFormat, SizedSample};
 use std::collections::VecDeque;
 use std::io::{ErrorKind, Write};
 use std::net::TcpListener;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
+
+/// Microphone volume as a multiplier (f32 bits), changed live from Settings.
+static MIC_GAIN: AtomicU32 = AtomicU32::new(0x3f80_0000); // 1.0
+
+/// Make the mic louder or quieter while recording (-20..+20 dB).
+pub fn set_mic_gain_db(db: f64) {
+    let g = 10f64.powf(db.clamp(-20.0, 20.0) / 20.0) as f32;
+    MIC_GAIN.store(g.to_bits(), Ordering::Relaxed);
+}
+
+fn mic_gain() -> f32 {
+    f32::from_bits(MIC_GAIN.load(Ordering::Relaxed))
+}
+
+/// Scale samples, clamped so a boost can't wrap around into noise.
+fn apply_gain(samples: &mut [f32], g: f32) {
+    if (g - 1.0).abs() > 1e-4 {
+        for x in samples {
+            *x = (*x * g).clamp(-1.0, 1.0);
+        }
+    }
+}
 
 pub enum Source {
     Desktop,
@@ -103,6 +125,7 @@ fn open(src: Source, chunks: Option<Chunks>) -> Result<Opened, String> {
 
 fn open_stream(src: &Source, q: Queue, chunks: Option<Chunks>) -> Result<(cpal::Stream, u32, u16, String), String> {
     let host = cpal::default_host();
+    let is_mic = matches!(src, Source::Mic { .. });
     let (dev, cfg, mono) = match src {
         Source::Desktop => {
             let d = host.default_output_device().ok_or("No speakers or headphones found.")?;
@@ -131,10 +154,10 @@ fn open_stream(src: &Source, q: Queue, chunks: Option<Chunks>) -> Result<(cpal::
 
     // On WASAPI, an input stream on an output device is loopback capture.
     let stream = match cfg.sample_format() {
-        SampleFormat::F32 => build::<f32>(&dev, &config, in_ch, mono, q, chunks, max),
-        SampleFormat::I16 => build::<i16>(&dev, &config, in_ch, mono, q, chunks, max),
-        SampleFormat::I32 => build::<i32>(&dev, &config, in_ch, mono, q, chunks, max),
-        SampleFormat::U16 => build::<u16>(&dev, &config, in_ch, mono, q, chunks, max),
+        SampleFormat::F32 => build::<f32>(&dev, &config, in_ch, mono, is_mic, q, chunks, max),
+        SampleFormat::I16 => build::<i16>(&dev, &config, in_ch, mono, is_mic, q, chunks, max),
+        SampleFormat::I32 => build::<i32>(&dev, &config, in_ch, mono, is_mic, q, chunks, max),
+        SampleFormat::U16 => build::<u16>(&dev, &config, in_ch, mono, is_mic, q, chunks, max),
         f => Err(format!("Unsupported audio format {f:?}")),
     }?;
     stream.play().map_err(|e| e.to_string())?;
@@ -146,6 +169,7 @@ fn build<T>(
     config: &cpal::StreamConfig,
     in_ch: usize,
     mono: bool,
+    is_mic: bool,
     q: Queue,
     chunks: Option<Chunks>,
     max: usize,
@@ -163,13 +187,16 @@ where
                 let ts = info.timestamp();
                 let delay = ts.callback.duration_since(&ts.capture).unwrap_or_default();
                 let at = Instant::now().checked_sub(delay).unwrap_or_else(Instant::now);
-                let samples: Vec<f32> = if mono && in_ch > 1 {
+                let mut samples: Vec<f32> = if mono && in_ch > 1 {
                     data.chunks(in_ch)
                         .map(|f| f.iter().map(|&x| f32::from_sample(x)).sum::<f32>() / in_ch as f32)
                         .collect()
                 } else {
                     data.iter().map(|&x| f32::from_sample(x)).collect()
                 };
+                if is_mic {
+                    apply_gain(&mut samples, mic_gain());
+                }
                 let mut c = chunks.lock().unwrap();
                 c.push_back((at, samples));
                 while c.len() > 400 {
@@ -177,14 +204,15 @@ where
                 }
                 return;
             }
+            let g = if is_mic { mic_gain() } else { 1.0 };
             let mut q = q.lock().unwrap();
             if mono && in_ch > 1 {
                 for frame in data.chunks(in_ch) {
                     let sum: f32 = frame.iter().map(|&x| f32::from_sample(x)).sum();
-                    q.push_back(sum / in_ch as f32);
+                    q.push_back((sum / in_ch as f32 * g).clamp(-1.0, 1.0));
                 }
             } else {
-                q.extend(data.iter().map(|&x| f32::from_sample(x)));
+                q.extend(data.iter().map(|&x| (f32::from_sample(x) * g).clamp(-1.0, 1.0)));
             }
             while q.len() > max {
                 q.pop_front();
@@ -376,7 +404,7 @@ const IDLE_LAG: Duration = Duration::from_millis(500);
 /// sound card's clock and the system clock is corrected one frame at a time,
 /// by stretching or squeezing a whole chunk by one frame with interpolation
 /// (a 0.2% change over ~10 ms, far below hearing, and no click), so audio
-/// stays locked to the video however long Rewind runs.
+/// stays locked to the video however long Hindsight runs.
 struct Placer {
     ch: usize,
     smooth: i64,
@@ -586,6 +614,22 @@ fn place(chunks: &Chunks, ring: &Arc<Mutex<AudioRing>>, stop: &AtomicBool) {
             let idx = r.frame_at(Instant::now().checked_sub(IDLE_LAG).unwrap_or_else(Instant::now));
             placer.idle(&mut r, idx);
         }
+    }
+}
+
+#[cfg(test)]
+mod gain_tests {
+    use super::*;
+
+    #[test]
+    fn gain_scales_and_clamps() {
+        set_mic_gain_db(6.0);
+        assert!((mic_gain() - 1.995).abs() < 0.01);
+        let mut s = [0.1, -0.2, 0.9];
+        apply_gain(&mut s, mic_gain());
+        assert!((s[0] - 0.1995).abs() < 0.001 && s[2] == 1.0);
+        set_mic_gain_db(0.0);
+        assert_eq!(mic_gain(), 1.0);
     }
 }
 

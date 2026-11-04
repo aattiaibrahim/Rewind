@@ -2,7 +2,8 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, ClipFile, codecLabel, errText, fmtSize, fmtTime, Health, PreviewAudio, Probe, Settings, Upload, UploadProgress } from "./api";
+import { api, ClipFile, codecLabel, errText, fmtSize, fmtTime, Health, PreviewAudio, Probe, Settings, TrackEdit, Upload, UploadProgress, Waveform } from "./api";
+import { AudioLanes, hasAudioEdits, isMutedAt } from "./AudioLanes";
 import { useThumb } from "./hooks";
 import { SharePanel, ShareRequest } from "./Share";
 import { HealthNotice } from "./Health";
@@ -307,23 +308,43 @@ export function Studio({
     saveJson("rewind.trackVolume", next);
     if (v > 0) setTrackMuted((m) => ({ ...m, [title]: false }));
   };
+  // Audio edits for the saved file (per track: volume in dB, muted stretches), heard in the preview too.
+  const [audioEdits, setAudioEdits] = useState<TrackEdit[]>([]);
+  const [waves, setWaves] = useState<Waveform[] | null>(null);
+  const audioEdited = hasAudioEdits(audioEdits);
+  const editsForSave = audioEdited ? audioEdits : undefined;
   // Keep every element's volume in step (also after it remounts for a new clip).
-  useEffect(() => {
+  const applyVolumes = useRef(() => {});
+  applyVolumes.current = () => {
     const allMuted = muted || volume === 0;
     const v = video.current;
+    const now = v?.currentTime ?? 0;
+    const gain = (i: number) => Math.pow(10, (audioEdits[i]?.gainDb ?? 0) / 20);
     if (v) {
       const first = tracks?.firstTitle ?? "Game";
-      v.volume = Math.min(1, volume * tv(first));
-      v.muted = allMuted || !!trackMuted[first];
+      v.volume = Math.min(1, volume * tv(first) * gain(0));
+      v.muted = allMuted || !!trackMuted[first] || isMutedAt(audioEdits[0], now);
     }
     tracks?.extra.forEach((t) => {
       const a = extraAudio.current.get(t.index);
       if (a) {
-        a.volume = Math.min(1, volume * tv(t.title));
-        a.muted = allMuted || !!trackMuted[t.title];
+        a.volume = Math.min(1, volume * tv(t.title) * gain(t.index));
+        a.muted = allMuted || !!trackMuted[t.title] || isMutedAt(audioEdits[t.index], now);
       }
     });
-  });
+  };
+  useEffect(() => applyVolumes.current());
+  // Muted stretches start and stop on the frame while playing, not at the next time update.
+  useEffect(() => {
+    if (!playing || !audioEdits.some((e) => e.mutes.length)) return;
+    let raf = 0;
+    const tick = () => {
+      applyVolumes.current();
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [playing, audioEdits]);
   // Mirror play / pause / seek / speed from the video onto the extra tracks,
   // and nudge them back if they drift more than ~60 ms.
   const syncExtra = useCallback((hard = false) => {
@@ -354,8 +375,14 @@ export function Studio({
     setRange([0, 0]);
     setDuration(0);
     setTracks(null);
+    setAudioEdits([]);
+    setWaves(null);
     if (!path) return;
     let alive = true;
+    api
+      .clipWaveforms(path)
+      .then((w) => alive && setWaves(w))
+      .catch(() => alive && setWaves([]));
     api
       .previewAudio(path)
       .then((t) => alive && setTracks(t))
@@ -433,7 +460,7 @@ export function Studio({
     } else v.pause();
   }, [range]);
 
-  // Fullscreen: Rewind's window goes fullscreen and the player covers it.
+  // Fullscreen: Hindsight's window goes fullscreen and the player covers it.
   // (Not the browser Fullscreen API, which embedded web views can refuse.)
   // Esc, F or the button leave it.
   const toggleFullscreen = useCallback(() => setFullscreen((f) => !f), []);
@@ -619,11 +646,11 @@ export function Studio({
         </div>
         <button
           className="btn primary"
-          disabled={busy || wholeFile}
-          title="Cuts exactly at your start and end frames. Only the moment before the first keyframe is re-encoded (under a second for Rewind's clips); the rest is copied untouched, so it's quick and keeps full quality."
-          onClick={() => run("Saving trim…", () => api.trim(path, a, b, true, replace), replace)}
+          disabled={busy || (wholeFile && !audioEdited)}
+          title="Cuts exactly at your start and end frames, with your audio changes. Only the moment before the first keyframe is re-encoded (under a second for Hindsight's clips); the rest of the video is copied untouched, so it's quick and keeps full quality."
+          onClick={() => run(wholeFile ? "Saving audio changes…" : "Saving trim…", () => api.trim(path, a, b, true, replace, editsForSave), replace)}
         >
-          Save trim
+          {wholeFile && audioEdited ? "Save audio changes" : "Save trim"}
         </button>
       </div>
       <div className={`studio-body ${theater ? "theater" : ""}`}>
@@ -820,6 +847,18 @@ export function Studio({
             <div className="tl-head" style={{ left: pct(time) }} />
           </div>
           <Ruler duration={duration} onPointerDown={drag("seek")} />
+          {tracks && (info?.audioTracks ?? 0) > 0 && (
+            <AudioLanes
+              titles={[tracks.firstTitle, ...tracks.extra.map((t) => t.title)].slice(0, info?.audioTracks ?? 1)}
+              waves={waves}
+              edits={audioEdits}
+              setEdits={setAudioEdits}
+              duration={duration}
+              time={time}
+              range={range}
+              onSeek={seek}
+            />
+          )}
           <div className="tl-foot">
             <span className="mono">
               Start {fmtTime(a)} · End {fmtTime(b)} · Length {fmtTime(Math.max(0, b - a))}
@@ -876,7 +915,7 @@ export function Studio({
                   );
                 })}
                 <span className="muted" style={{ fontSize: 11, lineHeight: 1.5 }}>
-                  Only changes what you hear here. Saved files keep every track as recorded.
+                  Only changes what you hear here. To change the saved file, use the track's Volume under the timeline.
                 </span>
               </div>
               {tracks.extra.map((t) => (
@@ -904,7 +943,7 @@ export function Studio({
             <button
               className="btn block"
               disabled={busy}
-              onClick={() => run("Exporting H.264…", () => api.exportH264(path, replace), replace)}
+              onClick={() => run("Exporting H.264…", () => api.exportH264(path, replace, editsForSave), replace)}
             >
               Export as H.264 MP4
             </button>
@@ -913,7 +952,7 @@ export function Studio({
                 className="btn block"
                 style={{ flex: 1 }}
                 disabled={busy}
-                onClick={() => run(`Compressing to ${targetMb} MB…`, () => api.compress(path, targetMb, replace), replace)}
+                onClick={() => run(`Compressing to ${targetMb} MB…`, () => api.compress(path, targetMb, replace, editsForSave), replace)}
               >
                 Compress to
               </button>

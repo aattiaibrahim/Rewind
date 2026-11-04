@@ -80,7 +80,7 @@ pub fn app_pids() -> HashMap<App, Vec<u32>> {
     let mut out: HashMap<App, Vec<u32>> = HashMap::new();
     for app in App::ALL {
         let mut set: Vec<u32> = procs.iter().filter(|p| app.matches(&p.exe)).map(|p| p.pid).collect();
-        // Pull in descendants (e.g. Rewind's WebView, OBS's browser sources, ffmpeg helpers).
+        // Pull in descendants (e.g. Hindsight's WebView, OBS's browser sources, ffmpeg helpers).
         loop {
             let before = set.len();
             for p in &procs {
@@ -420,7 +420,7 @@ mod tests {
         crate::ffmpeg::init(None);
         let pm = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../vendor/presentmon/PresentMon.exe"));
         let mut game = std::process::Command::new(crate::ffmpeg::exe("ffplay"))
-            .args(["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=60", "-window_title", "Rewind test game"])
+            .args(["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=60", "-window_title", "Hindsight test game"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()

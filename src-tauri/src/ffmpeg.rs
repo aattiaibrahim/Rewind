@@ -70,7 +70,7 @@ pub fn args(a: &[&str]) -> Vec<std::ffi::OsString> {
 
 /// ffmpeg's default AAC search ("twoloop") can loop forever on some audio
 /// (seen with a 44.1 kHz mic resampled to 48 kHz, build N-128198). The
-/// "fast" coder never does and sounds the same at Rewind's bitrates, so
+/// "fast" coder never does and sounds the same at Hindsight's bitrates, so
 /// every AAC encode uses it.
 pub const AAC_SAFE: [&str; 2] = ["-aac_coder", "fast"];
 
@@ -140,7 +140,7 @@ pub fn run_limited<S: AsRef<std::ffi::OsStr>>(name: &str, args: &[S], limit: Opt
     }
 }
 
-/// Put a child in a job object so it dies with Rewind, even if Rewind crashes.
+/// Put a child in a job object so it dies with Hindsight, even if Hindsight crashes.
 pub fn adopt(child: &Child) {
     let raw = *JOB.get_or_init(|| unsafe {
         let Ok(job) = CreateJobObjectW(None, PCWSTR::null()) else {

@@ -1,4 +1,4 @@
-// Rewind Stream Deck plugin. Talks to Rewind's local control API
+// Hindsight Stream Deck plugin. Talks to Hindsight's local control API
 // (127.0.0.1 only) and keeps every key's state in sync once a second.
 
 const API = "http://127.0.0.1:52371";
@@ -75,7 +75,7 @@ async function press(context) {
   key.busy = true;
   try {
     if (key.action === "save") {
-      // Rewind replies only once the clip is written, so the check mark means "it's on disk".
+      // Hindsight replies only once the clip is written, so the check mark means "it's on disk".
       flash(context, "Saving…");
       const sec = Number(s.seconds || 0);
       await call("POST", "/save" + (sec ? "?seconds=" + sec : ""));
@@ -98,7 +98,7 @@ async function press(context) {
     }
     await poll();
   } catch (e) {
-    flash(context, lastStatus ? "Failed" : "Rewind\noff", 2000);
+    flash(context, lastStatus ? "Failed" : "Hindsight\noff", 2000);
     send({ event: "showAlert", context });
   } finally {
     key.busy = false;
@@ -109,7 +109,7 @@ async function poll() {
   try {
     lastStatus = await call("GET", "/status");
   } catch (e) {
-    lastStatus = null; // Rewind isn't running
+    lastStatus = null; // Hindsight isn't running
   }
   keys.forEach((_, context) => render(context));
 }
@@ -144,7 +144,7 @@ function render(context) {
   let title = "";
   let state = 0;
   if (!st) {
-    title = key.action === "quality" ? qualityTitle(key.settings) : "Rewind\noff";
+    title = key.action === "quality" ? qualityTitle(key.settings) : "Hindsight\noff";
   } else if (key.action === "save") {
     title = st.bufferOn ? "" : "Paused";
   } else if (key.action === "record") {

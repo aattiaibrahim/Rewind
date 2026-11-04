@@ -6,7 +6,7 @@
 //! a check are kept in the report but left out of the results.
 //!
 //! Voice prompts tell the player what to do, since they're in the game and
-//! can't see Rewind's window.
+//! can't see Hindsight's window.
 
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -96,7 +96,7 @@ struct Progress {
 
 pub fn name(app: App) -> &'static str {
     match app {
-        App::Rewind => "Rewind",
+        App::Rewind => "Hindsight",
         App::Obs => "OBS replay buffer",
         App::Nvidia => "NVIDIA Instant Replay",
         App::Medal => "Medal",
@@ -280,7 +280,7 @@ impl Ctx {
         let r = if rounds > 1 { format!("Round {round} of {rounds}. ") } else { String::new() };
         match app {
             App::Rewind => {
-                self.progress("Starting Rewind's replay buffer…", false);
+                self.progress("Starting Hindsight's replay buffer…", false);
                 set_rewind_buffer(&self.app, true);
                 self.wait_encoding(App::Rewind, true, 20)
             }
@@ -309,7 +309,7 @@ impl Ctx {
                 }
                 // The shortcut didn't take (NVIDIA overlay off, or it ignores simulated keys).
                 let k = control::shortcut_name(&keys);
-                say(&format!("{r}Rewind couldn't turn on Instant Replay. Press {} now.", k.replace('+', ", ")));
+                say(&format!("{r}Hindsight couldn't turn on Instant Replay. Press {} now.", k.replace('+', ", ")));
                 self.progress(&format!("Turn on Instant Replay: press {k}."), true);
                 self.wait_encoding(App::Nvidia, true, 60)
             }
@@ -346,7 +346,7 @@ impl Ctx {
                     return Ok(true);
                 }
                 say("Close OBS now.");
-                self.progress("Close OBS (it runs as administrator, so Rewind can't).", true);
+                self.progress("Close OBS (it runs as administrator, so Hindsight can't).", true);
                 self.wait_encoding(App::Obs, false, 60)
             }
             App::Nvidia => {
@@ -360,7 +360,7 @@ impl Ctx {
                     return Ok(true);
                 }
                 let k = control::shortcut_name(&keys);
-                say(&format!("Rewind couldn't turn off Instant Replay. Press {} now.", k.replace('+', ", ")));
+                say(&format!("Hindsight couldn't turn off Instant Replay. Press {} now.", k.replace('+', ", ")));
                 self.progress(&format!("Turn off Instant Replay: press {k}."), true);
                 self.wait_encoding(App::Nvidia, false, 45)
             }
@@ -370,7 +370,7 @@ impl Ctx {
                     return self.wait_encoding(App::Medal, false, 10);
                 }
                 say("Close Medal now.");
-                self.progress("Close Medal (Rewind couldn't).", true);
+                self.progress("Close Medal (Hindsight couldn't).", true);
                 self.wait_encoding(App::Medal, false, 60)
             }
         }
@@ -462,7 +462,7 @@ pub fn start(app: AppHandle, opts: Options) -> Result<(), String> {
             }
         }
         if report.error.is_none() {
-            say("Performance test finished. Switch back to Rewind to see the results.");
+            say("Performance test finished. Switch back to Hindsight to see the results.");
         }
         *LAST.lock().unwrap() = Some(report.clone());
         let _ = app.emit("bench-done", report);

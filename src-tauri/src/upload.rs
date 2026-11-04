@@ -121,14 +121,14 @@ pub fn prepare(path: &str, host: Host, work: &Path) -> Result<PathBuf, String> {
     let _ = fs::remove_file(&out);
     if host == Host::Discord {
         // 9 MB target leaves room under Discord's 10 MB.
-        crate::library::compress_into(path, 9, out.clone())?;
+        crate::library::compress_into(path, 9, out.clone(), &Default::default())?;
     } else {
-        crate::library::export_h264_into(path, out.clone())?;
+        crate::library::export_h264_into(path, out.clone(), &Default::default())?;
         let made = fs::metadata(&out).map(|m| m.len()).unwrap_or(0);
         if made > host.limit() {
             let mb = (host.limit() / 1_000_000 * 9 / 10) as u32;
             let squeezed = work.join(format!("{stem} ({mb} MB).mp4"));
-            crate::library::compress_into(path, mb, squeezed.clone())?;
+            crate::library::compress_into(path, mb, squeezed.clone(), &Default::default())?;
             let _ = fs::remove_file(&out);
             return Ok(squeezed);
         }
@@ -178,7 +178,7 @@ fn client() -> Result<reqwest::blocking::Client, String> {
         .connect_timeout(Duration::from_secs(20))
         // Big files on slow connections take a while; give up only if nothing moves for long.
         .timeout(None)
-        .user_agent(concat!("Rewind/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("Hindsight/", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|e| e.to_string())
 }

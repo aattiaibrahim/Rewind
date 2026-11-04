@@ -1,4 +1,5 @@
 mod audio;
+mod audio_edit;
 mod bench;
 mod consolidate;
 mod control;
@@ -206,6 +207,7 @@ fn get_settings(app: AppHandle) -> Settings {
 #[tauri::command]
 fn set_settings(app: AppHandle, settings: Settings) -> Result<(), String> {
     let settings = settings.sanitized();
+    audio::set_mic_gain_db(settings.mic_gain_db);
     let st = app.state::<AppState>();
     let old = st.settings.lock().unwrap().clone();
     if old.hotkey != settings.hotkey || old.record_hotkey != settings.record_hotkey {
@@ -320,7 +322,7 @@ fn moves_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path().app_data_dir().map(|d| d.join("moves")).map_err(|e| e.to_string())
 }
 
-/// Folders a move must never reach into: Rewind's own, the NAS, and the linked
+/// Folders a move must never reach into: Hindsight's own, the NAS, and the linked
 /// folders (each root being moved skips only the others).
 fn move_avoid(s: &Settings) -> Vec<PathBuf> {
     let mut v = vec![PathBuf::from(&s.clips_dir)];
@@ -339,7 +341,7 @@ fn move_plan(s: &Settings, folders: &[String]) -> Result<consolidate::Plan, Stri
     Ok(consolidate::plan_many(&roots, std::path::Path::new(&s.clips_dir), &move_avoid(s)))
 }
 
-/// What "Move into Rewind" would do for one or more linked folders (nothing is touched).
+/// What "Move into Hindsight" would do for one or more linked folders (nothing is touched).
 #[tauri::command]
 async fn plan_move_into_rewind(app: AppHandle, folders: Vec<String>) -> Result<consolidate::Plan, String> {
     let s = settings_of(&app);
@@ -673,20 +675,48 @@ fn duration_of(path: &str) -> Option<f64> {
 }
 
 #[tauri::command]
-async fn trim_clip(app: AppHandle, path: String, start: f64, end: f64, exact: bool, replace: bool) -> Result<String, String> {
-    edit(app, path, replace, Some(end - start), move |p| library::trim(p, start, end, exact)).await
+async fn trim_clip(
+    app: AppHandle,
+    path: String,
+    start: f64,
+    end: f64,
+    exact: bool,
+    replace: bool,
+    audio: Option<audio_edit::AudioEdit>,
+) -> Result<String, String> {
+    let audio = audio.unwrap_or_default();
+    edit(app, path, replace, Some(end - start), move |p| library::trim(p, start, end, exact, &audio)).await
+}
+
+/// Loudness over time for each audio track, for Studio's audio lanes.
+#[tauri::command]
+async fn clip_waveforms(app: AppHandle, path: String) -> Result<Vec<audio_edit::Waveform>, String> {
+    let cache = app.state::<AppState>().thumbs_dir.with_file_name("preview");
+    blocking(move || {
+        let n = library::probe(&path)?.audio_tracks.min(8);
+        audio_edit::waveforms(&path, n, &cache)
+    })
+    .await
 }
 
 #[tauri::command]
-async fn export_h264(app: AppHandle, path: String, replace: bool) -> Result<String, String> {
+async fn export_h264(app: AppHandle, path: String, replace: bool, audio: Option<audio_edit::AudioEdit>) -> Result<String, String> {
     let secs = duration_of(&path);
-    edit(app, path, replace, secs, library::export_h264).await
+    let audio = audio.unwrap_or_default();
+    edit(app, path, replace, secs, move |p| library::export_h264(p, &audio)).await
 }
 
 #[tauri::command]
-async fn compress_clip(app: AppHandle, path: String, target_mb: u32, replace: bool) -> Result<String, String> {
+async fn compress_clip(
+    app: AppHandle,
+    path: String,
+    target_mb: u32,
+    replace: bool,
+    audio: Option<audio_edit::AudioEdit>,
+) -> Result<String, String> {
     let secs = duration_of(&path);
-    edit(app, path, replace, secs, move |p| library::compress(p, target_mb)).await
+    let audio = audio.unwrap_or_default();
+    edit(app, path, replace, secs, move |p| library::compress(p, target_mb, &audio)).await
 }
 
 /// Open Explorer with the file selected (or the folder itself, for a folder).
@@ -770,7 +800,7 @@ async fn check_for_updates(app: AppHandle) -> Result<Option<String>, String> {
     updater::check(&app, auto).await
 }
 
-/// Download (if needed) and install now. Rewind restarts on the new version.
+/// Download (if needed) and install now. Hindsight restarts on the new version.
 #[tauri::command]
 async fn install_update(app: AppHandle) -> Result<(), String> {
     if !updater::has_ready_update(&app) {
@@ -859,9 +889,10 @@ pub fn run() {
             std::fs::create_dir_all(&cfg_dir)?;
             let settings_path = cfg_dir.join("settings.json");
             let mut s = settings::load(&settings_path);
+            audio::set_mic_gain_db(s.mic_gain_db);
             if s.clips_dir.is_empty() {
                 let videos = app.path().video_dir().unwrap_or_else(|_| cfg_dir.clone());
-                s.clips_dir = videos.join("Rewind").to_string_lossy().into_owned();
+                s.clips_dir = videos.join("Hindsight").to_string_lossy().into_owned();
             }
             let _ = std::fs::create_dir_all(&s.clips_dir);
             let _ = settings::save(&settings_path, &s);
@@ -932,15 +963,15 @@ pub fn run() {
             // Tray icon: left click opens the flyout, right click shows the menu.
             let save = MenuItem::with_id(app, "save", "Save clip", true, None::<&str>)?;
             let record = MenuItem::with_id(app, "record", "Start / stop recording", true, None::<&str>)?;
-            let open = MenuItem::with_id(app, "open", "Open Rewind", true, None::<&str>)?;
+            let open = MenuItem::with_id(app, "open", "Open Hindsight", true, None::<&str>)?;
             let toggle = MenuItem::with_id(app, "toggle", "Pause / resume buffer", true, None::<&str>)?;
             let updates = MenuItem::with_id(app, "updates", "Check for updates", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "Quit Rewind", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "Quit Hindsight", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
             let menu = Menu::with_items(app, &[&save, &record, &open, &toggle, &sep, &updates, &quit])?;
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().cloned().expect("app icon"))
-                .tooltip("Rewind")
+                .tooltip("Hindsight")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, e| match e.id.as_ref() {
@@ -995,9 +1026,9 @@ pub fn run() {
                     if let Some(tray) = h.tray_by_id("main") {
                         let _ = tray.set_icon(Some(tray_icon(&base_icon, st.running)));
                         let tip = match state {
-                            (_, true) => "Rewind · Recording",
-                            (true, false) => "Rewind · Replay buffer on",
-                            _ => "Rewind · Paused",
+                            (_, true) => "Hindsight · Recording",
+                            (true, false) => "Hindsight · Replay buffer on",
+                            _ => "Hindsight · Paused",
                         };
                         let _ = tray.set_tooltip(Some(tip));
                     }
@@ -1025,7 +1056,7 @@ pub fn run() {
         })
         .on_window_event(|window, event| match (window.label(), event) {
             ("main", WindowEvent::CloseRequested { api, .. }) => {
-                // Closing the window keeps Rewind running in the tray.
+                // Closing the window keeps Hindsight running in the tray.
                 api.prevent_close();
                 let _ = window.emit("main-hidden", ());
                 let _ = window.hide();
@@ -1056,6 +1087,7 @@ pub fn run() {
             preview_audio,
             remux_mp4,
             trim_clip,
+            clip_waveforms,
             export_h264,
             compress_clip,
             reveal_file,
@@ -1090,7 +1122,7 @@ pub fn run() {
             bench_state,
         ])
         .build(tauri::generate_context!())
-        .expect("error while building Rewind")
+        .expect("error while building Hindsight")
         .run(|app, event| {
             if let RunEvent::Exit = event {
                 // A downloaded update installs on quit (after the engine stops).

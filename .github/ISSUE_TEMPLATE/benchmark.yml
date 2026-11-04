@@ -1,12 +1,12 @@
 name: Performance test result
-description: Share a Rewind Performance test (vs OBS, NVIDIA Instant Replay, Medal) with screenshots.
+description: Share a Hindsight Performance test (vs OBS, NVIDIA Instant Replay, Medal) with screenshots.
 title: "[Benchmark] "
 labels: ["benchmark"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for testing! In Rewind, open **Performance**, run the test, then click **Share on GitHub**:
+        Thanks for testing! In Hindsight, open **Performance**, run the test, then click **Share on GitHub**:
         it copies the full results and opens this form. Paste them below and drag in your screenshots.
 
         For a fair result: turn V-Sync and FPS caps off, use the same spot (or a built-in benchmark),
@@ -14,7 +14,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: Rewind version
+      label: Hindsight version
       description: Settings → Updates, or under the logo.
       placeholder: "0.1.15"
     validations:
@@ -40,7 +40,7 @@ body:
     attributes:
       label: Recorders compared
       options:
-        - label: Rewind
+        - label: Hindsight
         - label: OBS replay buffer
         - label: NVIDIA Instant Replay (NVIDIA App / ShadowPlay)
         - label: Medal

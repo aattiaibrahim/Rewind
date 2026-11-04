@@ -41,6 +41,8 @@ export type Settings = {
   micEnabled: boolean;
   micMono: boolean;
   micDevice: string;
+  /** Mic volume while recording, dB (-20..+20). */
+  micGainDb: number;
   theme: Theme;
   accent: Accent;
   reduceMotion: boolean;
@@ -291,11 +293,13 @@ export const api = {
   benchState: () => invoke<[boolean, BenchReport | null]>("bench_state"),
   previewAudio: (path: string) => invoke<PreviewAudio>("preview_audio", { path }),
   remuxMp4: (path: string) => invoke<string>("remux_mp4", { path }),
-  trim: (path: string, start: number, end: number, exact: boolean, replace = false) =>
-    invoke<string>("trim_clip", { path, start, end, exact, replace }),
-  exportH264: (path: string, replace = false) => invoke<string>("export_h264", { path, replace }),
-  compress: (path: string, targetMb: number, replace = false) =>
-    invoke<string>("compress_clip", { path, targetMb, replace }),
+  trim: (path: string, start: number, end: number, exact: boolean, replace = false, audio?: TrackEdit[]) =>
+    invoke<string>("trim_clip", { path, start, end, exact, replace, audio: audio ?? null }),
+  clipWaveforms: (path: string) => invoke<Waveform[]>("clip_waveforms", { path }),
+  exportH264: (path: string, replace = false, audio?: TrackEdit[]) =>
+    invoke<string>("export_h264", { path, replace, audio: audio ?? null }),
+  compress: (path: string, targetMb: number, replace = false, audio?: TrackEdit[]) =>
+    invoke<string>("compress_clip", { path, targetMb, replace, audio: audio ?? null }),
   listAudioInputs: () => invoke<string[]>("list_audio_inputs"),
   reveal: (path: string) => invoke<void>("reveal_file", { path }),
   deleteClips: (paths: string[]) => invoke<DeleteResult>("delete_clips", { paths }),
@@ -334,6 +338,15 @@ export function fmtDuration(sec: number) {
   const m = Math.floor(sec / 60);
   const s = Math.floor(sec % 60);
   return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+/** One audio track's loudness over time: levels[i] (0-255) covers `step` seconds. */
+export type Waveform = { step: number; levels: number[] };
+/** Studio's changes to one audio track: volume in dB and muted stretches (seconds of the original). */
+export type TrackEdit = { gainDb: number; mutes: [number, number][] };
+
+export function fmtDb(db: number) {
+  return db === 0 ? "0 dB" : `${db > 0 ? "+" : ""}${db.toFixed(1).replace(/\.0$/, "")} dB`;
 }
 
 export function fmtTime(sec: number) {

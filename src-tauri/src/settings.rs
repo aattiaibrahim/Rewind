@@ -40,6 +40,9 @@ pub struct Settings {
     pub mic_mono: bool,
     /// "" = Windows default microphone
     pub mic_device: String,
+    /// Microphone volume while recording, in dB (-20..+20, 0 = as Windows gives it).
+    #[serde(default)]
+    pub mic_gain_db: f64,
     /// Look of the app: "midnight" | "graphite" | "oled" (an old "light" becomes "midnight")
     pub theme: String,
     /// Highlight colour: "lime" | "cyan" | "violet" | "amber" | "rose" | "green"
@@ -100,6 +103,7 @@ impl Default for Settings {
             mic_enabled: true,
             mic_mono: true,
             mic_device: String::new(),
+            mic_gain_db: 0.0,
             theme: "midnight".into(),
             accent: "lime".into(),
             reduce_motion: false,
@@ -136,6 +140,7 @@ impl Settings {
         self.quality = self.quality.clamp(10, 45);
         self.fps = self.fps.clamp(15, 240);
         self.buffer_seconds = self.buffer_seconds.clamp(5, 1800);
+        self.mic_gain_db = if self.mic_gain_db.is_finite() { (self.mic_gain_db.clamp(-20.0, 20.0) * 2.0).round() / 2.0 } else { 0.0 };
         if ![0, 720, 1080, 1440, 2160].contains(&self.output_height) {
             self.output_height = 0;
         }

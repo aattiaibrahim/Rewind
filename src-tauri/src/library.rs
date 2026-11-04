@@ -1,6 +1,7 @@
 //! Clip library: listing files, probing, thumbnails, and per-file tools
 //! (remux, trim, export, compress). Originals are never modified.
 
+use crate::audio_edit::AudioEdit;
 use crate::ffmpeg;
 use serde::Serialize;
 use serde_json::Value;
@@ -26,7 +27,7 @@ pub struct ClipFile {
     pub location: &'static str,
     /// A local clip that's also safely on the NAS
     pub on_nas: bool,
-    /// Where it came from, for a badge: "" (Rewind), "NAS", "Medal", "OBS", "NVIDIA" or a folder name
+    /// Where it came from, for a badge: "" (Hindsight), "NAS", "Medal", "OBS", "NVIDIA" or a folder name
     pub source: String,
 }
 
@@ -366,11 +367,11 @@ pub fn remux_mp4(path: &str, keep_original: bool) -> Result<String, String> {
 /// Fast = cut on keyframes, no re-encode. Exact = frame-accurate, re-encoded on NVENC.
 /// Trim to [start, end] seconds. `exact` is frame-accurate: a "smart cut"
 /// that re-encodes only the frames before the first keyframe in the range
-/// (under a second for Rewind's clips) and copies everything after it
+/// (under a second for Hindsight's clips) and copies everything after it
 /// untouched, so it's nearly as fast as a plain copy and keeps full quality.
 /// If the file isn't suited to that, or any check fails, the whole range is
 /// re-encoded instead. Without `exact`, the cut snaps to a keyframe.
-pub fn trim(path: &str, start: f64, end: f64, exact: bool) -> Result<String, String> {
+pub fn trim(path: &str, start: f64, end: f64, exact: bool, audio: &AudioEdit) -> Result<String, String> {
     if end <= start {
         return Err("The end point has to be after the start point.".into());
     }
@@ -381,7 +382,7 @@ pub fn trim(path: &str, start: f64, end: f64, exact: bool) -> Result<String, Str
     };
     let out = unique(src, " (trim)", &ext);
     if exact {
-        match smart_trim(path, start, end, &out) {
+        match smart_trim(path, start, end, &out, audio) {
             Ok(()) => return Ok(out.to_string_lossy().into_owned()),
             Err(e) => {
                 eprintln!("[rewind] smart trim not used ({e}); re-encoding the whole range");
@@ -392,7 +393,22 @@ pub fn trim(path: &str, start: f64, end: f64, exact: bool) -> Result<String, Str
     let (ss, to) = (format!("{start:.3}"), format!("{end:.3}"));
     let mut args = ffmpeg::args(&["-hide_banner", "-loglevel", "error", "-ss", &ss, "-to", &to, "-i"]);
     args.push(path.into());
-    args.extend(ffmpeg::args(&["-map", "0:v:0", "-map", "0:a?"]));
+    // Changed audio has to be re-encoded, so a keyframe cut becomes an exact one.
+    let exact = exact || !audio.is_empty();
+    args.extend(ffmpeg::args(&["-map", "0:v:0"]));
+    if audio.is_empty() {
+        args.extend(ffmpeg::args(&["-map", "0:a?"]));
+    } else {
+        // The input starts at the cut (-ss before -i), so mute times shift by `start`.
+        let n = probe(path).map(|p| p.audio_tracks).unwrap_or(0) as usize;
+        let graph: Vec<String> = (0..n).map(|i| format!("{}anull[a{i}]", audio.chain(i, start))).collect();
+        if n > 0 {
+            args.extend(ffmpeg::args(&["-filter_complex", &graph.join(";")]));
+        }
+        for i in 0..n {
+            args.extend(ffmpeg::args(&["-map", &format!("[a{i}]"), &format!("-map_metadata:s:a:{i}"), &format!("0:s:a:{i}")]));
+        }
+    }
     if exact {
         let p = probe(path).unwrap_or_default();
         let gop = (p.fps.round() as i64).max(1).to_string();
@@ -417,7 +433,7 @@ struct CutInfo {
     /// Raw bitstream format for this codec ("obu", "hevc", "h264").
     raw: &'static str,
     fps: f64,
-    /// Time of the first video frame (Rewind's clips start at one frame in).
+    /// Time of the first video frame (Hindsight's clips start at one frame in).
     first: f64,
     audio: usize,
     /// Codec level as ffprobe reports it (AV1: seq_level_idx, 31 = none; H.264: 41 = 4.1; HEVC: 123 = 4.1)
@@ -492,7 +508,7 @@ fn cut_info(path: &str) -> Result<CutInfo, String> {
     };
     let (fps, avg) = (rate("r_frame_rate"), rate("avg_frame_rate"));
     // Raw streams get their timing back from a fixed frame rate, so only
-    // constant-frame-rate files qualify (all of Rewind's own clips are).
+    // constant-frame-rate files qualify (all of Hindsight's own clips are).
     if fps <= 0.0 || (avg - fps).abs() > fps * 0.002 {
         return Err(format!("variable frame rate ({fps:.3} vs {avg:.3})"));
     }
@@ -519,7 +535,7 @@ fn keyframes(path: &str, ci: &CutInfo, from: f64, to: f64) -> Result<Vec<i64>, S
         .collect())
 }
 
-fn smart_trim(path: &str, start: f64, end: f64, out: &Path) -> Result<(), String> {
+fn smart_trim(path: &str, start: f64, end: f64, out: &Path, audio: &AudioEdit) -> Result<(), String> {
     let ci = cut_info(path)?;
     let fps = ci.fps;
     // Work in frame numbers so rounding can't add or drop a frame.
@@ -544,7 +560,8 @@ fn smart_trim(path: &str, start: f64, end: f64, out: &Path) -> Result<(), String
         let audio_job = (ci.audio > 0).then(|| {
             let mut graph = Vec::new();
             for i in 0..ci.audio {
-                graph.push(format!("[0:a:{i}]atrim=start={}:end={},asetpts=PTS-STARTPTS[a{i}]", at(i_start), at(i_end)));
+                // Volume and mutes first, on the original's timeline.
+                graph.push(format!("{}atrim=start={}:end={},asetpts=PTS-STARTPTS[a{i}]", audio.chain(i as usize, 0.0), at(i_start), at(i_end)));
             }
             let mut a = ffmpeg::args(&["-hide_banner", "-loglevel", "error", "-y", "-i"]);
             a.push(path.into());
@@ -642,15 +659,20 @@ fn smart_trim(path: &str, start: f64, end: f64, out: &Path) -> Result<(), String
 
 /// Map video plus one audio track: desktop + mic mixed when there are several,
 /// because most players and Discord only play the first track.
-fn map_mixed_audio(args: &mut Vec<OsString>, audio_tracks: u32) {
+fn map_mixed_audio(args: &mut Vec<OsString>, audio_tracks: u32, audio: &AudioEdit) {
     args.extend(ffmpeg::args(&["-map", "0:v:0"]));
     match audio_tracks {
         0 => {}
-        1 => args.extend(ffmpeg::args(&["-map", "0:a:0"])),
-        n => {
-            let inputs: String = (0..n).map(|i| format!("[0:a:{i}]")).collect();
-            let graph = format!("{inputs}amix=inputs={n}:duration=longest:normalize=0[mix]");
+        1 if audio.is_empty() => args.extend(ffmpeg::args(&["-map", "0:a:0"])),
+        1 => {
+            let graph = format!("{}anull[mix]", audio.chain(0, 0.0));
             args.extend(ffmpeg::args(&["-filter_complex", &graph, "-map", "[mix]"]));
+        }
+        n => {
+            let mut parts: Vec<String> = (0..n as usize).map(|i| format!("{}anull[t{i}]", audio.chain(i, 0.0))).collect();
+            let inputs: String = (0..n).map(|i| format!("[t{i}]")).collect();
+            parts.push(format!("{inputs}amix=inputs={n}:duration=longest:normalize=0[mix]"));
+            args.extend(ffmpeg::args(&["-filter_complex", &parts.join(";"), "-map", "[mix]"]));
         }
     }
 }
@@ -710,7 +732,7 @@ fn deletable(path: &Path, clips_dir: &Path, external: &[String], linked: &[Strin
     }
     let inside = within(clips_dir) || linked.iter().any(|l| within(Path::new(l)));
     let listed = external.iter().any(|e| Path::new(e) == path);
-    if inside || listed { Ok(()) } else { Err("Not part of your Rewind library".into()) }
+    if inside || listed { Ok(()) } else { Err("Not part of your Hindsight library".into()) }
 }
 
 /// Move clips to the Recycle Bin (one batch, so Windows can restore them together).
@@ -791,15 +813,15 @@ pub fn replace_original(original: &str, edited: &str, expected_secs: Option<f64>
 }
 
 /// An H.264 + AAC MP4 that plays everywhere (audio tracks mixed into one).
-pub fn export_h264(path: &str) -> Result<String, String> {
-    export_h264_into(path, unique(Path::new(path), " (H.264)", "mp4"))
+pub fn export_h264(path: &str, audio: &AudioEdit) -> Result<String, String> {
+    export_h264_into(path, unique(Path::new(path), " (H.264)", "mp4"), audio)
 }
 
-pub fn export_h264_into(path: &str, out: PathBuf) -> Result<String, String> {
+pub fn export_h264_into(path: &str, out: PathBuf, audio: &AudioEdit) -> Result<String, String> {
     let info = probe(path)?;
     let mut args = ffmpeg::args(&["-hide_banner", "-loglevel", "error", "-i"]);
     args.push(path.into());
-    map_mixed_audio(&mut args, info.audio_tracks);
+    map_mixed_audio(&mut args, info.audio_tracks, audio);
     args.extend(ffmpeg::args(&[
         "-c:v", "h264_nvenc", "-preset", "p5", "-cq", "21", "-b:v", "0",
         "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
@@ -809,11 +831,11 @@ pub fn export_h264_into(path: &str, out: PathBuf) -> Result<String, String> {
 }
 
 /// Fit under `target_mb` (e.g. Discord's limit). Drops to 720p when the bitrate gets low.
-pub fn compress(path: &str, target_mb: u32) -> Result<String, String> {
-    compress_into(path, target_mb, unique(Path::new(path), &format!(" ({target_mb} MB)"), "mp4"))
+pub fn compress(path: &str, target_mb: u32, audio: &AudioEdit) -> Result<String, String> {
+    compress_into(path, target_mb, unique(Path::new(path), &format!(" ({target_mb} MB)"), "mp4"), audio)
 }
 
-pub fn compress_into(path: &str, target_mb: u32, out: PathBuf) -> Result<String, String> {
+pub fn compress_into(path: &str, target_mb: u32, out: PathBuf, audio: &AudioEdit) -> Result<String, String> {
     let info = probe(path)?;
     if info.duration <= 0.0 {
         return Err("Couldn't read the video length.".into());
@@ -824,7 +846,7 @@ pub fn compress_into(path: &str, target_mb: u32, out: PathBuf) -> Result<String,
     let (b, buf) = (format!("{video_kbps}k"), format!("{}k", video_kbps * 2));
     let mut args = ffmpeg::args(&["-hide_banner", "-loglevel", "error", "-i"]);
     args.push(path.into());
-    map_mixed_audio(&mut args, info.audio_tracks);
+    map_mixed_audio(&mut args, info.audio_tracks, audio);
     if video_kbps < 2500 && info.height > 720 {
         args.extend(ffmpeg::args(&["-vf", "scale=-2:720"]));
     }
@@ -840,8 +862,8 @@ pub fn compress_into(path: &str, target_mb: u32, out: PathBuf) -> Result<String,
 mod tests {
     use super::*;
 
-    /// A 6 s 720p60 test video with two audio tracks (like a real Rewind clip).
-    /// A 6 s, 60 fps clip like Rewind's (keyframe every second, two audio
+    /// A 6 s 720p60 test video with two audio tracks (like a real Hindsight clip).
+    /// A 6 s, 60 fps clip like Hindsight's (keyframe every second, two audio
     /// tracks, video starting one frame in) in the given codec.
     fn rewind_like(dir: &Path, name: &str, vcodec: &str) -> String {
         crate::ffmpeg::init(None);
@@ -878,7 +900,7 @@ mod tests {
             // Start between keyframes (frame 76 of the clip), end mid-GOP.
             let (start, end) = (0.017 + 76.0 / 60.0 + 0.004, 0.017 + 280.0 / 60.0 + 0.004);
             let t = std::time::Instant::now();
-            let out = trim(&src, start, end, true).unwrap();
+            let out = trim(&src, start, end, true, &AudioEdit::default()).unwrap();
             let took = t.elapsed();
             let p = probe(&out).unwrap();
             let mut a = ffmpeg::args(&["-v", "error", "-count_packets", "-select_streams", "v:0", "-show_entries", "stream=nb_read_packets", "-of", "csv=p=0", "-i"]);
@@ -932,7 +954,7 @@ mod tests {
             ffmpeg::run("ffmpeg", &args).expect("make sample");
             // Keyframes every 250 frames (like OBS): 0 and 4.17 s. Start mid-GOP.
             let src_s = src.to_string_lossy().into_owned();
-            let out = trim(&src_s, 1.5, 5.8, true).unwrap();
+            let out = trim(&src_s, 1.5, 5.8, true, &AudioEdit::default()).unwrap();
             let sig = |p: &str| {
                 let mut a = ffmpeg::args(&["-v", "error", "-select_streams", "v:0", "-print_format", "json", "-show_streams", "-i"]);
                 a.push(p.into());
@@ -960,7 +982,7 @@ mod tests {
         let Ok(src) = std::env::var("REWIND_TRIM_CLIP") else { return };
         let len = probe(&src).unwrap().duration;
         let t = std::time::Instant::now();
-        let out = trim(&src, 5.237, len - 10.0, true).unwrap();
+        let out = trim(&src, 5.237, len - 10.0, true, &AudioEdit::default()).unwrap();
         let p = probe(&out).unwrap();
         println!("trimmed {:.1} s of {:.1} s in {:?}: {:.3} s, {} MB, {} audio tracks", len - 15.237, len, t.elapsed(), p.duration, fs::metadata(&out).unwrap().len() / 1_000_000, p.audio_tracks);
         if p.codec == "av1" {
@@ -1021,14 +1043,14 @@ mod tests {
     fn trims_fast_and_exact_keep_both_audio_tracks() {
         let d = tmp("trim");
         let src = sample(&d, "a.mkv");
-        let fast = trim(&src, 1.0, 4.0, false).unwrap();
-        let exact = trim(&src, 1.5, 3.5, true).unwrap();
+        let fast = trim(&src, 1.0, 4.0, false, &AudioEdit::default()).unwrap();
+        let exact = trim(&src, 1.5, 3.5, true, &AudioEdit::default()).unwrap();
         let (f, e) = (probe(&fast).unwrap(), probe(&exact).unwrap());
         assert!((f.duration - 3.0).abs() < 2.1, "fast {}", f.duration); // keyframe-aligned
         assert!((e.duration - 2.0).abs() < 0.15, "exact {}", e.duration);
         assert_eq!((f.audio_tracks, e.audio_tracks), (2, 2));
         assert!(Path::new(&src).exists(), "original must be untouched");
-        assert!(trim(&src, 3.0, 2.0, true).is_err(), "end before start is refused");
+        assert!(trim(&src, 3.0, 2.0, true, &AudioEdit::default()).is_err(), "end before start is refused");
         let _ = fs::remove_dir_all(d);
     }
 
@@ -1060,7 +1082,7 @@ mod tests {
     #[test]
     fn export_h264_mixes_audio_into_one_track() {
         let d = tmp("export");
-        let out = export_h264(&sample(&d, "a.mkv")).unwrap();
+        let out = export_h264(&sample(&d, "a.mkv"), &AudioEdit::default()).unwrap();
         let p = probe(&out).unwrap();
         assert_eq!((p.codec.as_str(), p.audio_tracks), ("h264", 1));
         let _ = fs::remove_dir_all(d);
@@ -1069,10 +1091,46 @@ mod tests {
     #[test]
     fn compress_hits_target_size() {
         let d = tmp("compress");
-        let out = compress(&sample(&d, "a.mkv"), 1).unwrap();
+        let out = compress(&sample(&d, "a.mkv"), 1, &AudioEdit::default()).unwrap();
         let size = fs::metadata(&out).unwrap().len();
         assert!(size <= 1024 * 1024 + 64 * 1024, "{size} bytes");
         assert_eq!(probe(&out).unwrap().audio_tracks, 1);
+        let _ = fs::remove_dir_all(d);
+    }
+
+    /// Mean level (0-255) of a track between two times of a file.
+    fn level(path: &str, track: u32, a: f64, b: f64) -> f64 {
+        let w = crate::audio_edit::decode(path, track).unwrap();
+        let (i, j) = ((a / w.step) as usize, (b / w.step) as usize);
+        let s = &w.levels[i..j.min(w.levels.len())];
+        s.iter().map(|&v| v as f64).sum::<f64>() / s.len().max(1) as f64
+    }
+
+    #[test]
+    fn trim_mutes_and_boosts_the_chosen_track_only() {
+        use crate::audio_edit::TrackEdit;
+        let d = tmp("audio-edit");
+        let src = sample(&d, "a.mkv");
+        // Mute the mic (track 2) from 2.0 to 3.0 s of the original, boost the game track.
+        let edit = AudioEdit(vec![
+            TrackEdit { gain_db: 6.0, mutes: vec![] },
+            TrackEdit { gain_db: 0.0, mutes: vec![[2.0, 3.0]] },
+        ]);
+        for exact in [true, false] {
+            let out = trim(&src, 1.0, 5.0, exact, &edit).unwrap();
+            assert_eq!(probe(&out).unwrap().audio_tracks, 2);
+            // In the trimmed file the mute sits at 1.0-2.0 s.
+            assert!(level(&out, 1, 1.15, 1.85) < 5.0, "muted stretch is silent ({exact})");
+            assert!(level(&out, 1, 0.2, 0.8) > 150.0, "mic before the mute is kept ({exact})");
+            assert!(level(&out, 1, 2.3, 3.5) > 150.0, "mic after the mute is kept ({exact})");
+            assert!(level(&out, 0, 1.15, 1.85) > 150.0, "game track isn't muted ({exact})");
+            let louder = level(&out, 0, 0.5, 3.5) - level(&src, 0, 1.5, 4.5);
+            assert!(louder > 20.0, "+6 dB shows ({louder}, {exact})");
+            let _ = fs::remove_file(out);
+        }
+        // Export mixes the tracks, with the same edits.
+        let out = export_h264(&src, &edit).unwrap();
+        assert!(level(&out, 0, 2.15, 2.85) > 150.0, "the game track still plays in the mix");
         let _ = fs::remove_dir_all(d);
     }
 
@@ -1080,7 +1138,7 @@ mod tests {
     fn replace_original_swaps_in_the_edit() {
         let d = tmp("replace");
         let src = sample(&d, "a.mkv");
-        let edited = trim(&src, 1.0, 3.0, true).unwrap();
+        let edited = trim(&src, 1.0, 3.0, true, &AudioEdit::default()).unwrap();
         let final_path = replace_original(&src, &edited, Some(2.0)).unwrap();
         assert_eq!(final_path, src, "same name, same place");
         assert!(!Path::new(&edited).exists());
@@ -1178,7 +1236,7 @@ mod library_merge_tests {
     fn one_library_from_this_pc_the_nas_and_other_recorders() {
         let d = std::env::temp_dir().join(format!("rewind-merge-{}", std::process::id()));
         let _ = fs::remove_dir_all(&d);
-        let (clips, nas, medal, obs) = (d.join("Rewind"), d.join("nas"), d.join("Medal"), d.join("OBS"));
+        let (clips, nas, medal, obs) = (d.join("Hindsight"), d.join("nas"), d.join("Medal"), d.join("OBS"));
         put(&clips, "VALORANT/a.mkv");
         put(&nas, "VALORANT/a.mkv"); // also on the NAS
         put(&nas, "VALORANT/b - OTHER-PC.mkv"); // only on the NAS
@@ -1200,7 +1258,7 @@ mod library_merge_tests {
         let m = find("m");
         assert!(m.location == "linked" && m.folder == "Valorant" && m.source == "Medal");
         assert_eq!(find("2026-11-03 10-00-00").folder, "OBS");
-        // NAS clips can't be deleted from Rewind (no Recycle Bin there); linked ones can.
+        // NAS clips can't be deleted from Hindsight (no Recycle Bin there); linked ones can.
         assert!(deletable(&nas.join("VALORANT/b - OTHER-PC.mkv"), &clips, &[], &[], &nas.to_string_lossy()).is_err());
         assert!(deletable(&medal.join("Clips/Valorant/m.mp4"), &clips, &[], &[medal.to_string_lossy().into_owned()], "").is_ok());
         let _ = fs::remove_dir_all(&d);

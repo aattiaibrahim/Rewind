@@ -3,7 +3,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { ShareConfirm, ShareRequest, useUploads } from "./Share";
 import { useHealth } from "./Health";
 import type { UploadProgress } from "./api";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import { api, errText } from "./api";
 import { BufferCard } from "./BufferCard";
@@ -16,7 +16,7 @@ import logo from "./logo.svg";
 import { SettingsView } from "./SettingsView";
 import { Studio } from "./Studio";
 
-type View = "clips" | "studio" | "performance" | "settings";
+type View = "clips" | "damaged" | "studio" | "performance" | "settings";
 type ToastAction = { label: string; run: () => void };
 type Toast = { id: number; text: string; sub?: string; err?: boolean; action?: ToastAction };
 type PendingDelete = { paths: string[]; resolve: (deleted: boolean) => void };
@@ -157,26 +157,37 @@ export default function App() {
 
   // Studio has no tab of its own: it opens when you click a clip. Performance
   // only shows in Benchmark mode (Settings → Advanced).
+  // Damaged clips (found by the background health check), for their own section.
+  const damagedClips = useMemo(
+    () => (clips ? clips.filter((c) => health[c.path] && health[c.path].state !== "ok") : null),
+    [clips, health],
+  );
+  // Which list Studio goes back to.
+  const [listView, setListView] = useState<"clips" | "damaged">("clips");
+  useEffect(() => {
+    if (view === "clips" || view === "damaged") setListView(view);
+  }, [view]);
   const nav: [View, string][] = [
     ["clips", "Clips"],
+    ["damaged", "Damaged"],
     ...(settings?.benchmarkMode ? ([["performance", "Performance"]] as [View, string][]) : []),
     ["settings", "Settings"],
   ];
-  const navOn = (id: View) => view === id || (id === "clips" && view === "studio");
-  const backToClips = useCallback(() => setView("clips"), []);
+  const navOn = (id: View) => view === id || (id === listView && view === "studio");
+  const backToClips = useCallback(() => setView(listView), [listView]);
   // Mouse back / forward (buttons 4 and 5) and Alt+← / Alt+→, like a browser:
   // back = Studio → your clips, and on the clips → the top;
   // forward = from the clips, reopen the clip you just left.
   useEffect(() => {
     const back = () => {
       if (document.querySelector(".modal-backdrop")) return;
-      if (view === "studio") setView("clips");
-      else if (view === "clips") window.dispatchEvent(new Event("rewind-top"));
+      if (view === "studio") setView(listView);
+      else if (view === "clips" || view === "damaged") window.dispatchEvent(new Event("rewind-top"));
       else setView("clips");
     };
     const forward = () => {
       if (document.querySelector(".modal-backdrop")) return;
-      if (view === "clips" && studioPath) setView("studio");
+      if ((view === "clips" || view === "damaged") && studioPath) setView("studio");
     };
     const onMouse = (e: MouseEvent) => {
       if (e.button === 3 || e.button === 4) {
@@ -198,7 +209,7 @@ export default function App() {
       window.removeEventListener("mouseup", onMouse);
       window.removeEventListener("keydown", onKey);
     };
-  }, [view, studioPath]);
+  }, [view, studioPath, listView]);
   // Turning Benchmark mode off while on its page, or the open clip going away
   // (deleted): go back to the clips.
   useEffect(() => {
@@ -210,16 +221,21 @@ export default function App() {
       <nav className="nav">
         <div className="brand">
           <img src={logo} alt="" width={26} height={26} />
-          REWIND
+          HINDSIGHT
           {upd?.current && <span className="brand-version">v{upd.current}</span>}
         </div>
         {nav.map(([id, label]) => (
           <button
             key={id}
             className={`nav-item ${navOn(id) ? "on" : ""}`}
-            onClick={() => (id === "clips" && view === "clips" ? window.dispatchEvent(new Event("rewind-top")) : setView(id))}
+            onClick={() => (id === view && (id === "clips" || id === "damaged") ? window.dispatchEvent(new Event("rewind-top")) : setView(id))}
           >
             {label}
+            {id === "damaged" && !!damagedClips?.length && (
+              <span className="nav-badge" title={`${damagedClips.length} damaged clip${damagedClips.length === 1 ? "" : "s"}`}>
+                {damagedClips.length}
+              </span>
+            )}
           </button>
         ))}
         <div className="nav-spacer" />
@@ -229,13 +245,13 @@ export default function App() {
         {showBanner && (
           <div className="update-banner" role="status">
             <span>
-              <strong>Rewind {upd!.version}</strong>{" "}
+              <strong>Hindsight {upd!.version}</strong>{" "}
               {upd!.stage === "ready" ? "is downloaded and ready." : "is available."}{" "}
               {status?.recording ? (
                 <span className="muted">Restarting stops and saves your recording.</span>
               ) : (
                 upd!.stage === "ready" && (
-                  <span className="muted">It also installs by itself the next time Rewind closes.</span>
+                  <span className="muted">It also installs by itself the next time Hindsight closes.</span>
                 )
               )}
             </span>
@@ -252,6 +268,22 @@ export default function App() {
         {view === "clips" && (
           <Library
             clips={clips}
+            onOpen={openInStudio}
+            onToast={(t, e) => toast(t, e)}
+            onChanged={refresh}
+            onDelete={requestDelete}
+            hotkey={settings?.hotkey ?? "Alt+F10"}
+            uploads={uploads.progress}
+            links={uploads.history}
+            focusPath={studioPath}
+            onShare={requestShare}
+            health={health}
+          />
+        )}
+        {view === "damaged" && (
+          <Library
+            clips={damagedClips}
+            mode="damaged"
             onOpen={openInStudio}
             onToast={(t, e) => toast(t, e)}
             onChanged={refresh}
@@ -316,7 +348,7 @@ export default function App() {
       {askUpdate && upd?.version && (
         <ConfirmUpdate
           version={upd.version}
-          reasons={interrupts.length ? interrupts : ["Rewind closes and reopens on the new version."]}
+          reasons={interrupts.length ? interrupts : ["Hindsight closes and reopens on the new version."]}
           busy={installing}
           onConfirm={installNow}
           onCancel={closeAskUpdate}

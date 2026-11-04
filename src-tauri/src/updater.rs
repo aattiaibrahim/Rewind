@@ -1,13 +1,13 @@
 //! Auto-update from GitHub Releases.
 //!
 //! - Checks shortly after launch and every 6 hours.
-//! - Updates are signed; the app only accepts files signed with Rewind's key
+//! - Updates are signed; the app only accepts files signed with Hindsight's key
 //!   (the public half is in tauri.conf.json), so a tampered download is rejected.
 //! - Never interrupts a recording or a game:
 //!   * Right after launch (nothing captured yet), a found update installs
 //!     immediately unless a recording or game is running.
 //!   * Otherwise it downloads in the background and installs when you click
-//!     "Restart to update" or the next time Rewind quits.
+//!     "Restart to update" or the next time Hindsight quits.
 
 use serde::Serialize;
 use std::sync::Mutex;
@@ -94,7 +94,7 @@ pub async fn check(app: &AppHandle, download: bool) -> Result<Option<String>, St
     result
 }
 
-/// Install the downloaded update (Rewind closes and reopens on the new version).
+/// Install the downloaded update (Hindsight closes and reopens on the new version).
 pub fn install(app: &AppHandle) -> Result<(), String> {
     if std::env::var("REWIND_UPDATE_DRYRUN").is_ok() {
         eprintln!("[rewind] dry run: would install the update now");

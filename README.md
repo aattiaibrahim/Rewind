@@ -2,7 +2,7 @@
   <img src="src/logo.svg" width="84" alt="" />
 </p>
 
-<h1 align="center">Rewind</h1>
+<h1 align="center">Hindsight</h1>
 
 <p align="center">
   <b>The lightweight game clipper for Windows.</b><br />
@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/studio.jpg" alt="Rewind's Studio: a clip open with the trim timeline and share panel" width="900" />
+  <img src="docs/screenshots/studio.jpg" alt="Hindsight's Studio: a clip open with the trim timeline and share panel" width="900" />
 </p>
 
 <table>
@@ -54,7 +54,7 @@
 - **Replay buffer on NVENC**: AV1, HEVC or H.264, 15 s to 20 min, constant-quality mode.
 - **Buffer in RAM by default**: no constant SSD writes. A disk mode remains for very long buffers.
 - **Tray icon shows a red dot** while capturing, like OBS.
-- **Save clip hotkey** (default `Alt+F10`). Clips from a detected game go to `Videos\Rewind\<Game>\`; everything else goes to `Videos\Rewind\Desktop\`.
+- **Save clip hotkey** (default `Alt+F10`). Clips from a detected game go to `Videos\Hindsight\<Game>\`; everything else goes to `Videos\Hindsight\Desktop\`.
 - **Full recording** (default `Alt+F9`, or the Record buttons). It reuses the same capture, so there's no second encoder. A crash mid-recording is recovered on the next start, and recording stops by itself if the disk drops below 1.5 GB free.
 - **Clip health check**: finds clips that won't play properly (common with NVIDIA and OBS MP4s after a driver hiccup or crash), marks them in the library, and rescues the good part into a new file without re-encoding. It runs only while no game is in front, on the GPU's video decoder, and stops the moment a game starts.
 - **Game detection**: known game exes, game-library installs (Steam, Epic, Riot, Xbox, GOG, Ubisoft, EA, Rockstar, Battle.net) and fullscreen apps. Browsers, Discord, launchers and so on count as Desktop. Steam and Epic games get their store names, and a clip saved while you're tabbed out of a game that's still running goes to that game.
@@ -68,7 +68,7 @@
   - Several PCs can share one NAS: file names include the PC's name, and clips from other PCs show up in the library.
   - Optionally, the local copy is removed once it's safely on the NAS.
 - **Clips from other recorders**: Medal, OBS and NVIDIA folders are found from their own settings and shown in the library in place, grouped by game. Nothing is moved or copied. Any other folder can be added too.
-- **Move into Rewind**: tidies a linked folder into Rewind's layout (`<Game>\<Game> <date time>`), merging game names across spellings.
+- **Move into Hindsight**: tidies a linked folder into Hindsight's layout (`<Game>\<Game> <date time>`), merging game names across spellings.
   - Same-drive moves are instant renames. Other drives copy, check the size, and only then remove the original.
   - Every move is logged as it happens, so **Undo** puts everything back, even after a crash.
 - **Share** (Share on a clip, or the Share box in Studio; set up under Settings → Sharing):
@@ -80,12 +80,15 @@
   - The webhook address and Streamable password are stored encrypted with Windows DPAPI, never in settings.json.
 - **Save sound**: a short chime when a clip or recording is saved, a low tone if it fails (can be turned off).
 - **Open any video** from any folder; it shows up under "Imported".
+- **Audio tracks in the editor**: each track (desktop sound, microphone) gets its own lane under the timeline with its waveform, so you can see where the action is. Drag across a lane to mute that part, mute a whole track, or make a track louder or quieter (±20 dB). The changes go into the saved trim, export or compress.
+- **Mic volume** (Settings → Recording → Audio): makes the microphone louder or quieter for everything you record, ±20 dB, applied straight away without restarting the buffer.
+- **Damaged section**: every clip the health check finds broken, in one place, with the same date timeline as the library. A badge on the sidebar shows how many there are.
 - **Studio**: preview, drag in/out handles, one frame-exact **Save trim** that re-encodes only the moment before the first keyframe (under a second) and copies the rest untouched, so it takes a few seconds and keeps full quality.
 - **Per-file tools**: remux to MP4 (only for the file you pick), export H.264 MP4, compress to 10/25/50/100 MB. Originals are never changed.
 
 - **Audio**: desktop sound (WASAPI loopback, track 1) and the microphone (mono by default, track 2), both on by default. Synced to video within about 10 ms. Exports and compresses mix both tracks into one.
 - **Replace original** option: trims, exports and compresses overwrite the edited file, and the old one goes to the Recycle Bin.
-- **Performance test** (Performance page, shown when **Settings → Advanced → Benchmark mode** is on): compares your game's FPS, 1% lows and GPU time per frame with nothing recording vs Rewind, OBS replay buffer, NVIDIA Instant Replay and Medal. Rewind switches each recorder on and off by itself (it opens and closes OBS and Medal, and presses your NVIDIA Instant Replay shortcut), so you just keep playing, and puts them back the way they were afterwards. After a warm-up, runs alternate nothing → recorder → nothing over several rounds in a shuffled order; each recorder is compared with the runs either side of it, and results carry 95% confidence ranges, so differences inside the game's own noise are reported as "no measurable cost". Every run is checked (game in front, the right recorder encoding, nothing else encoding), and it warns about drift, V-Sync, FPS caps, CPU-bound scenes and recorders set to a different resolution, FPS or buffer length. Frame times come from Intel PresentMon. **Share on GitHub** sends your results to the [benchmarks](benchmarks/README.md) page.
+- **Performance test** (Performance page, shown when **Settings → Advanced → Benchmark mode** is on): compares your game's FPS, 1% lows and GPU time per frame with nothing recording vs Hindsight, OBS replay buffer, NVIDIA Instant Replay and Medal. Hindsight switches each recorder on and off by itself (it opens and closes OBS and Medal, and presses your NVIDIA Instant Replay shortcut), so you just keep playing, and puts them back the way they were afterwards. After a warm-up, runs alternate nothing → recorder → nothing over several rounds in a shuffled order; each recorder is compared with the runs either side of it, and results carry 95% confidence ranges, so differences inside the game's own noise are reported as "no measurable cost". Every run is checked (game in front, the right recorder encoding, nothing else encoding), and it warns about drift, V-Sync, FPS caps, CPU-bound scenes and recorders set to a different resolution, FPS or buffer length. Frame times come from Intel PresentMon. **Share on GitHub** sends your results to the [benchmarks](benchmarks/README.md) page.
 
 ## Not yet
 
@@ -95,7 +98,7 @@
 
 The pipeline works the same way OBS's does. Everything stays on the NVIDIA GPU, and audio and video share one clock:
 
-1. **Windows Graphics Capture** hands Rewind each frame as a texture on the GPU that drives the monitor.
+1. **Windows Graphics Capture** hands Hindsight each frame as a texture on the GPU that drives the monitor.
 2. **The D3D11 Video Processor** converts and resizes it to NV12 on the GPU, at any output size including 4K and 720p.
 3. **NVENC, called directly** (`src-tauri/src/native/nvenc.rs`), encodes AV1/HEVC/H.264 with constant quality and a keyframe every second.
 4. Encoded packets go into a **RAM ring**, stamped on the shared high-precision clock (QPC).
@@ -103,17 +106,17 @@ The pipeline works the same way OBS's does. Everything stays on the NVIDIA GPU, 
 
 Measured on an RTX 5080 at 1080p60: about 2.5 ms of GPU encode per frame, about 3% of one CPU core for the whole capture, and a 12 s clip saved in under 1 s. Recordings stream to disk as they go, so a crash leaves parts that are recovered on the next start.
 
-If the native engine can't start (no NVIDIA GPU, driver problem), Rewind falls back to the FFmpeg engine below. It can also be picked under **Settings → Display & capture → Capture engine**.
+If the native engine can't start (no NVIDIA GPU, driver problem), Hindsight falls back to the FFmpeg engine below. It can also be picked under **Settings → Display & capture → Capture engine**.
 
 ## How it works (compatibility engine)
 
-ffmpeg's `ddagrab` captures the monitor on the GPU and feeds frames straight into NVENC, with no CPU copy. Output goes to 2-second MKV segments in a rolling ring. In RAM mode, ffmpeg streams each finished segment to Rewind over localhost and nothing touches the disk. In disk mode, segments go under `%LOCALAPPDATA%\com.rewind.app\buffer`. Saving joins the newest segments without re-encoding (`-c copy`), so it is instant and lossless.
+ffmpeg's `ddagrab` captures the monitor on the GPU and feeds frames straight into NVENC, with no CPU copy. Output goes to 2-second MKV segments in a rolling ring. In RAM mode, ffmpeg streams each finished segment to Hindsight over localhost and nothing touches the disk. In disk mode, segments go under `%LOCALAPPDATA%\com.rewind.app\buffer`. Saving joins the newest segments without re-encoding (`-c copy`), so it is instant and lossless.
 
 A supervisor thread (`src-tauri/src/engine.rs`) checks the monitor layout every second. If it changes, or ffmpeg exits, it starts a new capture "generation" on the right monitor. ffmpeg runs in a Windows job object, so it always dies with the app.
 
 ## Stream Deck and other tools
 
-- **Stream Deck plugin**: download `Rewind.streamDeckPlugin` from the [latest release](https://github.com/aattiaibrahim/Rewind/releases/latest) and double-click it. It has four actions:
+- **Stream Deck plugin**: download `Hindsight.streamDeckPlugin` from the [latest release](https://github.com/aattiaibrahim/Rewind/releases/latest) and double-click it. It has four actions:
   - **Save Clip**: full buffer or a set length per key.
   - **Record**: turns red and shows the timer.
   - **Replay Buffer**: on/off.
@@ -155,4 +158,4 @@ Build an installer with `pnpm tauri build`. It bundles FFmpeg next to the app.
 
 ## License notes
 
-Rewind bundles an LGPL build of FFmpeg and Intel's PresentMon (MIT, for the Performance test). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Hindsight bundles an LGPL build of FFmpeg and Intel's PresentMon (MIT, for the Performance test). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

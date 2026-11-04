@@ -70,12 +70,12 @@ export function LibrarySettings({
   const toggleLinked = (p: string, on: boolean) =>
     set({ linkedFolders: on ? [...s.linkedFolders, p] : s.linkedFolders.filter((f) => f.toLowerCase() !== p.toLowerCase()) });
   const addFolder = async () => {
-    const dir = await open({ directory: true, title: "Show the clips in this folder in Rewind" });
+    const dir = await open({ directory: true, title: "Show the clips in this folder in Hindsight" });
     if (typeof dir === "string" && !linked(dir)) set({ linkedFolders: [...s.linkedFolders, dir] });
   };
   const custom = s.linkedFolders.filter((f) => !found.some((k) => k.path.toLowerCase() === f.toLowerCase()));
 
-  // "Move into Rewind": plan first (nothing touched), confirm, then move with progress.
+  // "Move into Hindsight": plan first (nothing touched), confirm, then move with progress.
   const [job, setJob] = useState<MoveJob | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [last, setLast] = useState<LastMove | null>(null);
@@ -129,8 +129,8 @@ export function LibrarySettings({
   const closeMove = useCallback(() => setJob((j) => (j?.running ? j : null)), []);
   const moveButton = (path: string) =>
     linked(path) && (
-      <button className="btn small" disabled={!!job} onClick={() => askMove([path])} title="Move these clips into Rewind's game folders">
-        Move into Rewind…
+      <button className="btn small" disabled={!!job} onClick={() => askMove([path])} title="Move these clips into Hindsight's game folders">
+        Move into Hindsight…
       </button>
     );
 
@@ -178,7 +178,7 @@ export function LibrarySettings({
         <span>
           Clips from other recorders
           <small>
-            Shows their clips in your library, grouped by game, without moving or copying anything. Move them into Rewind's
+            Shows their clips in your library, grouped by game, without moving or copying anything. Move them into Hindsight's
             folders to tidy everything into one place.
           </small>
         </span>
@@ -188,9 +188,9 @@ export function LibrarySettings({
               className="btn small primary"
               disabled={!!job}
               onClick={() => askMove(s.linkedFolders)}
-              title="Move every shown folder's clips into Rewind's game folders in one go"
+              title="Move every shown folder's clips into Hindsight's game folders in one go"
             >
-              Move all into Rewind…
+              Move all into Hindsight…
             </button>
           )}
           <button className="btn small" onClick={addFolder}>
@@ -244,7 +244,7 @@ export function LibrarySettings({
       )}
       {job?.plan && (
         <ConfirmDialog
-          title={`Move ${job.plan.count} ${job.plan.label} clip${job.plan.count === 1 ? "" : "s"} into Rewind?`}
+          title={`Move ${job.plan.count} ${job.plan.label} clip${job.plan.count === 1 ? "" : "s"} into Hindsight?`}
           confirmLabel={job.running ? `Moving ${Math.min(job.done + 1, job.total)} of ${job.total}…` : `Move ${fmtSize(job.plan.bytes)}`}
           busy={job.running}
           onConfirm={doMove}
@@ -253,7 +253,7 @@ export function LibrarySettings({
           <ul className="modal-list wrap">
             <li>
               Into {job.plan.folders.slice(0, 4).map(([f, n]) => `${f} (${n})`).join(", ")}
-              {job.plan.folders.length > 4 ? ` and ${job.plan.folders.length - 4} more folders` : ""}, renamed like Rewind's
+              {job.plan.folders.length > 4 ? ` and ${job.plan.folders.length - 4} more folders` : ""}, renamed like Hindsight's
               clips, e.g. “{job.plan.examples[0]?.[0]}” → “{job.plan.examples[0]?.[1]}”.
             </li>
             <li>

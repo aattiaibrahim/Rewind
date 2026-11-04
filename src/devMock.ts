@@ -1,5 +1,5 @@
 // Browser preview mode (dev only): when the UI runs in a normal browser
-// instead of inside Rewind, fake the backend with sample clips so the
+// instead of inside Hindsight, fake the backend with sample clips so the
 // interface can be clicked through without touching real files.
 
 type Clip = {
@@ -22,7 +22,7 @@ export function installDevMock() {
     ["Hunt Showdown", "Bayou extract", 1.2, 40],
     ["Payday The Heist", "Clean heist", 2.2, 18],
   ].map(([folder, name, ago, mb]) => ({
-    path: `C:\\Users\\you\\Videos\\Rewind\\${folder}\\${name}.mkv`,
+    path: `C:\\Users\\you\\Videos\\Hindsight\\${folder}\\${name}.mkv`,
     name: name as string,
     folder: folder as string,
     size: (mb as number) * 1024 * 1024,
@@ -43,20 +43,20 @@ export function installDevMock() {
     const ago = 3 + Math.floor(i * 3.1) + (i % 3) * 0.3;
     const g = games[i % games.length];
     clips.push({
-      path: `C:\\Users\\you\\Videos\\Rewind\\${g}\\${g} old ${i}.mkv`, name: `${g} ${i + 1}`, folder: g,
+      path: `C:\\Users\\you\\Videos\\Hindsight\\${g}\\${g} old ${i}.mkv`, name: `${g} ${i + 1}`, folder: g,
       size: (20 + (i * 7) % 90) << 20, modified: now - ago * day, external: false, location: "local", onNas: false, source: "",
     });
   }
-  clips.sort((a, b) => b.modified - a.modified); // newest first, like Rewind's own list
+  clips.sort((a, b) => b.modified - a.modified); // newest first, like Hindsight's own list
   const bin: Clip[] = [];
   const uploads: Record<string, unknown[]> = {};
   const secrets: Record<string, boolean> = {};
   const settings = {
-    clipsDir: "C:\\Users\\you\\Videos\\Rewind", encoder: "av1", quality: 24, fps: 60, bufferSeconds: 120,
+    clipsDir: "C:\\Users\\you\\Videos\\Hindsight", encoder: "av1", quality: 24, fps: 60, bufferSeconds: 120,
     bufferInRam: true, captureEngine: "native", monitorMode: "primary", fixedMonitor: "", drawCursor: true, hotkey: "Alt+F10",
     recordHotkey: "Alt+F9", bufferEnabled: true, launchOnStartup: false, autoUpdate: true, startMinimized: true,
     keepOriginalAfterRemux: true, replaceOriginalOnEdit: false, externalFiles: [], desktopAudio: true,
-    micEnabled: true, micMono: true, micDevice: "", theme: "midnight", accent: "lime", reduceMotion: false,
+    micEnabled: true, micMono: true, micDevice: "", micGainDb: 0, theme: "midnight", accent: "lime", reduceMotion: false,
     saveSound: true, nasDir: "", nasRemoveLocal: false, linkedFolders: [] as string[], benchmarkMode: false, uploadHost: "catbox", litterboxTime: "72h", autoUpload: false, postLinkToDiscord: false, streamableEmail: "", discordWebhookName: "", confirmUploads: true, healthCheck: true,
   };
   const status = {
@@ -158,6 +158,19 @@ export function installDevMock() {
       const list = by.find(([k]) => p.toLowerCase().includes(k.toLowerCase()))?.[1] ?? ["cs2a"];
       return `/thumb-${list[p.length % list.length]}.jpg`;
     },
+    // A made-up 45 s game track (gunfire bursts) and mic (talking in stretches).
+    clip_waveforms: () => {
+      const n = 45 * 20;
+      const game = Array.from({ length: n }, (_, i) => {
+        const burst = [6, 7, 14, 22, 23, 31, 38].some((s) => i / 20 >= s && i / 20 < s + 1.2);
+        return Math.round(burst ? 200 + Math.random() * 50 : 95 + Math.sin(i / 9) * 20 + Math.random() * 25);
+      });
+      const mic = Array.from({ length: n }, (_, i) => {
+        const talk = [2, 10, 18, 27, 35].some((s) => i / 20 >= s && i / 20 < s + 4);
+        return Math.round(talk ? 120 + Math.random() * 100 : Math.random() * 20);
+      });
+      return [{ step: 0.05, levels: game }, { step: 0.05, levels: mic }];
+    },
     preview_audio: () => ({
       firstTitle: "Desktop audio",
       extra: [{ index: 1, title: "Microphone", path: "C:\\Users\\you\\preview\\mic.m4a" }],
@@ -200,7 +213,7 @@ export function installDevMock() {
     },
     unregisterCallback: (id: number) => callbacks.delete(id),
     // Every sample clip plays the same generated test video (public/preview-sample.mkv:
-    // AV1 1080p60 with a keyframe every second, like Rewind's own clips).
+    // AV1 1080p60 with a keyframe every second, like Hindsight's own clips).
     convertFileSrc: (p: string) =>
       p.endsWith("mic.m4a") ? "/preview-mic.m4a" : p.startsWith("C:\\Users\\you\\") ? "/preview-sample.mkv" : p,
     invoke: async (cmd: string, args: Record<string, unknown> = {}) => {
@@ -213,7 +226,7 @@ export function installDevMock() {
     },
   };
   w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
-  console.info("[preview] Rewind UI running with fake sample clips");
+  console.info("[preview] Hindsight UI running with fake sample clips");
 }
 
 // A believable 3-round result so the Performance page can be laid out in preview.
@@ -253,14 +266,14 @@ function sampleBenchReport() {
       { app: "medal", runs: 2, fpsCost: st(1.7, 0.3, 2), low1Cost: st(2.2, 0.9, 2), gpuMsAdded: st(0.06, 0.02, 2), cpuPercent: st(1.9, 0.2, 2), gpu3dPercent: st(2.0, 0.3, 2), encoderPercent: st(11.0, 0.4, 2), ramMb: st(540, 12, 2), verdict: "noMeasurableCost" },
     ],
     settings: [
-      { app: "rewind", width: 1920, height: 1080, fps: 60, codec: "AV1 (NVENC)", quality: "CQ 24", bufferSecs: 120, source: "Rewind settings" },
+      { app: "rewind", width: 1920, height: 1080, fps: 60, codec: "AV1 (NVENC)", quality: "CQ 24", bufferSecs: 120, source: "Hindsight settings" },
       { app: "obs", width: 1920, height: 1080, fps: 60, codec: "AV1 (NVENC)", quality: "CQP 16", bufferSecs: 180, source: 'OBS profile "Untitled"' },
-      { app: "nvidia", width: 1920, height: 1080, fps: 60, codec: null, quality: null, bufferSecs: 180, source: "NVIDIA Instant Replay settings (codec and bitrate aren't stored where Rewind can read them)" },
-      { app: "medal", width: null, height: null, fps: null, codec: "HEVC", quality: "7Mbps", bufferSecs: null, source: "Medal settings (resolution, FPS and clip length aren't stored where Rewind can read them)" },
+      { app: "nvidia", width: 1920, height: 1080, fps: 60, codec: null, quality: null, bufferSecs: 180, source: "NVIDIA Instant Replay settings (codec and bitrate aren't stored where Hindsight can read them)" },
+      { app: "medal", width: null, height: null, fps: null, codec: "HEVC", quality: "7Mbps", bufferSecs: null, source: "Medal settings (resolution, FPS and clip length aren't stored where Hindsight can read them)" },
     ],
     skipped: [],
     warnings: [
-      "Rewind couldn't read Medal's resolution and frame rate. Check they match Rewind's (1920×1080 at 60 fps).",
+      "Hindsight couldn't read Medal's resolution and frame rate. Check they match Hindsight's (1920×1080 at 60 fps).",
       "1 of 25 runs failed a check and were left out (see All runs).",
     ],
     error: null,

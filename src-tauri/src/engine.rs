@@ -6,7 +6,7 @@
 //!
 //! Recording reuses the same capture: while it runs, every finished segment is
 //! copied out of the ring into a hidden folder next to the final file, and on
-//! stop they are joined. If Rewind crashes mid-recording, the copied segments
+//! stop they are joined. If Hindsight crashes mid-recording, the copied segments
 //! are still there and get recovered on the next start.
 //!
 //! A supervisor thread checks the monitor layout every second. When it changes

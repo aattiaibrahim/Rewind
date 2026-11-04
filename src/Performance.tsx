@@ -13,13 +13,13 @@ function shareUrl(r: BenchReport, version: string | undefined) {
 }
 
 const OTHERS: { app: BenchApp; label: string; how: string }[] = [
-  { app: "obs", label: "OBS replay buffer", how: "Rewind opens and closes OBS for you." },
-  { app: "nvidia", label: "NVIDIA Instant Replay", how: "Rewind presses your Instant Replay shortcut for you." },
-  { app: "medal", label: "Medal", how: "Rewind opens and closes Medal for you. Clipping must be on in Medal's settings." },
+  { app: "obs", label: "OBS replay buffer", how: "Hindsight opens and closes OBS for you." },
+  { app: "nvidia", label: "NVIDIA Instant Replay", how: "Hindsight presses your Instant Replay shortcut for you." },
+  { app: "medal", label: "Medal", how: "Hindsight opens and closes Medal for you. Clipping must be on in Medal's settings." },
 ];
 
 const NAME: Record<BenchApp, string> = {
-  rewind: "Rewind",
+  rewind: "Hindsight",
   obs: "OBS replay buffer",
   nvidia: "NVIDIA Instant Replay",
   medal: "Medal",
@@ -67,7 +67,7 @@ function res(s: RecorderSettings) {
 function asText(r: BenchReport) {
   const b = r.baseline;
   const lines = [
-    `Rewind performance test: ${r.game}, ${r.started}`,
+    `Hindsight performance test: ${r.game}, ${r.started}`,
     `${r.rounds} rounds × ${r.seconds} s runs, interleaved with nothing-recording runs, shuffled order, ${r.warmupSecs} s warm-up, ${f1(r.minutes)} min total`,
     `Nothing recording: ${b.fps ? `${f1(b.fps.mean)} FPS` : "–"} over ${b.runs} runs, run-to-run noise ±${f1(b.noisePercent ?? 0)}%, drift ${signed(b.driftPercent ?? 0)}%` +
       (b.gpuBusyShare !== null ? `, GPU busy ${Math.round(b.gpuBusyShare * 100)}% of each frame` : ""),
@@ -164,16 +164,16 @@ export function Performance() {
     <div className="page">
       <h1>Performance test</h1>
       <p className="muted" style={{ margin: 0, maxWidth: 760, lineHeight: 1.6 }}>
-        Shows how much each recorder slows your game. Rewind measures your frame rate with nothing recording, then with each
+        Shows how much each recorder slows your game. Hindsight measures your frame rate with nothing recording, then with each
         recorder on, back and forth several times, and switches every recorder on and off by itself. You just play.
       </p>
 
       {!running && (
         <section className="group" style={{ maxWidth: 760 }}>
-          <h2>Compare Rewind with</h2>
+          <h2>Compare Hindsight with</h2>
           <p className="muted" style={{ margin: "0 0 4px", fontSize: 13 }}>
-            Rewind is always measured. Switch on the recorders you have installed to measure them too; each one adds a few minutes.
-            Leave them all off to measure Rewind alone.
+            Hindsight is always measured. Switch on the recorders you have installed to measure them too; each one adds a few minutes.
+            Leave them all off to measure Hindsight alone.
           </p>
           {OTHERS.map((o) => (
             <label key={o.app} className="setting">

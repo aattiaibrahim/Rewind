@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Rewind",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "identifier": "com.rewind.app",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Rewind",
+        "title": "Hindsight",
         "width": 1280,
         "height": 800,
         "minWidth": 960,
@@ -25,7 +25,7 @@
       },
       {
         "label": "flyout",
-        "title": "Rewind",
+        "title": "Hindsight",
         "url": "index.html",
         "width": 380,
         "height": 560,
@@ -68,7 +68,7 @@
       "../vendor/presentmon/LICENSE.txt": "presentmon/LICENSE.txt",
       "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md"
     },
-    "publisher": "Rewind",
+    "publisher": "Hindsight",
     "shortDescription": "Lightweight NVENC replay-buffer clipper",
     "icon": [
       "icons/32x32.png",

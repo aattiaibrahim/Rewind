@@ -5,7 +5,7 @@
 //! - Decodes the video in 10 s chunks on the GPU (d3d11va: the video-decode
 //!   unit, not the 3D engine; CPU fallback with 2 threads) and counts decode
 //!   errors beyond the few every file prints when it's opened.
-//! - Runs only while no game is in front, Rewind isn't recording or saving,
+//! - Runs only while no game is in front, Hindsight isn't recording or saving,
 //!   and stops between chunks the moment a game starts.
 //! - Each clip is checked once: results are cached by size and date.
 

@@ -49,7 +49,7 @@ export function HealthNotice({ path, health, onRescued }: { path: string; health
       <strong>⚠ {damagedText(health)}</strong>
       <small>
         The file was already like this when it was saved (it's common with NVIDIA and OBS MP4s after a driver hiccup or a
-        crash). Rewind's own clips are saved as MKV, which survives crashes, so they're far less likely to be hit.
+        crash). Hindsight's own clips are saved as MKV, which survives crashes, so they're far less likely to be hit.
       </small>
       {best && (
         <button className="btn small" disabled={busy} onClick={rescue} title="Copies the good part into a new file. Nothing is re-encoded and the original stays.">
@@ -63,6 +63,39 @@ export function HealthNotice({ path, health, onRescued }: { path: string; health
   );
 }
 
+/** How far the background check has got, as one plain line. */
+function statusText(p: HealthProgress | null, on = true) {
+  if (!on) return "Off.";
+  if (!p || !p.total) return "Starting…";
+  if (p.checked >= p.total)
+    return `All ${p.total} clips checked${p.damaged ? `, ${p.damaged} damaged (marked in your library)` : ", none damaged"}.`;
+  return `${p.checked} of ${p.total} checked${p.damaged ? `, ${p.damaged} damaged so far` : ""}${p.paused ? " · paused while you play" : ""}.`;
+}
+
+function useHealthProgress() {
+  const [p, setP] = useState<HealthProgress | null>(null);
+  useEffect(() => {
+    const load = () => api.healthProgress().then(setP).catch(() => {});
+    load();
+    const t = setInterval(load, 5000);
+    return () => clearInterval(t);
+  }, []);
+  return p;
+}
+
+/** Top of the Damaged section: what it is, and where the check is up to. */
+export function DamagedStatus({ count }: { count: number }) {
+  const p = useHealthProgress();
+  return (
+    <p className="muted damaged-status">
+      {count > 0
+        ? "These clips won't play properly all the way through. Open one to see which part is damaged and rescue the rest into a new file. The original is never changed."
+        : "Hindsight checks your clips in the background, one at a time, only while you're not gaming or recording."}{" "}
+      <span className="damaged-progress">{statusText(p)}</span>
+    </p>
+  );
+}
+
 /** Settings → Library: the background check's switch and progress. */
 export function HealthSetting({
   on,
@@ -73,20 +106,8 @@ export function HealthSetting({
   set: (v: boolean) => void;
   Toggle: (p: { label: string; checked: boolean; onChange: (v: boolean) => void }) => React.ReactElement;
 }) {
-  const [p, setP] = useState<HealthProgress | null>(null);
-  useEffect(() => {
-    const load = () => api.healthProgress().then(setP).catch(() => {});
-    load();
-    const t = setInterval(load, 5000);
-    return () => clearInterval(t);
-  }, []);
-  const status = !on
-    ? "Off."
-    : !p || !p.total
-      ? "Starting…"
-      : p.checked >= p.total
-        ? `All ${p.total} clips checked${p.damaged ? `, ${p.damaged} damaged (marked in your library)` : ", none damaged"}.`
-        : `${p.checked} of ${p.total} checked${p.damaged ? `, ${p.damaged} damaged so far` : ""}${p.paused ? " · paused while you play" : ""}.`;
+  const p = useHealthProgress();
+  const status = statusText(p, on);
   return (
     <label className="setting">
       <span>
