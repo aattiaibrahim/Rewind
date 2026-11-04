@@ -6,10 +6,14 @@
 //! shares one folder per game (file names carry the PC's name, see `pc_suffix`).
 //!
 //! - A copy goes to a hidden `.name.rewind-partial` file first and is renamed
-//!   only once its size matches, so the NAS never shows a half-copied clip.
+//!   only once it's verified: the copy is read back from the NAS (past
+//!   Windows' cache) and its SHA-256 must match the original's, byte for
+//!   byte. So the NAS never shows a half-copied or garbled clip.
 //! - Copied clips are remembered (nas-synced.txt), so a clip deleted on the NAS
 //!   isn't copied back again.
-//! - Optionally the local copy is removed once the NAS copy is verified.
+//! - Optionally the local copy is freed up, only once the NAS copy is verified
+//!   that way (clips copied by older versions are verified first), and it goes
+//!   to the Recycle Bin rather than being deleted outright.
 //! - Nothing is copied while a game is running (in front or tabbed out of)
 //!   or a recording is going, so it never costs frames.
 //! - The worker never touches the network on the save path: duplicate-name
@@ -17,7 +21,9 @@
 
 use serde::Serialize;
 use std::collections::HashSet;
+use sha2::{Digest, Sha256};
 use std::fs;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Condvar, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -43,6 +49,31 @@ pub struct NasState {
     pub last_sync: Option<i64>,
     /// Waiting because a game is running or a clip is recording
     pub paused: bool,
+    /// This pass: clips and bytes to copy, and how many are done
+    pub total_files: usize,
+    pub done_files: usize,
+    pub total_bytes: u64,
+    pub done_bytes: u64,
+    /// Bytes still to copy (stays set while paused)
+    pub pending_bytes: u64,
+    /// Reading the NAS copy back to check it
+    pub checking: bool,
+    /// Average speed this pass (bytes per second), counting the checks
+    pub rate: f64,
+    /// Time left at that speed
+    pub eta_secs: Option<u64>,
+}
+
+/// Where a sync pass is up to, for the progress display.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Step<'a> {
+    /// The clip being copied or checked (None = the pass is over)
+    pub file: Option<&'a str>,
+    pub checking: bool,
+    pub done_bytes: u64,
+    pub total_bytes: u64,
+    pub done_files: usize,
+    pub total_files: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -166,6 +197,7 @@ pub struct Pass {
     pub copied: Vec<String>,
     pub removed: Vec<String>,
     pub pending: usize,
+    pub pending_bytes: u64,
     pub errors: Vec<String>,
 }
 
@@ -180,15 +212,97 @@ fn size(p: &Path) -> Option<u64> {
     fs::metadata(p).ok().map(|m| m.len())
 }
 
+const CHUNK: usize = 1 << 20;
+
+fn sha256_of(mut r: impl Read, buf: &mut [u8]) -> std::io::Result<[u8; 32]> {
+    let mut h = Sha256::new();
+    loop {
+        let n = r.read(buf)?;
+        if n == 0 {
+            return Ok(h.finalize().into());
+        }
+        h.update(&buf[..n]);
+    }
+}
+
+/// SHA-256 of a file as it really is on disk (or the NAS), not as Windows
+/// remembers it from writing it a moment ago: read with no cache.
+fn sha256_uncached(p: &Path) -> Result<[u8; 32], String> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_FLAG_NO_BUFFERING: u32 = 0x2000_0000;
+    // Uncached reads need a buffer aligned to the disk's sector size.
+    // Uncached reads go over the network one at a time, so bigger reads are faster.
+    const READ: usize = 4 << 20;
+    let mut v = vec![0u8; READ + 4096];
+    let off = v.as_ptr().align_offset(4096);
+    let buf = &mut v[off..off + READ];
+    let uncached = fs::File::options().read(true).custom_flags(FILE_FLAG_NO_BUFFERING).open(p).and_then(|f| sha256_of(f, buf));
+    match uncached {
+        Ok(h) => Ok(h),
+        // Some shares refuse uncached reads: an ordinary read still catches a bad copy.
+        Err(_) => fs::File::open(p).and_then(|f| sha256_of(f, buf)).map_err(|e| e.to_string()),
+    }
+}
+
+/// Copy `src` to `tmp`, fingerprinting it on the way, then read `tmp` back
+/// and check it's identical. Keeps the clip's date.
+fn copy_verified(src: &Path, tmp: &Path, progress: &mut dyn FnMut(u64, bool)) -> Result<(), String> {
+    let mut r = fs::File::open(src).map_err(|e| e.to_string())?;
+    let modified = r.metadata().and_then(|m| m.modified()).ok();
+    let mut w = fs::File::create(tmp).map_err(|e| e.to_string())?;
+    let mut h = Sha256::new();
+    let mut buf = vec![0u8; CHUNK];
+    let mut sent = 0u64;
+    loop {
+        let n = r.read(&mut buf).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        h.update(&buf[..n]);
+        w.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+        sent += n as u64;
+        progress(sent, false);
+    }
+    if let Some(t) = modified {
+        let _ = w.set_modified(t);
+    }
+    w.sync_all().map_err(|e| e.to_string())?;
+    drop(w);
+    let want: [u8; 32] = h.finalize().into();
+    progress(sent, true);
+    if sha256_uncached(tmp)? != want {
+        return Err("the copy on the NAS didn't match the original, so it was thrown away and will be tried again".into());
+    }
+    Ok(())
+}
+
+/// Are the clip here and its NAS copy identical? (For clips copied before
+/// copies were verified.)
+fn same_contents(local: &Path, nas: &Path) -> Result<bool, String> {
+    let mut buf = vec![0u8; CHUNK];
+    let a = fs::File::open(local).and_then(|f| sha256_of(f, &mut buf)).map_err(|e| e.to_string())?;
+    Ok(sha256_uncached(nas)? == a)
+}
+
+/// Freed-up local copies go to the Recycle Bin (tests delete outright).
+fn recycle(p: &Path) -> Result<(), String> {
+    #[cfg(test)]
+    return fs::remove_file(p).map_err(|e| e.to_string());
+    #[cfg(not(test))]
+    trash::delete(p).map_err(|e| e.to_string())
+}
+
 /// One sync pass: copy every settled clip that isn't on the NAS yet.
 /// `synced` holds the keys of clips already copied (so deleting one on the NAS sticks).
 pub fn sync_once(
     local: &Path,
     nas: &Path,
     synced: &mut HashSet<String>,
+    // Keys of clips whose NAS copy is known identical (only those are ever freed up here).
+    verified: &mut HashSet<String>,
     remove_local: bool,
     min_age: Duration,
-    mut on_copy: impl FnMut(Option<&str>),
+    mut on_copy: impl FnMut(Step),
     // Checked before each copy: true stops the pass (a game started).
     stop: &dyn Fn() -> bool,
 ) -> Result<Pass, String> {
@@ -197,14 +311,47 @@ pub fn sync_once(
     }
     let mut pass = Pass::default();
     let todo: Vec<_> = clips_in(local).into_iter().filter(|(p, _, _)| settled(p, min_age)).collect();
+    // What this pass will copy, for the progress display.
+    let (mut total_files, mut total_bytes) = (0usize, 0u64);
+    for (src, rel, _) in &todo {
+        if !synced.contains(&rel_key(rel)) && size(&nas.join(rel.replace('/', "\\"))).is_none() {
+            total_files += 1;
+            total_bytes += size(src).unwrap_or(0);
+        }
+    }
+    let (mut done_files, mut done_bytes) = (0usize, 0u64);
     for (src, rel, _) in todo {
         let key = rel_key(&rel);
         let dest = nas.join(rel.replace('/', "\\"));
         let local_size = size(&src);
         if synced.contains(&key) {
-            // Already copied once. Free up space if asked and the NAS copy is still intact.
-            if remove_local && local_size.is_some() && size(&dest) == local_size && fs::remove_file(&src).is_ok() {
-                pass.removed.push(rel);
+            // Already copied once. Free up space if asked, the NAS copy is still
+            // there, and it's identical (checked once, the first time).
+            if !remove_local || local_size.is_none() || size(&dest) != local_size {
+                continue;
+            }
+            if !verified.contains(&key) {
+                if stop() {
+                    continue;
+                }
+                on_copy(Step { file: Some(&rel), checking: true, done_bytes, total_bytes, done_files, total_files });
+                match same_contents(&src, &dest) {
+                    Ok(true) => {
+                        verified.insert(key.clone());
+                    }
+                    Ok(false) => {
+                        pass.errors.push(format!("{rel}: the NAS copy isn't identical to this one, so this one is kept"));
+                        continue;
+                    }
+                    Err(e) => {
+                        pass.errors.push(format!("{rel}: couldn't check the NAS copy ({e}), so this one is kept"));
+                        continue;
+                    }
+                }
+            }
+            match recycle(&src) {
+                Ok(()) => pass.removed.push(rel),
+                Err(e) => pass.errors.push(format!("{rel}: couldn't move the local copy to the Recycle Bin ({e})")),
             }
             continue;
         }
@@ -223,14 +370,16 @@ pub fn sync_once(
         if stop() {
             continue; // counted as waiting, copied on a later pass
         }
-        on_copy(Some(&rel));
+        on_copy(Step { file: Some(&rel), checking: false, done_bytes, total_bytes, done_files, total_files });
         let name = dest.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let tmp = dest.with_file_name(format!(".{name}{PARTIAL}"));
         let copied = (|| -> Result<(), String> {
             if let Some(dir) = dest.parent() {
                 fs::create_dir_all(dir).map_err(|e| e.to_string())?;
             }
-            fs::copy(&src, &tmp).map_err(|e| e.to_string())?;
+            copy_verified(&src, &tmp, &mut |n, checking| {
+                on_copy(Step { file: Some(&rel), checking, done_bytes: done_bytes + n, total_bytes, done_files, total_files })
+            })?;
             if size(&tmp) != local_size {
                 return Err("the copy came out the wrong size".into());
             }
@@ -239,9 +388,15 @@ pub fn sync_once(
         match copied {
             Ok(()) => {
                 pass.pending -= 1;
-                synced.insert(key);
-                if remove_local && fs::remove_file(&src).is_ok() {
-                    pass.removed.push(rel.clone());
+                done_files += 1;
+                done_bytes += local_size.unwrap_or(0);
+                synced.insert(key.clone());
+                verified.insert(key);
+                if remove_local {
+                    match recycle(&src) {
+                        Ok(()) => pass.removed.push(rel.clone()),
+                        Err(e) => pass.errors.push(format!("{rel}: couldn't move the local copy to the Recycle Bin ({e})")),
+                    }
                 }
                 pass.copied.push(rel);
             }
@@ -251,12 +406,18 @@ pub fn sync_once(
             }
         }
     }
-    on_copy(None);
+    pass.pending_bytes = total_bytes.saturating_sub(done_bytes);
+    on_copy(Step { file: None, checking: false, done_bytes, total_bytes, done_files, total_files });
     Ok(pass)
 }
 
 fn manifest_path(app: &AppHandle) -> Option<PathBuf> {
     app.path().app_data_dir().ok().map(|d| d.join("nas-synced.txt"))
+}
+
+/// Same format as the synced list: clips whose NAS copy was checked identical.
+fn verified_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path().app_data_dir().ok().map(|d| d.join("nas-verified.txt"))
 }
 
 /// Lines are "<nas root>|<key>", so switching NAS folders starts fresh.
@@ -302,6 +463,7 @@ fn publish(app: &AppHandle, f: impl FnOnce(&mut NasState)) {
 pub fn start(app: AppHandle) {
     std::thread::spawn(move || {
         let mut synced: HashSet<String> = HashSet::new();
+        let mut verified: HashSet<String> = HashSet::new();
         let mut synced_root = String::new();
         loop {
             {
@@ -336,18 +498,47 @@ pub fn start(app: AppHandle) {
                 continue;
             }
             let manifest = manifest_path(&app);
+            let verified_file = verified_path(&app);
             if synced_root != s.nas_dir {
                 synced = manifest.as_deref().map(|p| load_synced(p, &s.nas_dir)).unwrap_or_default();
+                verified = verified_file.as_deref().map(|p| load_synced(p, &s.nas_dir)).unwrap_or_default();
                 synced_root = s.nas_dir.clone();
             }
             let nas = PathBuf::from(&s.nas_dir);
             let a = app.clone();
-            let result = sync_once(Path::new(&s.clips_dir), &nas, &mut synced, s.nas_remove_local, SETTLE, |now| {
-                let now = now.map(|r| r.rsplit('/').next().unwrap_or(r).to_string());
-                publish(&a, |st| st.copying = now);
+            let mut started: Option<std::time::Instant> = None;
+            let mut last_emit = std::time::Instant::now() - Duration::from_secs(1);
+            let mut last_file = String::new();
+            let result = sync_once(Path::new(&s.clips_dir), &nas, &mut synced, &mut verified, s.nas_remove_local, SETTLE, |step| {
+                let file = step.file.map(|r| r.rsplit('/').next().unwrap_or(r).to_string());
+                // Throttled: a clip is hundreds of 1 MB chunks.
+                let new_file = file.as_deref().unwrap_or("") != last_file;
+                if !new_file && step.file.is_some() && last_emit.elapsed() < Duration::from_millis(400) {
+                    return;
+                }
+                last_emit = std::time::Instant::now();
+                last_file = file.clone().unwrap_or_default();
+                let since = *started.get_or_insert_with(std::time::Instant::now);
+                let secs = since.elapsed().as_secs_f64();
+                let rate = if secs > 2.0 { step.done_bytes as f64 / secs } else { 0.0 };
+                let left = step.total_bytes.saturating_sub(step.done_bytes);
+                publish(&a, |st| {
+                    st.copying = file;
+                    st.checking = step.checking;
+                    st.total_files = step.total_files;
+                    st.done_files = step.done_files;
+                    st.total_bytes = step.total_bytes;
+                    st.done_bytes = step.done_bytes;
+                    st.pending_bytes = left;
+                    st.rate = rate;
+                    st.eta_secs = (rate > 0.0 && left > 0).then(|| (left as f64 / rate) as u64);
+                });
             }, &|| crate::games::game_running());
             if let Some(p) = &manifest {
                 save_synced(p, &s.nas_dir, &synced);
+            }
+            if let Some(p) = &verified_file {
+                save_synced(p, &s.nas_dir, &verified);
             }
             let reachable = result.is_ok();
             let mut changed = false;
@@ -358,6 +549,7 @@ pub fn start(app: AppHandle) {
                         st.enabled = true;
                         st.reachable = true;
                         st.pending = pass.pending;
+                        st.pending_bytes = pass.pending_bytes;
                         st.copied += pass.copied.len();
                         st.last_error = pass.errors.first().cloned();
                         st.last_sync = Some(now_ms());
@@ -405,17 +597,37 @@ mod tests {
     }
 
     #[test]
+    fn progress_counts_files_and_bytes() {
+        let (local, nas) = (tmp("p-local"), tmp("p-nas"));
+        clip(&local, "A/a.mkv", 3 << 20);
+        clip(&local, "B/b.mkv", 1 << 20);
+        fs::create_dir_all(&nas).unwrap();
+        let (mut synced, mut verified) = (HashSet::new(), HashSet::new());
+        let mut steps: Vec<(u64, u64, usize, usize, bool)> = Vec::new();
+        let on = |s: Step| steps.push((s.done_bytes, s.total_bytes, s.done_files, s.total_files, s.checking));
+        sync_once(&local, &nas, &mut synced, &mut verified, false, Duration::ZERO, on, &|| false).unwrap();
+        let total = 4u64 << 20;
+        assert!(steps.iter().all(|s| s.1 == total && s.3 == 2), "{steps:?}");
+        assert!(steps.windows(2).all(|w| w[1].0 >= w[0].0), "bytes only go up");
+        assert!(steps.iter().any(|s| s.4), "the check shows up");
+        assert_eq!(steps.last().unwrap().0, total);
+        assert_eq!(steps.last().unwrap().2, 2);
+        let _ = (fs::remove_dir_all(&local), fs::remove_dir_all(&nas));
+    }
+
+    #[test]
     fn nothing_is_copied_while_a_game_is_running() {
         let (local, nas) = (tmp("g-local"), tmp("g-nas"));
         fs::create_dir_all(&nas).unwrap();
         clip(&local, "VALORANT/a.mkv", 1000);
         let mut synced = HashSet::new();
-        let pass = sync_once(&local, &nas, &mut synced, true, Duration::ZERO, |_| {}, &|| true).unwrap();
+        let mut verified = HashSet::new();
+        let pass = sync_once(&local, &nas, &mut synced, &mut verified, true, Duration::ZERO, |_| {}, &|| true).unwrap();
         assert!(pass.copied.is_empty() && pass.removed.is_empty());
         assert_eq!(pass.pending, 1);
         assert!(local.join("VALORANT/a.mkv").exists() && !nas.join("VALORANT/a.mkv").exists());
         // Game closed: the next pass copies it.
-        let pass = sync_once(&local, &nas, &mut synced, false, Duration::ZERO, |_| {}, &|| false).unwrap();
+        let pass = sync_once(&local, &nas, &mut synced, &mut verified, false, Duration::ZERO, |_| {}, &|| false).unwrap();
         assert_eq!(pass.copied.len(), 1);
     }
 
@@ -426,7 +638,8 @@ mod tests {
         clip(&local, "Desktop/Desktop 2026-11-03 10-01-00 - PC1.mkv", 500);
         clip(&local, ".rewind-save-123/part.mkv", 50); // in-progress save: never copied
         let mut synced = HashSet::new();
-        let pass = sync_once(&local, &nas, &mut synced, false, Duration::ZERO, |_| {}, &|| false).unwrap();
+        let mut verified = HashSet::new();
+        let pass = sync_once(&local, &nas, &mut synced, &mut verified, false, Duration::ZERO, |_| {}, &|| false).unwrap();
         assert_eq!(pass.copied.len(), 2, "{pass:?}");
         assert_eq!(pass.pending, 0);
         assert_eq!(size(&nas.join("VALORANT/VALORANT 2026-11-03 10-00-00 - PC1.mkv")), Some(1000));
@@ -436,7 +649,7 @@ mod tests {
         // Local copies are kept unless asked.
         assert!(local.join("VALORANT/VALORANT 2026-11-03 10-00-00 - PC1.mkv").exists());
         // A second pass does nothing.
-        let again = sync_once(&local, &nas, &mut synced, false, Duration::ZERO, |_| {}, &|| false).unwrap();
+        let again = sync_once(&local, &nas, &mut synced, &mut verified, false, Duration::ZERO, |_| {}, &|| false).unwrap();
         assert!(again.copied.is_empty() && again.errors.is_empty());
         let _ = (fs::remove_dir_all(&local), fs::remove_dir_all(&nas));
     }
@@ -446,7 +659,8 @@ mod tests {
         let (local, nas) = (tmp("b-local"), tmp("b-nas"));
         clip(&local, "Game/new.mkv", 100);
         let mut synced = HashSet::new();
-        let pass = sync_once(&local, &nas, &mut synced, false, Duration::from_secs(60), |_| {}, &|| false).unwrap();
+        let mut verified = HashSet::new();
+        let pass = sync_once(&local, &nas, &mut synced, &mut verified, false, Duration::from_secs(60), |_| {}, &|| false).unwrap();
         assert!(pass.copied.is_empty());
         assert!(!nas.join("Game").exists());
         let _ = (fs::remove_dir_all(&local), fs::remove_dir_all(&nas));
@@ -457,20 +671,49 @@ mod tests {
         let (local, nas) = (tmp("c-local"), tmp("c-nas"));
         let a = clip(&local, "Game/a.mkv", 300);
         let mut synced = HashSet::new();
-        sync_once(&local, &nas, &mut synced, false, Duration::ZERO, |_| {}, &|| false).unwrap();
+        let mut verified = HashSet::new();
+        sync_once(&local, &nas, &mut synced, &mut verified, false, Duration::ZERO, |_| {}, &|| false).unwrap();
         // Deleted on the NAS: not copied back.
         fs::remove_file(nas.join("Game/a.mkv")).unwrap();
-        let pass = sync_once(&local, &nas, &mut synced, true, Duration::ZERO, |_| {}, &|| false).unwrap();
+        let pass = sync_once(&local, &nas, &mut synced, &mut verified, true, Duration::ZERO, |_| {}, &|| false).unwrap();
         assert!(pass.copied.is_empty());
         // ...and the local copy is kept, because there's no NAS copy to rely on.
         assert!(a.exists());
         // A new clip with "remove local" on: copied, verified, then removed here.
         let b = clip(&local, "Game/b.mkv", 400);
-        let pass = sync_once(&local, &nas, &mut synced, true, Duration::ZERO, |_| {}, &|| false).unwrap();
+        let pass = sync_once(&local, &nas, &mut synced, &mut verified, true, Duration::ZERO, |_| {}, &|| false).unwrap();
         assert_eq!(pass.copied, vec!["Game/b.mkv".to_string()]);
         assert_eq!(pass.removed, vec!["Game/b.mkv".to_string()]);
         assert!(!b.exists());
         assert_eq!(size(&nas.join("Game/b.mkv")), Some(400));
+        let _ = (fs::remove_dir_all(&local), fs::remove_dir_all(&nas));
+    }
+
+    #[test]
+    fn a_garbled_nas_copy_never_frees_up_the_local_clip() {
+        let (local, nas) = (tmp("v-local"), tmp("v-nas"));
+        let a = clip(&local, "Game/a.mkv", 5000);
+        let mut synced = HashSet::new();
+        let mut verified = HashSet::new();
+        sync_once(&local, &nas, &mut synced, &mut verified, false, Duration::ZERO, |_| {}, &|| false).unwrap();
+        // The copy is identical and keeps the clip's date.
+        assert_eq!(fs::read(&a).unwrap(), fs::read(nas.join("Game/a.mkv")).unwrap());
+        let date = |p: &Path| fs::metadata(p).unwrap().modified().unwrap();
+        assert_eq!(date(&a), date(&nas.join("Game/a.mkv")));
+        // Like a clip copied by an older version: synced, never checked. Then the
+        // NAS copy goes bad without changing size (a flaky drive or network).
+        verified.clear();
+        let mut bytes = fs::read(nas.join("Game/a.mkv")).unwrap();
+        bytes[2500] ^= 0xff;
+        fs::write(nas.join("Game/a.mkv"), bytes).unwrap();
+        let pass = sync_once(&local, &nas, &mut synced, &mut verified, true, Duration::ZERO, |_| {}, &|| false).unwrap();
+        assert!(pass.removed.is_empty(), "{pass:?}");
+        assert!(pass.errors[0].contains("isn't identical"), "{pass:?}");
+        assert!(a.exists(), "the local clip must be kept");
+        // Fixed on the NAS: now it's checked, found identical, and freed up.
+        fs::copy(&a, nas.join("Game/a.mkv")).unwrap();
+        let pass = sync_once(&local, &nas, &mut synced, &mut verified, true, Duration::ZERO, |_| {}, &|| false).unwrap();
+        assert_eq!(pass.removed, vec!["Game/a.mkv".to_string()]);
         let _ = (fs::remove_dir_all(&local), fs::remove_dir_all(&nas));
     }
 
@@ -480,7 +723,8 @@ mod tests {
         clip(&local, "Game/x.mkv", 100);
         clip(&nas, "Game/x.mkv", 999);
         let mut synced = HashSet::new();
-        let pass = sync_once(&local, &nas, &mut synced, true, Duration::ZERO, |_| {}, &|| false).unwrap();
+        let mut verified = HashSet::new();
+        let pass = sync_once(&local, &nas, &mut synced, &mut verified, true, Duration::ZERO, |_| {}, &|| false).unwrap();
         assert!(pass.copied.is_empty());
         assert_eq!(pass.errors.len(), 1);
         assert_eq!(size(&nas.join("Game/x.mkv")), Some(999));
@@ -492,7 +736,8 @@ mod tests {
     fn unreachable_nas_is_an_error_not_a_crash() {
         let local = tmp("e-local");
         let mut synced = HashSet::new();
-        assert!(sync_once(&local, Path::new(r"Z:\no\such\nas"), &mut synced, false, Duration::ZERO, |_| {}, &|| false).is_err());
+        let mut verified = HashSet::new();
+        assert!(sync_once(&local, Path::new(r"Z:\no\such\nas"), &mut synced, &mut verified, false, Duration::ZERO, |_| {}, &|| false).is_err());
         let _ = fs::remove_dir_all(&local);
     }
 
@@ -515,3 +760,31 @@ mod tests {
         assert!(s.is_empty() || (s.starts_with(" - ") && !s[3..].contains(['\\', '/', ':', '*', '?'])));
     }
 }
+
+#[cfg(test)]
+mod live {
+    /// Verified copy to a real share, timed: REWIND_NAS_TEST=\server\share
+    /// cargo test live_nas_verify -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn live_nas_verify() {
+        let Ok(share) = std::env::var("REWIND_NAS_TEST") else { return };
+        let dir = std::path::Path::new(&share).join(".rewind-verify-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = std::env::temp_dir().join("rewind-verify-src.bin");
+        let data: Vec<u8> = (0..200u32 << 20).map(|i| (i.wrapping_mul(2654435761) >> 13) as u8).collect();
+        std::fs::write(&src, &data).unwrap();
+        let tmp = dir.join(".x.mkv.rewind-partial");
+        let t = std::time::Instant::now();
+        super::copy_verified(&src, &tmp, &mut |_, _| {}).unwrap();
+        let secs = t.elapsed().as_secs_f64();
+        println!("200 MB copied + verified in {secs:.1} s ({:.0} MB/s)", 200.0 / secs);
+        let t = std::time::Instant::now();
+        assert!(super::same_contents(&src, &tmp).unwrap());
+        println!("re-check of existing copy: {:.1} s", t.elapsed().as_secs_f64());
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_file(&src);
+        assert!(!dir.exists());
+    }
+}
+

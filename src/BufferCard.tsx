@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, codecLabel, errText, fmtDuration, Status } from "./api";
+import { NasProgress, useNasState } from "./NasProgress";
 
 export function statusLine(s: Status | null) {
   if (!s) return "Starting…";
@@ -51,6 +52,7 @@ export function RecordButton({ status, hotkey, className = "" }: { status: Statu
 export function BufferCard({ status, hotkey, recordHotkey }: { status: Status | null; hotkey: string; recordHotkey: string }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const nas = useNasState();
   const on = !!status?.running;
   const bufferOn = on && !!status?.enabled;
   const pct = status && status.bufferSeconds ? (status.bufferedSeconds / status.bufferSeconds) * 100 : 0;
@@ -93,6 +95,7 @@ export function BufferCard({ status, hotkey, recordHotkey }: { status: Status | 
         <br />
         {folderLine(status)}
       </div>
+      <NasProgress n={nas} compact />
       {status?.lastError && !on && status.enabled && <div className="err-text">{status.lastError}</div>}
       {on && status?.audioError && <div className="err-text">{status.audioError}</div>}
       {err && <div className="err-text">{err}</div>}

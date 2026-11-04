@@ -183,6 +183,18 @@ export type NasState = {
   lastSync: number | null;
   /** Waiting because a game is running or a recording is going */
   paused: boolean;
+  /** This pass: clips and bytes to copy, and how many are done */
+  totalFiles: number;
+  doneFiles: number;
+  totalBytes: number;
+  doneBytes: number;
+  /** Bytes still to copy (stays set while paused) */
+  pendingBytes: number;
+  /** Reading the NAS copy back to check it */
+  checking: boolean;
+  /** Bytes per second this pass */
+  rate: number;
+  etaSecs: number | null;
 };
 
 export type ClipFolder = { label: string; path: string; exists: boolean };

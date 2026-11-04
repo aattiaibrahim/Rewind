@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useState } from "react";
 import { api, ClipFolder, errText, fmtSize, LastMove, MovePlan, NasState, Settings } from "./api";
 import { ConfirmDialog } from "./ConfirmUpdate";
+import { NasProgress, useNasState } from "./NasProgress";
 import { HealthSetting } from "./Health";
 
 type MoveJob = { folders: string[]; plan: MovePlan | null; running: boolean; done: number; total: number };
@@ -12,18 +13,6 @@ function outcomeText(verb: string, o: { moved: number; failed: [string, string][
   if (!o.failed.length) return base;
   const [file, why] = o.failed[0];
   return `${base} ${o.failed.length} couldn't be: ${file.split("\\").pop()} (${why})${o.failed.length > 1 ? " and others" : ""}.`;
-}
-
-function useNasState() {
-  const [n, setN] = useState<NasState | null>(null);
-  useEffect(() => {
-    api.getNasState().then(setN).catch(() => {});
-    const un = listen<NasState>("nas-state", (e) => setN(e.payload));
-    return () => {
-      un.then((f) => f());
-    };
-  }, []);
-  return n;
 }
 
 function ago(ms: number) {
@@ -39,7 +28,7 @@ function nasLine(s: Settings, n: NasState | null) {
   if (!n.reachable) return `Can't reach it right now. Clips keep saving here and copy over once it's back. (${n.lastError ?? ""})`;
   if (n.paused)
     return `Paused while you play${n.pending ? ` (${n.pending} clip${n.pending === 1 ? "" : "s"} waiting)` : ""}. Copying starts again once the game is closed.`;
-  if (n.copying) return `Copying ${n.copying}…`;
+  if (n.copying) return n.checking ? "Checking the copy matches the original…" : "Copying…";
   const parts = [n.pending ? `${n.pending} clip${n.pending === 1 ? "" : "s"} waiting to copy` : "Everything is copied"];
   if (n.lastSync) parts.push(`checked ${ago(n.lastSync)}`);
   if (n.lastError) parts.push(`problem: ${n.lastError}`);
@@ -145,10 +134,12 @@ export function LibrarySettings({
           <small style={{ wordBreak: "break-all" }}>{s.nasDir || "Not set"}</small>
           <small>
             Clips save to this PC first (instant, works offline), then copy to the NAS in the background into the same game
-            folders, only once you've closed your game so it never costs frames. Several PCs can share one NAS: file names
+            folders, only once you've closed your game so it never costs frames. Every copy is read back from the NAS and
+            checked byte for byte before it counts. Several PCs can share one NAS: file names
             include each PC's name.
           </small>
           <small className={nas && s.nasDir && !nas.reachable && nas.enabled ? "err-text" : ""}>{nasLine(s, nas)}</small>
+          <NasProgress n={nas} />
         </span>
         <div className="row" style={{ flexWrap: "nowrap", flexShrink: 0 }}>
           {s.nasDir && (
@@ -170,7 +161,9 @@ export function LibrarySettings({
         <label className="setting">
           <span>
             Free up space on this PC
-            <small>Removes the copy here once it's safely on the NAS (checked by size first). Off keeps both.</small>
+            <small>
+              Once a clip's NAS copy is checked identical to it, the copy here goes to the Recycle Bin. Off keeps both.
+            </small>
           </span>
           <Toggle label="Remove local copy" checked={s.nasRemoveLocal} onChange={(v) => set({ nasRemoveLocal: v })} />
         </label>

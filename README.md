@@ -64,10 +64,11 @@
 - **Launch with Windows** (starts in the tray), single instance.
 - **Library**: clips grouped by day and game, with search, thumbnails, codec and length.
 - **NAS library** (Settings → Library & NAS):
-  - Clips save to this PC first, so saving stays instant and works offline. They then copy in the background to a network folder in the same `<Game>\` layout, verified by size before they count as copied.
+  - Clips save to this PC first, so saving stays instant and works offline. They then copy in the background to a network folder in the same `<Game>\` layout. Each copy is read back from the NAS and checked byte for byte (SHA-256) against the original before it counts.
   - Several PCs can share one NAS: file names include the PC's name, and clips from other PCs show up in the library.
   - Copying waits until your game is closed (in front or tabbed out of) and stops between files if one starts, so it never costs frames.
-  - Optionally, the local copy is removed once it's safely on the NAS.
+  - Optionally, the local copy goes to the Recycle Bin once its NAS copy is checked identical.
+  - Progress shows in the sidebar and in Settings: clips and GB left, percent, speed and time left.
   - Other recorders' clips (Medal, NVIDIA, OBS) aren't copied until you move them into Hindsight's folders; the setting says so and has a button for it.
 - **Clips from other recorders**: Medal, OBS and NVIDIA folders are found from their own settings and shown in the library in place, grouped by game. Nothing is moved or copied. Any other folder can be added too.
 - **Move into Hindsight**: tidies a linked folder into Hindsight's layout (`<Game>\<Game> <date time>`), merging game names across spellings.

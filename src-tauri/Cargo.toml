@@ -1,6 +1,6 @@
 [package]
 name = "rewind"
-version = "0.1.24"
+version = "0.1.25"
 description = "Lightweight NVENC replay-buffer clipper"
 authors = ["Rewind"]
 edition = "2024"
@@ -24,6 +24,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = "0.4"
 trash = "5"
+sha2 = "0.10"
 cpal = "0.15"
 tauri-plugin-updater = "2"
 # Uploads (Catbox / Litterbox / Discord / Streamable). Same reqwest + rustls the updater already uses.
