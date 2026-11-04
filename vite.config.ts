@@ -5,8 +5,11 @@ import process from "node:process";
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
-export default defineConfig(() => ({
+export default defineConfig(({ command }) => ({
   plugins: [react()],
+  // public/ only holds the browser preview's sample clips and thumbnails (some are
+  // frames from real clips), so it's served in dev and never copied into the app.
+  publicDir: command === "serve" ? "public" : false,
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

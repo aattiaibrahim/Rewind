@@ -1,3 +1,4 @@
+import pkg from "../package.json";
 // Browser preview mode (dev only): when the UI runs in a normal browser
 // instead of inside Hindsight, fake the backend with sample clips so the
 // interface can be clicked through without touching real files.
@@ -103,7 +104,7 @@ export function installDevMock() {
     get_update_state: () =>
       pendingUpdate
         ? { current: "0.1.12", stage: "ready", version: "0.1.13", notes: "Sample release notes.", error: null }
-        : { current: "0.1.19", stage: "up-to-date", version: null, notes: null, error: null },
+        : { current: pkg.version, stage: "up-to-date", version: null, notes: null, error: null },
     "plugin:opener|open_url": () => null,
     get_nas_state: () =>
       settings.nasDir

@@ -59,7 +59,8 @@ Windows SmartScreen may warn because the app isn't code-signed yet: click **More
 "@ | Set-Content $notesFile
 
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "package-streamdeck.ps1")
-$plugin = "streamdeck\dist\Rewind.streamDeckPlugin"
+$plugin = "streamdeck\dist\Hindsight.streamDeckPlugin"
+if (-not (Test-Path $plugin)) { throw "Stream Deck plugin wasn't built at $plugin" }
 
 Write-Host "Publishing $tag..."
 gh release create $tag $exe $latest $plugin --repo $repo --title "Rewind $version" --notes-file $notesFile --latest

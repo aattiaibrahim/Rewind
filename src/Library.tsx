@@ -43,7 +43,10 @@ function ClipCard({
   onShare,
   damage,
   returned,
+  deleteCount = 1,
 }: {
+  /** How many clips its Delete removes (all selected ones when it's part of a selection) */
+  deleteCount?: number;
   upload?: UploadProgress;
   /** Its newest link that still works */
   link: Upload | null;
@@ -135,9 +138,9 @@ function ClipCard({
                 e.stopPropagation();
                 onDelete();
               }}
-              title="Move to the Recycle Bin"
+              title={deleteCount > 1 ? `Move the ${deleteCount} selected clips to the Recycle Bin` : "Move to the Recycle Bin"}
             >
-              Delete
+              {deleteCount > 1 ? `Delete ${deleteCount}` : "Delete"}
             </span>
           )}
         </div>
@@ -392,10 +395,16 @@ export function Library({
           </span>
           <input placeholder="clips, games…" value={query} onChange={(e) => setQuery(e.target.value)} />
         </label>
-        {!damagedMode && (
-          <button className="btn" onClick={openAny}>
-            Open any video…
+        {selecting ? (
+          <button className="btn danger" onClick={deleteSelected} title="Move the selected clips to the Recycle Bin (Delete)">
+            Delete {selected.size} clip{selected.size === 1 ? "" : "s"}
           </button>
+        ) : (
+          !damagedMode && (
+            <button className="btn" onClick={openAny}>
+              Open any video…
+            </button>
+          )
         )}
       </div>
       {damagedMode && <DamagedStatus count={clips?.length ?? 0} />}
@@ -411,9 +420,6 @@ export function Library({
           </button>
           <button className="btn small" onClick={() => setSelected(new Set())}>
             Clear
-          </button>
-          <button className="btn small danger" onClick={deleteSelected}>
-            Delete {selected.size}
           </button>
         </div>
       ) : (
@@ -485,6 +491,7 @@ export function Library({
                     onClick={clickCard(c.path)}
                     onToggle={(e) => (e.shiftKey ? selectRange(c.path) : toggle(c.path))}
                     onDelete={() => onDelete(selected.has(c.path) ? [...selected] : [c.path])}
+                    deleteCount={selected.has(c.path) ? selected.size : 1}
                     onToast={onToast}
                     onChanged={onChanged}
                     upload={uploads?.[c.path]}
