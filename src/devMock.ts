@@ -80,12 +80,14 @@ export function installDevMock() {
       /* fine */
     }
   }
+  if (demo === "performance") settings.benchmarkMode = true;
   if (demo) {
     setTimeout(() => {
       const send = (event: string, payload: unknown) =>
         (listeners.get(event) ?? []).forEach((id) => callbacks.get(id)?.({ event, id: 0, payload }));
       if (demo === "studio") send("open-in-studio", clips[0].path);
       if (demo.startsWith("settings-")) send("show-view", "settings");
+      if (demo === "performance") send("show-view", "performance");
     }, 900);
   }  const emit = (event: string) =>
     (listeners.get(event) ?? []).forEach((id) => callbacks.get(id)?.({ event, id: 0, payload: null }));

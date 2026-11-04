@@ -1,3 +1,4 @@
+pub mod control;
 pub mod measure;
 pub mod recorders;
 pub mod run;

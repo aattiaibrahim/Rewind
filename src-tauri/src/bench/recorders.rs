@@ -183,6 +183,11 @@ fn reg_bytes(path: &str, name: &str) -> Option<Vec<u8>> {
     }
 }
 
+/// A 4-byte little-endian registry value (REG_BINARY or REG_DWORD).
+pub(crate) fn reg_u32(path: &str, name: &str) -> Option<u32> {
+    reg_bytes(path, name).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+}
+
 /// NVIDIA keeps Instant Replay's settings as little-endian binary values.
 pub fn nvidia() -> RecorderSettings {
     const KEY: &str = r"Software\NVIDIA Corporation\Global\ShadowPlay\NVSPCAPS";

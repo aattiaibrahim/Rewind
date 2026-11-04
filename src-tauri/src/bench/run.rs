@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
+use super::control;
 use super::measure::{self, App};
 use super::recorders::{self, RecorderSettings};
 use super::stats::{self, Baseline, Comparison, Run};
@@ -297,14 +298,38 @@ impl Ctx {
                 self.wait_encoding(App::Obs, true, 90)
             }
             App::Nvidia => {
-                say(&format!("{r}Turn on NVIDIA Instant Replay. Press Alt, Shift, F 10."));
-                self.progress("Turn on Instant Replay: press Alt+Shift+F10.", true);
+                if measure::encoder_use(App::Nvidia) > ENCODING {
+                    return Ok(true);
+                }
+                let keys = control::nvidia_shortcut();
+                self.progress(&format!("Turning on Instant Replay (pressing {})…", control::shortcut_name(&keys)), false);
+                control::press(&keys);
+                if self.wait_encoding(App::Nvidia, true, 12)? {
+                    return Ok(true);
+                }
+                // The shortcut didn't take (NVIDIA overlay off, or it ignores simulated keys).
+                let k = control::shortcut_name(&keys);
+                say(&format!("{r}Rewind couldn't turn on Instant Replay. Press {} now.", k.replace('+', ", ")));
+                self.progress(&format!("Turn on Instant Replay: press {k}."), true);
                 self.wait_encoding(App::Nvidia, true, 60)
             }
             App::Medal => {
-                say(&format!("{r}Turn on Medal's clipping."));
-                self.progress("Open Medal and turn clipping on.", true);
-                self.wait_encoding(App::Medal, true, 90)
+                if measure::encoder_use(App::Medal) > ENCODING {
+                    return Ok(true);
+                }
+                self.progress("Opening Medal…", false);
+                // Medal open but not clipping: restart it so it starts clipping.
+                if control::medal_running() {
+                    control::close_medal();
+                }
+                if control::open_medal(self.game) && self.wait_encoding(App::Medal, true, 45)? {
+                    control::focus(self.game);
+                    return Ok(true);
+                }
+                control::focus(self.game);
+                say(&format!("{r}Medal isn't clipping. Turn on Medal's clipping now."));
+                self.progress("Medal opened but isn't clipping. Turn clipping on in Medal.", true);
+                self.wait_encoding(App::Medal, true, 60)
             }
         }
     }
@@ -325,13 +350,27 @@ impl Ctx {
                 self.wait_encoding(App::Obs, false, 60)
             }
             App::Nvidia => {
-                say("Turn Instant Replay off. Alt, Shift, F 10.");
-                self.progress("Turn Instant Replay off: press Alt+Shift+F10.", true);
+                if measure::encoder_use(App::Nvidia) <= ENCODING {
+                    return Ok(true);
+                }
+                let keys = control::nvidia_shortcut();
+                self.progress("Turning off Instant Replay…", false);
+                control::press(&keys);
+                if self.wait_encoding(App::Nvidia, false, 12)? {
+                    return Ok(true);
+                }
+                let k = control::shortcut_name(&keys);
+                say(&format!("Rewind couldn't turn off Instant Replay. Press {} now.", k.replace('+', ", ")));
+                self.progress(&format!("Turn off Instant Replay: press {k}."), true);
                 self.wait_encoding(App::Nvidia, false, 45)
             }
             App::Medal => {
-                say("Turn Medal's clipping off, or close Medal.");
-                self.progress("Turn Medal's clipping off or close Medal.", true);
+                self.progress("Closing Medal…", false);
+                if control::close_medal() {
+                    return self.wait_encoding(App::Medal, false, 10);
+                }
+                say("Close Medal now.");
+                self.progress("Close Medal (Rewind couldn't).", true);
                 self.wait_encoding(App::Medal, false, 60)
             }
         }
@@ -367,8 +406,16 @@ pub(crate) fn close_obs() -> bool {
 /// settings). Returns false if Windows refuses because OBS is set to "Run as
 /// administrator" (error 740): then the user starts it themselves.
 pub(crate) fn launch_obs() -> bool {
+    launch_obs_with(true)
+}
+
+fn launch_obs_with(replay_buffer: bool) -> bool {
+    let mut args = vec!["--minimize-to-tray", "--disable-shutdown-check", "--disable-updater"];
+    if replay_buffer {
+        args.insert(0, "--startreplaybuffer");
+    }
     match Command::new(OBS_EXE)
-        .args(["--startreplaybuffer", "--minimize-to-tray", "--disable-shutdown-check", "--disable-updater"])
+        .args(&args)
         .current_dir(Path::new(OBS_EXE).parent().unwrap())
         .spawn()
     {
@@ -391,8 +438,29 @@ pub fn start(app: AppHandle, opts: Options) -> Result<(), String> {
     CANCEL.store(false, Ordering::Relaxed);
     thread::spawn(move || {
         let restore_buffer = crate::settings_of(&app).buffer_enabled;
+        let nvidia_was_on = measure::encoder_use(App::Nvidia) > ENCODING;
+        let medal_was_open = control::medal_running();
+        let obs_was = (obs_running(), measure::encoder_use(App::Obs) > ENCODING);
         let report = run(&app, &opts);
         set_rewind_buffer(&app, restore_buffer);
+        // Leave NVIDIA and Medal the way they were before the test.
+        if opts.compare.contains(&App::Nvidia) && (measure::encoder_use(App::Nvidia) > ENCODING) != nvidia_was_on {
+            control::press(&control::nvidia_shortcut());
+        }
+        if opts.compare.contains(&App::Obs) && obs_was.0 && !obs_running() {
+            launch_obs_with(obs_was.1);
+        }
+        if opts.compare.contains(&App::Medal) {
+            match (medal_was_open, control::medal_running()) {
+                (true, false) => {
+                    control::open_medal(0);
+                }
+                (false, true) => {
+                    control::close_medal();
+                }
+                _ => {}
+            }
+        }
         if report.error.is_none() {
             say("Performance test finished. Switch back to Rewind to see the results.");
         }
