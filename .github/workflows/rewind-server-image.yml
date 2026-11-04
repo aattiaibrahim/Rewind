@@ -4,7 +4,7 @@ name: Rewind Server image
 
 on:
   push:
-    branches: [main, rewind-server]
+    branches: [main, hindsight]
     paths:
       - "server/**"
       - ".github/workflows/rewind-server-image.yml"
