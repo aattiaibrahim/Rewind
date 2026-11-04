@@ -6,6 +6,7 @@ mod consolidate;
 mod control;
 mod engine;
 mod ffmpeg;
+mod folder_merge;
 mod games;
 mod health;
 mod library;
@@ -47,6 +48,8 @@ fn settings_of(app: &AppHandle) -> Settings {
 /// several PCs in the same game folder never clash.
 fn output_path(s: &Settings, label: &str) -> PathBuf {
     let folder = games::clip_folder();
+    // A spelling picked when merging this game's folders wins, so they don't split again.
+    let folder = s.folder_names.get(&consolidate::game_key(&folder)).cloned().unwrap_or(folder);
     let ts = chrono::Local::now().format("%Y-%m-%d %H-%M-%S");
     let pc = if s.nas_dir.is_empty() { String::new() } else { nas::pc_suffix() };
     let dir = PathBuf::from(&s.clips_dir).join(&folder);
@@ -415,6 +418,101 @@ async fn undo_last_move(app: AppHandle) -> Result<consolidate::Outcome, String> 
     let out = blocking(move || Ok(consolidate::undo(&log))).await?;
     let _ = app.emit("clips-changed", ());
     Ok(out)
+}
+
+// ---------- Game folders under different spellings ----------
+
+/// Change saved settings from the backend (same path as the Settings page).
+fn change_settings(app: &AppHandle, f: impl FnOnce(&mut Settings)) -> Result<(), String> {
+    let st = app.state::<AppState>();
+    let mut s = st.settings.lock().unwrap().clone();
+    f(&mut s);
+    let s = s.sanitized();
+    settings::save(&st.settings_path, &s)?;
+    *st.settings.lock().unwrap() = s.clone();
+    let _ = app.emit("settings-changed", &s);
+    Ok(())
+}
+
+/// Games saved under more than one folder spelling, on this PC and the NAS.
+/// The NAS side comes from the last sync's listing, so this never waits on the network.
+#[tauri::command]
+async fn similar_game_folders(app: AppHandle) -> Result<Vec<folder_merge::Similar>, String> {
+    let s = settings_of(&app);
+    blocking(move || {
+        let here = folder_merge::folder_counts(std::path::Path::new(&s.clips_dir));
+        let mut nas: Vec<(String, usize)> = Vec::new();
+        for f in nas::listing(&s.nas_dir) {
+            match nas.iter_mut().find(|(n, _)| *n == f.folder) {
+                Some((_, k)) => *k += 1,
+                None => nas.push((f.folder.clone(), 1)),
+            }
+        }
+        nas.retain(|(n, _)| n != "Other");
+        Ok(folder_merge::find_similar(&here, &nas, &s.similar_dismissed))
+    })
+    .await
+}
+
+/// Put every spelling of one game under `target`, here and on the NAS. Undo with "Undo last move".
+#[tauri::command]
+async fn merge_game_folders(app: AppHandle, key: String, target: String) -> Result<consolidate::Outcome, String> {
+    let s = settings_of(&app);
+    let target = consolidate::safe_name(&target);
+    if consolidate::game_key(&target) != key {
+        return Err("That name is for a different game.".into());
+    }
+    let mut roots = vec![PathBuf::from(&s.clips_dir)];
+    if !s.nas_dir.is_empty() {
+        if nas::state().copying.is_some() {
+            return Err("A clip is copying to the NAS right now. Try again once it's done.".into());
+        }
+        let nas_root = PathBuf::from(&s.nas_dir);
+        let reachable = { let p = nas_root.clone(); blocking(move || Ok(p.is_dir())).await? };
+        if !reachable {
+            return Err("Can't reach the NAS right now. Merge once it's back, so both sides match.".into());
+        }
+        roots.push(nas_root);
+    }
+    let dir = moves_dir(&app)?;
+    nas::hold(true);
+    let (k, t) = (key.clone(), target.clone());
+    let result = blocking(move || {
+        let plan = folder_merge::plan(&roots, &k, &t)?;
+        if plan.moves.is_empty() {
+            return Ok((consolidate::Outcome::default(), Vec::new()));
+        }
+        let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+        let tag = plan.label.replace(", ", "+").replace(|c: char| !c.is_ascii_alphanumeric() && c != '+', "_");
+        let log = dir.join(format!("{stamp}-{tag}.jsonl"));
+        let out = consolidate::run(&plan, &log, |_, _| {});
+        folder_merge::remove_empty(&roots, &k, &t);
+        let renamed: Vec<String> = plan.label.split(", ").map(str::to_string).collect();
+        Ok((out, renamed))
+    })
+    .await;
+    if let Ok((_, renamed)) = &result {
+        for from in renamed {
+            nas::folder_renamed(from, &target);
+        }
+    }
+    nas::hold(false);
+    let (out, _) = result?;
+    change_settings(&app, |s| {
+        s.folder_names.insert(key.clone(), target.clone());
+        s.similar_dismissed.retain(|d| *d != key);
+    })?;
+    let _ = app.emit("clips-changed", ());
+    Ok(out)
+}
+
+/// "Keep separate": stop asking about this game (or, with `ask_again`, ask about all again).
+#[tauri::command]
+fn keep_folders_separate(app: AppHandle, key: Option<String>) -> Result<(), String> {
+    change_settings(&app, |s| match key {
+        Some(k) => s.similar_dismissed.push(k),
+        None => s.similar_dismissed.clear(),
+    })
 }
 
 // ---------- Sharing (uploads) ----------
@@ -1150,6 +1248,9 @@ pub fn run() {
             move_into_rewind,
             last_move,
             undo_last_move,
+            similar_game_folders,
+            merge_game_folders,
+            keep_folders_separate,
             start_bench,
             cancel_bench,
             bench_state,

@@ -52,11 +52,11 @@ pub struct Outcome {
 }
 
 /// Same idea as the library's game chips: "Counter-Strike 2" == "counter strike 2".
-fn game_key(s: &str) -> String {
+pub(crate) fn game_key(s: &str) -> String {
     s.to_lowercase().chars().filter(|c| c.is_ascii_alphanumeric()).collect()
 }
 
-fn safe_name(s: &str) -> String {
+pub(crate) fn safe_name(s: &str) -> String {
     let cleaned: String = s.chars().map(|c| if r#"<>:"/\|?*"#.contains(c) || c.is_control() { ' ' } else { c }).collect();
     let t = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
     let t = t.trim_end_matches(['.', ' ']).to_string();
@@ -146,8 +146,19 @@ pub fn plan_many(roots: &[LinkedRoot], clips_dir: &Path, avoid: &[PathBuf]) -> P
     plan
 }
 
-/// Move one file: rename if possible, else copy + verify + delete the original.
-fn move_file(from: &Path, to: &Path) -> Result<(), String> {
+/// Move one file (or a whole folder): rename if possible, else copy + verify + delete the original.
+pub(crate) fn move_file(from: &Path, to: &Path) -> Result<(), String> {
+    // "Valorant" → "VALORANT": the same entry on Windows and most NAS shares, so `to`
+    // "exists" already. Rename through a temporary name so the new spelling sticks.
+    if from != to && from.to_string_lossy().eq_ignore_ascii_case(&to.to_string_lossy()) {
+        let name = from.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let tmp = from.with_file_name(format!(".{name}.rewind-rename"));
+        fs::rename(from, &tmp).map_err(|e| e.to_string())?;
+        return fs::rename(&tmp, to).map_err(|e| {
+            let _ = fs::rename(&tmp, from);
+            e.to_string()
+        });
+    }
     if to.exists() {
         return Err("something with that name already exists".into());
     }

@@ -243,6 +243,17 @@ export function LibrarySettings({
           </span>
         </div>
       ))}
+      {s.similarDismissed.length > 0 && (
+        <div className="setting sub">
+          <span>
+            {s.similarDismissed.length} game{s.similarDismissed.length === 1 ? "" : "s"} kept under separate folder names
+            <small>You chose Keep separate. Ask again to see the merge option for {s.similarDismissed.length === 1 ? "it" : "them"}.</small>
+          </span>
+          <button className="btn small" onClick={() => api.keepFoldersSeparate(null).catch((e) => setNote(errText(e)))}>
+            Ask again
+          </button>
+        </div>
+      )}
       {last && (
         <div className="setting sub">
           <span>

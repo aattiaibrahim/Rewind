@@ -9,6 +9,8 @@ import { api, errText } from "./api";
 import { BufferCard } from "./BufferCard";
 import { ConfirmDelete } from "./ConfirmDelete";
 import { ConfirmUpdate, updateInterrupts } from "./ConfirmUpdate";
+import { MergeDialog, SimilarBanner, spellings, useNewSimilar, useSimilarFolders } from "./FolderMerge";
+import type { MoveOutcome, SimilarFolders } from "./api";
 import { useAppearance, useClips, useSettings, useStatus, useUpdate } from "./hooks";
 import { Library } from "./Library";
 import { Performance } from "./Performance";
@@ -45,6 +47,39 @@ export default function App() {
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), err || action ? 8000 : 4500);
   }, []);
   const dropToast = (id: number) => setToasts((t) => t.filter((x) => x.id !== id));
+
+  // Same game under different folder names (this PC vs the NAS): a notice once,
+  // a banner until it's dealt with, and the merge dialog.
+  const [similar] = useSimilarFolders();
+  const [similarLater, setSimilarLater] = useState(false);
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const notifySimilar = useCallback(
+    (games: SimilarFolders[]) =>
+      toast(
+        games.length === 1 ? "Same game, different folder names" : `${games.length} games have different folder names`,
+        false,
+        spellings(games[0]),
+        { label: "Review", run: () => setMergeOpen(true) },
+      ),
+    [toast],
+  );
+  useNewSimilar(similar, notifySimilar);
+  const onMerged = useCallback(
+    (target: string, out: MoveOutcome) => {
+      if (out.failed.length) {
+        const [file, why] = out.failed[0];
+        toast(`${out.failed.length} file${out.failed.length === 1 ? "" : "s"} couldn't be moved into “${target}”`, true, `${file.split("\\").pop()}: ${why}`);
+      } else {
+        const undo = () =>
+          api
+            .undoLastMove()
+            .then(() => toast("Put the folders back as they were"))
+            .catch((e) => toast(errText(e), true));
+        toast(`Merged into “${target}”`, false, "On this PC and the NAS. New clips go there too.", { label: "Undo", run: undo });
+      }
+    },
+    [toast],
+  );
   // Share: ask first (unless turned off in Settings → Sharing), then upload.
   const requestShare = useCallback(
     (r: ShareRequest) => {
@@ -265,6 +300,9 @@ export default function App() {
             </span>
           </div>
         )}
+        {similar.length > 0 && !similarLater && (
+          <SimilarBanner list={similar} onReview={() => setMergeOpen(true)} onLater={() => setSimilarLater(true)} />
+        )}
         {view === "clips" && (
           <Library
             clips={clips}
@@ -353,6 +391,9 @@ export default function App() {
           onConfirm={installNow}
           onCancel={closeAskUpdate}
         />
+      )}
+      {mergeOpen && (
+        <MergeDialog list={similar} onClose={() => setMergeOpen(false)} onMerged={onMerged} onError={(m) => toast(m, true)} />
       )}
       {pendingDelete && (
         <ConfirmDelete paths={pendingDelete.paths} busy={deleting} onConfirm={confirmDelete} onCancel={cancelDelete} />

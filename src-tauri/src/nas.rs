@@ -62,6 +62,35 @@ struct Listing {
 
 static STATE: Mutex<Option<NasState>> = Mutex::new(None);
 static LISTING: Mutex<Option<Listing>> = Mutex::new(None);
+/// Set while game folders are being merged: the worker skips its passes.
+static HOLD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Folder renames from a merge ("old/" → "new/", lowercase) still to apply to
+/// the copied-clips record, so a clip deleted on the NAS isn't copied back under
+/// its new folder name.
+static RENAMED: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
+
+/// Pause copying (true) while folders are merged, then carry on (false).
+pub fn hold(on: bool) {
+    HOLD.store(on, std::sync::atomic::Ordering::SeqCst);
+    if !on {
+        wake();
+    }
+}
+
+/// A game folder was renamed by a merge: copied clips under `from` now live under `to`.
+pub fn folder_renamed(from: &str, to: &str) {
+    RENAMED.lock().unwrap().push((format!("{}/", from.to_lowercase()), format!("{}/", to.to_lowercase())));
+}
+
+fn apply_renames(synced: &mut HashSet<String>, renames: &[(String, String)]) {
+    for (from, to) in renames {
+        let moved: Vec<String> = synced.iter().filter(|k| k.starts_with(from.as_str())).cloned().collect();
+        for k in moved {
+            synced.remove(&k);
+            synced.insert(format!("{to}{}", &k[from.len()..]));
+        }
+    }
+}
 static WAKE: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new());
 
 /// " - GAMING-PC": added to clip names when a NAS is shared by several PCs.
@@ -310,6 +339,9 @@ pub fn start(app: AppHandle) {
                 let (mut g, _) = c.wait_timeout_while(g, Duration::from_secs(30), |woken| !*woken).unwrap();
                 *g = false;
             }
+            if HOLD.load(std::sync::atomic::Ordering::SeqCst) {
+                continue; // a merge is moving folders; `hold(false)` wakes us again
+            }
             let s = app.state::<crate::AppState>().settings.lock().unwrap().clone();
             if s.nas_dir.is_empty() {
                 *LISTING.lock().unwrap() = None;
@@ -339,6 +371,13 @@ pub fn start(app: AppHandle) {
             if synced_root != s.nas_dir {
                 synced = manifest.as_deref().map(|p| load_synced(p, &s.nas_dir)).unwrap_or_default();
                 synced_root = s.nas_dir.clone();
+            }
+            let renames = std::mem::take(&mut *RENAMED.lock().unwrap());
+            if !renames.is_empty() {
+                apply_renames(&mut synced, &renames);
+                if let Some(p) = &manifest {
+                    save_synced(p, &s.nas_dir, &synced);
+                }
             }
             let nas = PathBuf::from(&s.nas_dir);
             let a = app.clone();
@@ -389,6 +428,16 @@ pub fn start(app: AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn merged_folders_keep_their_copied_record() {
+        let mut synced: HashSet<String> =
+            ["valorant/a.mkv", "valorant x/b.mkv", "desktop/c.mkv"].iter().map(|s| s.to_string()).collect();
+        apply_renames(&mut synced, &[("valorant/".into(), "valorant!/".into())]);
+        let mut v: Vec<&String> = synced.iter().collect();
+        v.sort();
+        assert_eq!(v, vec!["desktop/c.mkv", "valorant x/b.mkv", "valorant!/a.mkv"]);
+    }
 
     fn tmp(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("rewind-nas-{name}-{}", std::process::id()));

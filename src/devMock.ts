@@ -59,7 +59,13 @@ export function installDevMock() {
     keepOriginalAfterRemux: true, replaceOriginalOnEdit: false, externalFiles: [], desktopAudio: true, discordTrack: true,
     micEnabled: true, micMono: true, micDevice: "", micGainDb: 0, theme: "midnight", accent: "lime", reduceMotion: false,
     saveSound: true, nasDir: "", nasRemoveLocal: false, linkedFolders: [] as string[], benchmarkMode: false, uploadHost: "catbox", litterboxTime: "72h", autoUpload: false, postLinkToDiscord: false, streamableEmail: "", discordWebhookName: "", confirmUploads: true, healthCheck: true,
+    folderNames: {} as Record<string, string>, similarDismissed: [] as string[],
   };
+  // Same game under two folder names (preview of the merge prompt).
+  let similar = [
+    { key: "tomclancysrainbowsixsiege", suggested: "Tom Clancy's Rainbow Six  Siege", names: [{ name: "Tom Clancy's Rainbow Six  Siege", here: 0, nas: 29 }, { name: "Tom Clancys Rainbow Six Siege", here: 27, nas: 0 }] },
+    { key: "valorant", suggested: "VALORANT", names: [{ name: "VALORANT", here: 91, nas: 0 }, { name: "Valorant", here: 0, nas: 6 }] },
+  ];
   const status = {
     enabled: true, running: true, monitor: "Display 1 · 1920×1080", width: 1920, height: 1080, encoder: "av1",
     fps: 60, bufferedSeconds: 120, bufferSeconds: 120, restarts: 0, lastError: null,
@@ -141,6 +147,20 @@ export function installDevMock() {
     }),
     move_into_rewind: () => ({ moved: 42, failed: [] }),
     last_move: () => null,
+    similar_game_folders: () => similar.filter((g) => !settings.similarDismissed.includes(g.key)),
+    merge_game_folders: async (a) => {
+      await new Promise((r) => setTimeout(r, 700));
+      similar = similar.filter((g) => g.key !== a.key);
+      settings.folderNames[a.key as string] = a.target as string;
+      (listeners.get("clips-changed") ?? []).forEach((id) => callbacks.get(id)?.({ event: "clips-changed", id: 0, payload: null }));
+      return { moved: 27, failed: [] };
+    },
+    keep_folders_separate: (a) => {
+      if (a.key) settings.similarDismissed.push(a.key as string);
+      else settings.similarDismissed = [];
+      (listeners.get("settings-changed") ?? []).forEach((id) => callbacks.get(id)?.({ event: "settings-changed", id: 0, payload: settings }));
+      return null;
+    },
     undo_last_move: () => ({ moved: 42, failed: [] }),
     recorder_clip_folders: () => [
       { label: "Medal", path: "C:\\Medal", exists: true },

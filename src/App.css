@@ -800,3 +800,16 @@ input.switch:checked:active::after { transform: translateX(12px); }
 .heal-bar .keep { background: color-mix(in srgb, #4fd18b 80%, transparent); }
 .heal-bar .bad { background: repeating-linear-gradient(135deg, #e5534b 0 6px, #b8403a 6px 12px); }
 .heal-done { position: absolute; top: 12px; left: 12px; padding: 4px 10px; border-radius: 999px; background: rgba(0, 0, 0, 0.7); color: #4fd18b; font-size: 12px; font-weight: 600; }
+
+/* Same game, different folder names */
+.modal.merge-modal { max-width: 540px; max-height: calc(100vh - 32px); overflow: auto; }
+.merge-game { display: flex; flex-direction: column; gap: 8px; padding: 12px; background: var(--bg); border-radius: 10px; }
+.merge-names { display: flex; flex-direction: column; gap: 6px; }
+.merge-name {
+  display: grid; grid-template-columns: auto 1fr; column-gap: 10px; row-gap: 2px; align-items: center;
+  padding: 8px 10px; border: 1px solid var(--float-line); border-radius: 8px; cursor: pointer; font-size: 13px;
+}
+.merge-name input { grid-row: span 2; accent-color: var(--accent); margin: 0; }
+.merge-name.on { border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
+.merge-label { white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.merge-name small { font-size: 11px; }
