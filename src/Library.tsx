@@ -5,6 +5,7 @@ import { useThumb } from "./hooks";
 import { liveLink, progressText, ShareRequest, timeLeft } from "./Share";
 import { Timeline } from "./Timeline";
 import { DamagedStatus, damagedText } from "./Health";
+import { DeletePreview } from "./DeletePreview";
 
 /** Where each list (all clips, damaged clips) was scrolled to, kept while you're in Studio (the page itself unmounts). */
 const memories: Record<string, { scroll: number; folder: string; query: string }> = {};
@@ -37,7 +38,6 @@ function ClipCard({
   onToggle,
   onDelete,
   onToast,
-  onChanged,
   upload,
   link,
   onShare,
@@ -60,7 +60,6 @@ function ClipCard({
   onToggle: (e: React.MouseEvent) => void;
   onDelete: () => void;
   onToast: (t: string, err?: boolean) => void;
-  onChanged: () => void;
 }) {
   const thumb = useThumb(clip.path, clip.modified);
   const [info, setInfo] = useState<Probe | null>(null);
@@ -68,20 +67,7 @@ function ClipCard({
     api.probe(clip.path, String(clip.modified)).then(setInfo).catch(() => {});
   }, [clip.path, clip.modified]);
 
-  const isMp4 = clip.path.toLowerCase().endsWith(".mp4");
   const time = new Date(clip.modified).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-
-  const remux = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onToast("Remuxing to MP4…");
-    try {
-      const out = await api.remuxMp4(clip.path);
-      onToast(`Saved ${out.split("\\").pop()} (same video, new MP4 container)`);
-      onChanged();
-    } catch (err) {
-      onToast(errText(err), true);
-    }
-  };
 
   return (
     <button className={`card ${selected ? "selected" : ""} ${returned ? "returned" : ""}`} onClick={onClick} title={clip.path} data-path={clip.path}>
@@ -102,11 +88,7 @@ function ClipCard({
         </span>
         {info && <span className="badge br">{fmtDuration(info.duration)}</span>}
         <div className="card-actions">
-          {!isMp4 && (
-            <span role="button" tabIndex={0} onClick={remux} title="Make an MP4 copy of this file (no quality loss)">
-              MP4
-            </span>
-          )}
+          {/* No one-click MP4 here: it sat next to the checkbox and was easy to hit by mistake. It's in Studio. */}
           <span
             role="button"
             tabIndex={0}
@@ -194,7 +176,6 @@ export function Library({
   clips,
   onOpen,
   onToast,
-  onChanged,
   onDelete,
   hotkey,
   uploads,
@@ -311,6 +292,12 @@ export function Library({
   }, [visible]);
 
   const selecting = selected.size > 0;
+  const [previewing, setPreviewing] = useState(false);
+  // In the order they appear on the page.
+  const selectedClips = useMemo(
+    () => (clips ?? []).filter((c) => selected.has(c.path) && visible.includes(c.path)),
+    [clips, selected, visible],
+  );
 
   const toggle = useCallback((path: string) => {
     setSelected((s) => {
@@ -386,6 +373,23 @@ export function Library({
 
   return (
     <div className="lib">
+      {previewing && selecting && (
+        <DeletePreview
+          clips={selectedClips}
+          onKeep={(p) =>
+            setSelected((s) => {
+              const n = new Set(s);
+              n.delete(p);
+              return n;
+            })
+          }
+          onClose={() => setPreviewing(false)}
+          onDelete={async () => {
+            setPreviewing(false);
+            await deleteSelected();
+          }}
+        />
+      )}
     <div className={`page lib-page ${selecting ? "selecting" : ""}`} ref={scroller} onScroll={onScroll}>
       <div className="toolbar">
         <h1 style={{ flex: 1 }}>{damagedMode ? "Damaged clips" : "Clips"}</h1>
@@ -395,16 +399,10 @@ export function Library({
           </span>
           <input placeholder="clips, games…" value={query} onChange={(e) => setQuery(e.target.value)} />
         </label>
-        {selecting ? (
-          <button className="btn danger" onClick={deleteSelected} title="Move the selected clips to the Recycle Bin (Delete)">
-            Delete {selected.size} clip{selected.size === 1 ? "" : "s"}
+        {!damagedMode && (
+          <button className="btn" onClick={openAny}>
+            Open any video…
           </button>
-        ) : (
-          !damagedMode && (
-            <button className="btn" onClick={openAny}>
-              Open any video…
-            </button>
-          )
         )}
       </div>
       {damagedMode && <DamagedStatus count={clips?.length ?? 0} />}
@@ -420,6 +418,12 @@ export function Library({
           </button>
           <button className="btn small" onClick={() => setSelected(new Set())}>
             Clear
+          </button>
+          <button className="btn small" onClick={() => setPreviewing(true)} title="Look through the selected clips before deleting them">
+            Preview
+          </button>
+          <button className="btn small danger" onClick={deleteSelected} title="Move the selected clips to the Recycle Bin (Delete)">
+            Delete {selected.size} clip{selected.size === 1 ? "" : "s"}
           </button>
         </div>
       ) : (
@@ -493,7 +497,6 @@ export function Library({
                     onDelete={() => onDelete(selected.has(c.path) ? [...selected] : [c.path])}
                     deleteCount={selected.has(c.path) ? selected.size : 1}
                     onToast={onToast}
-                    onChanged={onChanged}
                     upload={uploads?.[c.path]}
                     link={liveLink(links?.[c.path])}
                     damage={health?.[c.path]}

@@ -19,6 +19,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 const CHUNK: f64 = 10.0;
 /// Decode errors in a chunk beyond the "opening" ones before it counts as damaged.
 const DAMAGED_OVER: usize = 20;
+/// Bumped when the check changes; older "damaged" results are checked again.
+/// 2: timestamp warnings from ffmpeg's output side no longer count as damage.
+const VERSION: u32 = 2;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -32,6 +35,17 @@ pub struct Health {
     /// The longest undamaged stretch (what a rescue keeps)
     pub best: Option<(f64, f64)>,
     pub duration: f64,
+    /// Which version of the check made this result
+    #[serde(default)]
+    pub version: u32,
+}
+
+/// Is this ffmpeg error line about decoding the picture? Warnings from the
+/// output side (e.g. "non monotonically increasing dts to muxer", printed for
+/// every frame of a file with uneven timestamps) say nothing about damage.
+pub fn is_decode_error(line: &str) -> bool {
+    let l = line.trim();
+    !l.is_empty() && !l.contains("Last message repeated") && !l.starts_with("[null @") && !l.contains("to muxer")
 }
 
 fn stamp(p: &Path) -> Option<(u64, i64)> {
@@ -55,7 +69,7 @@ fn decode_errors(path: &str, ss: f64, t: f64, gpu: bool) -> Result<usize, String
     if gpu && (text.contains("Failed setup") || text.contains("hwaccel initialisation returned error")) {
         return Err("gpu".into());
     }
-    Ok(text.lines().filter(|l| !l.trim().is_empty() && !l.contains("Last message repeated")).count())
+    Ok(text.lines().filter(|l| is_decode_error(l)).count())
 }
 
 /// Turn per-chunk error counts into damaged stretches and the best clean stretch.
@@ -84,7 +98,7 @@ pub fn summarize(chunk_errors: &[(f64, f64, usize)], baseline: usize, duration: 
 /// Check one clip. `keep_going` is asked between chunks (false = a game started: stop).
 pub fn check(path: &str, keep_going: &dyn Fn() -> bool) -> Option<Health> {
     let (size, modified) = stamp(Path::new(path))?;
-    let unreadable = |duration| Health { size, modified, state: "unreadable".into(), damaged: vec![], best: None, duration };
+    let unreadable = |duration| Health { size, modified, state: "unreadable".into(), damaged: vec![], best: None, duration, version: VERSION };
     let p = match crate::library::probe(path) {
         Ok(p) if p.duration > 0.0 && !p.codec.is_empty() => p,
         _ => return Some(unreadable(0.0)),
@@ -113,7 +127,15 @@ pub fn check(path: &str, keep_going: &dyn Fn() -> bool) -> Option<Health> {
         s += CHUNK;
     }
     let (damaged, best) = summarize(&chunks, baseline, p.duration);
-    Some(Health { size, modified, state: if damaged.is_empty() { "ok" } else { "damaged" }.into(), damaged, best, duration: p.duration })
+    Some(Health {
+        size,
+        modified,
+        state: if damaged.is_empty() { "ok" } else { "damaged" }.into(),
+        damaged,
+        best,
+        duration: p.duration,
+        version: VERSION,
+    })
 }
 
 /// Keep `from`–`to` of a damaged clip, copied untouched: starts at the first
@@ -181,7 +203,9 @@ pub fn results(file: &Path, paths: &[String]) -> BTreeMap<String, Health> {
             .filter_map(|p| {
                 let h = m.get(p)?;
                 let (size, modified) = stamp(Path::new(p))?;
-                (h.size == size && h.modified == modified).then(|| (p.clone(), h.clone()))
+                // A "damaged" from an older check is checked again (it may have been a false alarm).
+                let current = h.state == "ok" || h.version >= VERSION;
+                (h.size == size && h.modified == modified && current).then(|| (p.clone(), h.clone()))
             })
             .collect()
     })
@@ -279,6 +303,14 @@ mod tests {
         // Damage in the middle: the longer side is kept.
         let mid = vec![(0.0, 10.0, 0), (10.0, 20.0, 999), (20.0, 50.0, 0)];
         assert_eq!(summarize(&mid, 0, 50.0).1, Some((20.0, 50.0)));
+    }
+
+    #[test]
+    fn muxer_timestamp_warnings_are_not_damage() {
+        assert!(!is_decode_error("[null @ 000002123df851c0] Application provided invalid, non monotonically increasing dts to muxer in stream 0: 99 >= 99"));
+        assert!(!is_decode_error("    Last message repeated 3 times"));
+        assert!(is_decode_error("[h264 @ 000001b959d4f040] no frame!"));
+        assert!(is_decode_error("[vist#0:0/h264 @ 01] [dec:h264 @ 02] Error submitting packet to decoder: Invalid data found when processing input"));
     }
 
     /// Checks (and rescues) a real clip: REWIND_HEALTH_CLIP=path
