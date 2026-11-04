@@ -1,17 +1,22 @@
+mod app_audio;
 mod audio;
+mod audio_edit;
 mod bench;
 mod consolidate;
 mod control;
 mod engine;
 mod ffmpeg;
 mod games;
+mod health;
 mod library;
 mod monitors;
 mod nas;
 mod native;
+mod secrets;
 mod settings;
 mod sound;
 mod updater;
+mod upload;
 
 use settings::Settings;
 use std::path::PathBuf;
@@ -67,6 +72,13 @@ fn save_now(app: &AppHandle, seconds: Option<u32>) -> Result<String, String> {
     let _ = app.emit("clip-saved", &path);
     if !s.nas_dir.is_empty() {
         nas::clip_saved();
+    }
+    if s.auto_upload {
+        // In the background; the link is copied and a toast shows when it's done.
+        let (a, p) = (app.clone(), path.clone());
+        thread::spawn(move || {
+            let _ = upload_now(&a, &p, None);
+        });
     }
     Ok(path)
 }
@@ -196,6 +208,7 @@ fn get_settings(app: AppHandle) -> Settings {
 #[tauri::command]
 fn set_settings(app: AppHandle, settings: Settings) -> Result<(), String> {
     let settings = settings.sanitized();
+    audio::set_mic_gain_db(settings.mic_gain_db);
     let st = app.state::<AppState>();
     let old = st.settings.lock().unwrap().clone();
     if old.hotkey != settings.hotkey || old.record_hotkey != settings.record_hotkey {
@@ -310,37 +323,43 @@ fn moves_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path().app_data_dir().map(|d| d.join("moves")).map_err(|e| e.to_string())
 }
 
-/// What "Move into Rewind" would do for one linked folder (nothing is touched).
-#[tauri::command]
-async fn plan_move_into_rewind(app: AppHandle, folder: String) -> Result<consolidate::Plan, String> {
-    let s = settings_of(&app);
-    blocking(move || {
-        let root = linked_root_for(&s, &folder)?;
-        Ok(consolidate::plan(&root, std::path::Path::new(&s.clips_dir), &move_avoid(&s, &root)))
-    })
-    .await
-}
-
-/// Folders a move must never reach into: Rewind's own, the NAS, other linked folders.
-fn move_avoid(s: &Settings, root: &library::LinkedRoot) -> Vec<PathBuf> {
+/// Folders a move must never reach into: Hindsight's own, the NAS, and the linked
+/// folders (each root being moved skips only the others).
+fn move_avoid(s: &Settings) -> Vec<PathBuf> {
     let mut v = vec![PathBuf::from(&s.clips_dir)];
     if !s.nas_dir.is_empty() {
         v.push(PathBuf::from(&s.nas_dir));
     }
-    v.extend(s.linked_folders.iter().map(PathBuf::from).filter(|p| !library::same_path(p, &root.path)));
+    v.extend(s.linked_folders.iter().map(PathBuf::from));
     v
 }
 
+fn move_plan(s: &Settings, folders: &[String]) -> Result<consolidate::Plan, String> {
+    let roots = folders.iter().map(|f| linked_root_for(s, f)).collect::<Result<Vec<_>, _>>()?;
+    if roots.is_empty() {
+        return Err("No folders to move.".into());
+    }
+    Ok(consolidate::plan_many(&roots, std::path::Path::new(&s.clips_dir), &move_avoid(s)))
+}
+
+/// What "Move into Hindsight" would do for one or more linked folders (nothing is touched).
 #[tauri::command]
-async fn move_into_rewind(app: AppHandle, folder: String) -> Result<consolidate::Outcome, String> {
+async fn plan_move_into_rewind(app: AppHandle, folders: Vec<String>) -> Result<consolidate::Plan, String> {
+    let s = settings_of(&app);
+    blocking(move || move_plan(&s, &folders)).await
+}
+
+#[tauri::command]
+async fn move_into_rewind(app: AppHandle, folders: Vec<String>) -> Result<consolidate::Outcome, String> {
     let s = settings_of(&app);
     let dir = moves_dir(&app)?;
     let a = app.clone();
     let out = blocking(move || {
-        let root = linked_root_for(&s, &folder)?;
-        let plan = consolidate::plan(&root, std::path::Path::new(&s.clips_dir), &move_avoid(&s, &root));
+        let plan = move_plan(&s, &folders)?;
         let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
-        let log = dir.join(format!("{stamp}-{}.jsonl", root.label.replace(|c: char| !c.is_ascii_alphanumeric(), "_")));
+        // "Medal, NVIDIA" → "Medal+NVIDIA" in the file name (shown again as "Medal, NVIDIA").
+        let tag = plan.label.replace(", ", "+").replace(|c: char| !c.is_ascii_alphanumeric() && c != '+', "_");
+        let log = dir.join(format!("{stamp}-{tag}.jsonl"));
         Ok(consolidate::run(&plan, &log, |done, total| {
             let _ = a.emit("move-progress", (done, total));
         }))
@@ -380,7 +399,7 @@ fn last_move(app: AppHandle) -> Option<UndoInfo> {
         return None;
     }
     let name = log.file_stem()?.to_string_lossy().into_owned();
-    let label = name.splitn(3, '-').nth(2).unwrap_or("folder").replace('_', " ");
+    let label = name.splitn(3, '-').nth(2).unwrap_or("folder").replace('_', " ").replace('+', ", ");
     let when = std::fs::metadata(&log)
         .and_then(|m| m.modified())
         .ok()
@@ -394,6 +413,213 @@ fn last_move(app: AppHandle) -> Option<UndoInfo> {
 async fn undo_last_move(app: AppHandle) -> Result<consolidate::Outcome, String> {
     let log = latest_move_log(&app).ok_or("Nothing to undo.")?;
     let out = blocking(move || Ok(consolidate::undo(&log))).await?;
+    let _ = app.emit("clips-changed", ());
+    Ok(out)
+}
+
+// ---------- Sharing (uploads) ----------
+
+fn data_file(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
+    app.path().app_data_dir().map(|d| d.join(name)).map_err(|e| e.to_string())
+}
+
+/// Clips being uploaded right now (so one clip isn't sent twice at once).
+static UPLOADING: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct UploadProgress {
+    path: String,
+    host: String,
+    /// "preparing" | "uploading" | "done" | "error"
+    stage: &'static str,
+    sent: u64,
+    total: u64,
+    url: Option<String>,
+    error: Option<String>,
+    /// e.g. "your network blocks files.catbox.moe"
+    warning: Option<String>,
+}
+
+/// Prepare, upload, copy the link, remember it. Progress goes out as "upload-progress".
+fn upload_now(app: &AppHandle, path: &str, host: Option<&str>) -> Result<upload::Upload, String> {
+    let s = settings_of(app);
+    let host = upload::Host::parse(host.unwrap_or(&s.upload_host)).ok_or("Unknown upload service.")?;
+    {
+        let mut busy = UPLOADING.lock().unwrap();
+        if busy.iter().any(|p| p == path) {
+            return Err("That clip is already uploading.".into());
+        }
+        busy.push(path.to_string());
+    }
+    let name = serde_json::to_value(host).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
+    let emit = |stage, sent, total, url: Option<String>, error: Option<String>, warning: Option<String>| {
+        let _ = app.emit("upload-progress", UploadProgress { path: path.to_string(), host: name.clone(), stage, sent, total, url, error, warning });
+    };
+    let result = (|| -> Result<upload::Upload, String> {
+        emit("preparing", 0, 0, None, None, None);
+        let work = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("uploads");
+        let file = upload::prepare(path, host, &work)?;
+        let secrets_file = data_file(app, "secrets.json")?;
+        let folder = std::path::Path::new(path).parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let cfg = upload::Config {
+            litterbox_time: s.litterbox_time.clone(),
+            discord_webhook: secrets::get(&secrets_file, "discord_webhook"),
+            streamable_email: s.streamable_email.clone(),
+            streamable_password: secrets::get(&secrets_file, "streamable_password"),
+            post_link_to_discord: s.post_link_to_discord,
+            message: if folder.is_empty() || folder == "Desktop" { "Clip".into() } else { format!("{folder} clip") },
+        };
+        let (a, p, h) = (app.clone(), path.to_string(), name.clone());
+        let report = Box::new(move |sent: u64, total: u64| {
+            let _ = a.emit("upload-progress", UploadProgress { path: p.clone(), host: h.clone(), stage: "uploading", sent, total, url: None, error: None, warning: None });
+        });
+        let sent = upload::send(host, &file, &cfg, &upload::Endpoints::default(), report);
+        let bytes = fs_len(&file);
+        if file != std::path::Path::new(path) {
+            let _ = std::fs::remove_file(&file);
+        }
+        let url = sent?;
+        let _ = upload::copy_to_clipboard(&url);
+        let now = chrono::Local::now().timestamp_millis();
+        let expires = match host {
+            upload::Host::Litterbox => Some(upload::litterbox_expiry(&s.litterbox_time, now)),
+            upload::Host::Discord => upload::discord_link_expiry(&url),
+            _ => None,
+        };
+        let u = upload::Upload { host, url, at: now, bytes, expires };
+        upload::remember(&data_file(app, "uploads.json")?, path, u.clone());
+        Ok(u)
+    })();
+    UPLOADING.lock().unwrap().retain(|p| p != path);
+    match &result {
+        Ok(u) => emit("done", u.bytes, u.bytes, Some(u.url.clone()), None, upload::link_warning(&u.url)),
+        Err(e) => emit("error", 0, 0, None, Some(e.clone()), None),
+    }
+    result
+}
+
+fn fs_len(p: &std::path::Path) -> u64 {
+    std::fs::metadata(p).map(|m| m.len()).unwrap_or(0)
+}
+
+#[tauri::command]
+async fn upload_clip(app: AppHandle, path: String, host: Option<String>) -> Result<upload::Upload, String> {
+    blocking(move || upload_now(&app, &path, host.as_deref())).await
+}
+
+/// Every clip's links (path → uploads, newest last).
+#[tauri::command]
+fn upload_history(app: AppHandle) -> Result<std::collections::BTreeMap<String, Vec<upload::Upload>>, String> {
+    Ok(upload::history(&data_file(&app, "uploads.json")?))
+}
+
+#[tauri::command]
+fn copy_text(text: String) -> Result<(), String> {
+    upload::copy_to_clipboard(&text)
+}
+
+/// Store a secret (empty removes it). The value never comes back to the interface.
+/// A Discord webhook is checked with Discord first, and only saved if it works.
+#[tauri::command]
+async fn set_secret(app: AppHandle, name: String, value: String) -> Result<Option<upload::WebhookInfo>, String> {
+    let value = value.trim().to_string();
+    blocking(move || {
+        let file = data_file(&app, "secrets.json")?;
+        let mut info = None;
+        if name == "discord_webhook" {
+            let mut s = settings_of(&app);
+            if value.is_empty() {
+                s.discord_webhook_name.clear();
+            } else {
+                let i = upload::check_webhook(&value)?;
+                s.discord_webhook_name = i.name.clone();
+                info = Some(i);
+            }
+            secrets::set(&file, &name, &value)?;
+            set_settings(app.clone(), s)?;
+        } else {
+            secrets::set(&file, &name, &value)?;
+        }
+        Ok(info)
+    })
+    .await
+}
+
+/// Can this PC reach each upload service, and open its links? Uploads nothing.
+#[tauri::command]
+async fn check_sharing(app: AppHandle) -> Result<Vec<(upload::Host, Vec<upload::Reach>)>, String> {
+    let hook = secrets::get(&data_file(&app, "secrets.json")?, "discord_webhook");
+    blocking(move || {
+        let mut out: Vec<(upload::Host, Vec<upload::Reach>)> = [upload::Host::Catbox, upload::Host::Litterbox, upload::Host::Discord, upload::Host::Streamable]
+            .into_iter()
+            .map(|h| (h, upload::needed_hosts(h).iter().map(|n| upload::reach(n)).collect()))
+            .collect();
+        // A saved webhook that Discord no longer knows (deleted) shows up here too.
+        if let Some(h) = hook
+            && let Err(e) = upload::check_webhook(&h)
+            && let Some((_, r)) = out.iter_mut().find(|(h, _)| *h == upload::Host::Discord)
+        {
+            r.push(upload::Reach { host: e, state: "webhook" });
+        }
+        Ok(out)
+    })
+    .await
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SecretsSet {
+    discord_webhook: bool,
+    streamable_password: bool,
+}
+
+#[tauri::command]
+fn secrets_set(app: AppHandle) -> Result<SecretsSet, String> {
+    let f = data_file(&app, "secrets.json")?;
+    Ok(SecretsSet { discord_webhook: secrets::is_set(&f, "discord_webhook"), streamable_password: secrets::is_set(&f, "streamable_password") })
+}
+
+// ---------- Clip health ----------
+
+/// Health results for these clips (only ones already checked and unchanged).
+#[tauri::command]
+fn clip_health(app: AppHandle, paths: Vec<String>) -> Result<std::collections::BTreeMap<String, health::Health>, String> {
+    Ok(health::results(&data_file(&app, "health.json")?, &paths))
+}
+
+#[tauri::command]
+fn health_progress() -> health::Progress {
+    health::progress()
+}
+
+/// Save the longest undamaged part of a damaged clip as "<name> (rescued)", copied untouched.
+#[tauri::command]
+async fn rescue_clip(app: AppHandle, path: String) -> Result<String, String> {
+    let cache = data_file(&app, "health.json")?;
+    let out = blocking(move || {
+        let h = health::results(&cache, std::slice::from_ref(&path)).remove(&path).ok_or("Check the clip first.")?;
+        let (a, b) = h.best.ok_or("There's no undamaged part long enough to keep.")?;
+        health::rescue(&path, a, b)
+    })
+    .await?;
+    let _ = app.emit("clips-changed", ());
+    Ok(out)
+}
+
+/// Replace a damaged clip with its longest good part (original to the Recycle Bin).
+#[tauri::command]
+async fn heal_clip(app: AppHandle, path: String) -> Result<String, String> {
+    let cache = data_file(&app, "health.json")?;
+    let out = blocking(move || {
+        let h = health::results(&cache, std::slice::from_ref(&path)).remove(&path).ok_or("Check the clip first.")?;
+        let best = h.best.ok_or("There's no undamaged part long enough to keep.")?;
+        let healed = health::heal(&path, best)?;
+        // The healed file gets checked again in the background like any new clip.
+        health::forget(&cache, &path);
+        Ok(healed)
+    })
+    .await?;
     let _ = app.emit("clips-changed", ());
     Ok(out)
 }
@@ -467,20 +693,61 @@ fn duration_of(path: &str) -> Option<f64> {
 }
 
 #[tauri::command]
-async fn trim_clip(app: AppHandle, path: String, start: f64, end: f64, exact: bool, replace: bool) -> Result<String, String> {
-    edit(app, path, replace, Some(end - start), move |p| library::trim(p, start, end, exact)).await
+async fn trim_clip(
+    app: AppHandle,
+    path: String,
+    start: f64,
+    end: f64,
+    exact: bool,
+    replace: bool,
+    audio: Option<audio_edit::AudioEdit>,
+) -> Result<String, String> {
+    let audio = audio.unwrap_or_default();
+    edit(app, path, replace, Some(end - start), move |p| library::trim(p, start, end, exact, &audio)).await
+}
+
+/// Loudness over time for each audio track, for Studio's audio lanes.
+#[tauri::command]
+async fn clip_waveforms(app: AppHandle, path: String) -> Result<Vec<audio_edit::Waveform>, String> {
+    let cache = app.state::<AppState>().thumbs_dir.with_file_name("preview");
+    blocking(move || {
+        let n = library::probe(&path)?.audio_tracks.min(8);
+        audio_edit::waveforms(&path, n, &cache)
+    })
+    .await
 }
 
 #[tauri::command]
-async fn export_h264(app: AppHandle, path: String, replace: bool) -> Result<String, String> {
+async fn export_h264(app: AppHandle, path: String, replace: bool, audio: Option<audio_edit::AudioEdit>) -> Result<String, String> {
     let secs = duration_of(&path);
-    edit(app, path, replace, secs, library::export_h264).await
+    let audio = audio.unwrap_or_default();
+    edit(app, path, replace, secs, move |p| library::export_h264(p, &audio)).await
 }
 
 #[tauri::command]
-async fn compress_clip(app: AppHandle, path: String, target_mb: u32, replace: bool) -> Result<String, String> {
+async fn export_audio(
+    path: String,
+    start: f64,
+    end: f64,
+    track: Option<usize>,
+    label: String,
+    audio: Option<audio_edit::AudioEdit>,
+) -> Result<String, String> {
+    let audio = audio.unwrap_or_default();
+    blocking(move || library::export_audio(&path, start, end, track, &label, &audio)).await
+}
+
+#[tauri::command]
+async fn compress_clip(
+    app: AppHandle,
+    path: String,
+    target_mb: u32,
+    replace: bool,
+    audio: Option<audio_edit::AudioEdit>,
+) -> Result<String, String> {
     let secs = duration_of(&path);
-    edit(app, path, replace, secs, move |p| library::compress(p, target_mb)).await
+    let audio = audio.unwrap_or_default();
+    edit(app, path, replace, secs, move |p| library::compress(p, target_mb, &audio)).await
 }
 
 /// Open Explorer with the file selected (or the folder itself, for a folder).
@@ -564,7 +831,7 @@ async fn check_for_updates(app: AppHandle) -> Result<Option<String>, String> {
     updater::check(&app, auto).await
 }
 
-/// Download (if needed) and install now. Rewind restarts on the new version.
+/// Download (if needed) and install now. Hindsight restarts on the new version.
 #[tauri::command]
 async fn install_update(app: AppHandle) -> Result<(), String> {
     if !updater::has_ready_update(&app) {
@@ -653,9 +920,10 @@ pub fn run() {
             std::fs::create_dir_all(&cfg_dir)?;
             let settings_path = cfg_dir.join("settings.json");
             let mut s = settings::load(&settings_path);
+            audio::set_mic_gain_db(s.mic_gain_db);
             if s.clips_dir.is_empty() {
                 let videos = app.path().video_dir().unwrap_or_else(|_| cfg_dir.clone());
-                s.clips_dir = videos.join("Rewind").to_string_lossy().into_owned();
+                s.clips_dir = videos.join("Hindsight").to_string_lossy().into_owned();
             }
             let _ = std::fs::create_dir_all(&s.clips_dir);
             let _ = settings::save(&settings_path, &s);
@@ -688,6 +956,34 @@ pub fn run() {
             app.manage(updater::Updates::default());
             updater::start(handle.clone());
             nas::start(handle.clone());
+            // Remember the game you're playing, so a clip saved while tabbed out still goes to it.
+            thread::spawn(|| loop {
+                games::observe();
+                thread::sleep(Duration::from_secs(2));
+            });
+            // Clip health check: one clip at a time, only while the PC is free.
+            if let Ok(cache) = data_file(&handle, "health.json") {
+                let (h1, h2, h3, h4) = (handle.clone(), handle.clone(), handle.clone(), handle.clone());
+                health::start(
+                    cache,
+                    move || {
+                        let s = settings_of(&h1);
+                        let linked = linked_roots(&s);
+                        library::scan_all(PathBuf::from(&s.clips_dir).as_path(), &s.external_files, &[], &linked, &s.nas_dir)
+                            .into_iter()
+                            .map(|c| c.path)
+                            .collect()
+                    },
+                    move || settings_of(&h2).health_check,
+                    move || {
+                        let st = h3.state::<AppState>();
+                        games::foreground_game().is_some() || st.engine.is_recording() || engine::saves_in_progress() > 0 || bench::run::is_running()
+                    },
+                    move || {
+                        let _ = h4.emit("clips-changed", ());
+                    },
+                );
+            }
             control::start(handle.clone());
 
             if let Err(e) = apply_hotkeys(&handle, &s.hotkey, &s.record_hotkey) {
@@ -698,15 +994,15 @@ pub fn run() {
             // Tray icon: left click opens the flyout, right click shows the menu.
             let save = MenuItem::with_id(app, "save", "Save clip", true, None::<&str>)?;
             let record = MenuItem::with_id(app, "record", "Start / stop recording", true, None::<&str>)?;
-            let open = MenuItem::with_id(app, "open", "Open Rewind", true, None::<&str>)?;
+            let open = MenuItem::with_id(app, "open", "Open Hindsight", true, None::<&str>)?;
             let toggle = MenuItem::with_id(app, "toggle", "Pause / resume buffer", true, None::<&str>)?;
             let updates = MenuItem::with_id(app, "updates", "Check for updates", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "Quit Rewind", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "Quit Hindsight", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
             let menu = Menu::with_items(app, &[&save, &record, &open, &toggle, &sep, &updates, &quit])?;
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().cloned().expect("app icon"))
-                .tooltip("Rewind")
+                .tooltip("Hindsight")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, e| match e.id.as_ref() {
@@ -761,9 +1057,9 @@ pub fn run() {
                     if let Some(tray) = h.tray_by_id("main") {
                         let _ = tray.set_icon(Some(tray_icon(&base_icon, st.running)));
                         let tip = match state {
-                            (_, true) => "Rewind · Recording",
-                            (true, false) => "Rewind · Replay buffer on",
-                            _ => "Rewind · Paused",
+                            (_, true) => "Hindsight · Recording",
+                            (true, false) => "Hindsight · Replay buffer on",
+                            _ => "Hindsight · Paused",
                         };
                         let _ = tray.set_tooltip(Some(tip));
                     }
@@ -791,7 +1087,7 @@ pub fn run() {
         })
         .on_window_event(|window, event| match (window.label(), event) {
             ("main", WindowEvent::CloseRequested { api, .. }) => {
-                // Closing the window keeps Rewind running in the tray.
+                // Closing the window keeps Hindsight running in the tray.
                 api.prevent_close();
                 let _ = window.emit("main-hidden", ());
                 let _ = window.hide();
@@ -822,7 +1118,9 @@ pub fn run() {
             preview_audio,
             remux_mp4,
             trim_clip,
+            clip_waveforms,
             export_h264,
+            export_audio,
             compress_clip,
             reveal_file,
             delete_clips,
@@ -838,6 +1136,16 @@ pub fn run() {
             get_nas_state,
             sync_nas_now,
             recorder_clip_folders,
+            upload_clip,
+            upload_history,
+            copy_text,
+            set_secret,
+            secrets_set,
+            check_sharing,
+            clip_health,
+            health_progress,
+            rescue_clip,
+            heal_clip,
             plan_move_into_rewind,
             move_into_rewind,
             last_move,
@@ -847,7 +1155,7 @@ pub fn run() {
             bench_state,
         ])
         .build(tauri::generate_context!())
-        .expect("error while building Rewind")
+        .expect("error while building Hindsight")
         .run(|app, event| {
             if let RunEvent::Exit = event {
                 // A downloaded update installs on quit (after the engine stops).

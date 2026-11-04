@@ -3,8 +3,9 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useState } from "react";
 import { api, ClipFolder, errText, fmtSize, LastMove, MovePlan, NasState, Settings } from "./api";
 import { ConfirmDialog } from "./ConfirmUpdate";
+import { HealthSetting } from "./Health";
 
-type MoveJob = { folder: string; plan: MovePlan | null; running: boolean; done: number; total: number };
+type MoveJob = { folders: string[]; plan: MovePlan | null; running: boolean; done: number; total: number };
 
 function outcomeText(verb: string, o: { moved: number; failed: [string, string][] }) {
   const base = `${verb} ${o.moved} clip${o.moved === 1 ? "" : "s"}.`;
@@ -36,6 +37,8 @@ function nasLine(s: Settings, n: NasState | null) {
   if (!s.nasDir) return "Off. Clips stay on this PC only.";
   if (!n || !n.enabled) return "Starting…";
   if (!n.reachable) return `Can't reach it right now. Clips keep saving here and copy over once it's back. (${n.lastError ?? ""})`;
+  if (n.paused)
+    return `Paused while you play${n.pending ? ` (${n.pending} clip${n.pending === 1 ? "" : "s"} waiting)` : ""}. Copying starts again once the game is closed.`;
   if (n.copying) return `Copying ${n.copying}…`;
   const parts = [n.pending ? `${n.pending} clip${n.pending === 1 ? "" : "s"} waiting to copy` : "Everything is copied"];
   if (n.lastSync) parts.push(`checked ${ago(n.lastSync)}`);
@@ -48,7 +51,9 @@ export function LibrarySettings({
   s,
   set,
   Toggle,
+  hidden,
 }: {
+  hidden?: boolean;
   s: Settings;
   set: (p: Partial<Settings>) => void;
   Toggle: (p: { label: string; checked: boolean; onChange: (v: boolean) => void }) => React.ReactElement;
@@ -67,12 +72,12 @@ export function LibrarySettings({
   const toggleLinked = (p: string, on: boolean) =>
     set({ linkedFolders: on ? [...s.linkedFolders, p] : s.linkedFolders.filter((f) => f.toLowerCase() !== p.toLowerCase()) });
   const addFolder = async () => {
-    const dir = await open({ directory: true, title: "Show the clips in this folder in Rewind" });
+    const dir = await open({ directory: true, title: "Show the clips in this folder in Hindsight" });
     if (typeof dir === "string" && !linked(dir)) set({ linkedFolders: [...s.linkedFolders, dir] });
   };
   const custom = s.linkedFolders.filter((f) => !found.some((k) => k.path.toLowerCase() === f.toLowerCase()));
 
-  // "Move into Rewind": plan first (nothing touched), confirm, then move with progress.
+  // "Move into Hindsight": plan first (nothing touched), confirm, then move with progress.
   const [job, setJob] = useState<MoveJob | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [last, setLast] = useState<LastMove | null>(null);
@@ -88,15 +93,15 @@ export function LibrarySettings({
       un.then((f) => f());
     };
   }, [refreshLast]);
-  const askMove = async (folder: string) => {
+  const askMove = async (folders: string[]) => {
     setNote(null);
-    setJob({ folder, plan: null, running: false, done: 0, total: 0 });
+    setJob({ folders, plan: null, running: false, done: 0, total: 0 });
     try {
-      const plan = await api.planMoveIntoRewind(folder);
+      const plan = await api.planMoveIntoRewind(folders);
       if (!plan.count) {
         setJob(null);
         setNote("Nothing to move: no finished clips in that folder.");
-      } else setJob({ folder, plan, running: false, done: 0, total: plan.count });
+      } else setJob({ folders, plan, running: false, done: 0, total: plan.count });
     } catch (e) {
       setJob(null);
       setNote(errText(e));
@@ -106,7 +111,7 @@ export function LibrarySettings({
     if (!job?.plan) return;
     setJob({ ...job, running: true });
     try {
-      setNote(outcomeText("Moved", await api.moveIntoRewind(job.folder)));
+      setNote(outcomeText("Moved", await api.moveIntoRewind(job.folders)));
     } catch (e) {
       setNote(errText(e));
     } finally {
@@ -126,13 +131,13 @@ export function LibrarySettings({
   const closeMove = useCallback(() => setJob((j) => (j?.running ? j : null)), []);
   const moveButton = (path: string) =>
     linked(path) && (
-      <button className="btn small" disabled={!!job} onClick={() => askMove(path)} title="Move these clips into Rewind's game folders">
-        Move into Rewind…
+      <button className="btn small" disabled={!!job} onClick={() => askMove([path])} title="Move these clips into Hindsight's game folders">
+        Move into Hindsight…
       </button>
     );
 
   return (
-    <section className="group">
+    <section className="group" hidden={hidden}>
       <h2>Library &amp; NAS</h2>
       <div className="setting">
         <span>
@@ -140,7 +145,8 @@ export function LibrarySettings({
           <small style={{ wordBreak: "break-all" }}>{s.nasDir || "Not set"}</small>
           <small>
             Clips save to this PC first (instant, works offline), then copy to the NAS in the background into the same game
-            folders. Several PCs can share one NAS: file names include each PC's name.
+            folders, only once you've closed your game so it never costs frames. Several PCs can share one NAS: file names
+            include each PC's name.
           </small>
           <small className={nas && s.nasDir && !nas.reachable && nas.enabled ? "err-text" : ""}>{nasLine(s, nas)}</small>
         </span>
@@ -170,14 +176,46 @@ export function LibrarySettings({
         </label>
       )}
 
+      {s.nasDir && s.linkedFolders.length > 0 && (
+        <div className="setting sub">
+          <span>
+            Clips from other recorders aren't copied
+            <small>
+              The {s.linkedFolders.length} other recorder folder{s.linkedFolders.length === 1 ? "" : "s"} below (Medal, NVIDIA,
+              OBS…) only show in your library, they stay where they are. Move them into Hindsight's folders first and they'll
+              copy to the NAS like your own clips{s.nasRemoveLocal ? ", then be removed from this PC" : ""}.
+            </small>
+          </span>
+          <button className="btn small" disabled={!!job} onClick={() => askMove(s.linkedFolders)}>
+            Move into Hindsight…
+          </button>
+        </div>
+      )}
+
+      <HealthSetting on={s.healthCheck} set={(v) => set({ healthCheck: v })} Toggle={Toggle} />
       <div className="setting">
         <span>
           Clips from other recorders
-          <small>Shows their clips in your library, grouped by game, without moving or copying anything.</small>
+          <small>
+            Shows their clips in your library, grouped by game, without moving or copying anything. Move them into Hindsight's
+            folders to tidy everything into one place.
+          </small>
         </span>
-        <button className="btn small" onClick={addFolder}>
-          Add folder…
-        </button>
+        <span className="row" style={{ flexWrap: "nowrap", flexShrink: 0 }}>
+          {s.linkedFolders.length > 1 && (
+            <button
+              className="btn small primary"
+              disabled={!!job}
+              onClick={() => askMove(s.linkedFolders)}
+              title="Move every shown folder's clips into Hindsight's game folders in one go"
+            >
+              Move all into Hindsight…
+            </button>
+          )}
+          <button className="btn small" onClick={addFolder}>
+            Add folder…
+          </button>
+        </span>
       </div>
       {found.map((f) => (
         <div className="setting sub" key={f.path}>
@@ -225,7 +263,7 @@ export function LibrarySettings({
       )}
       {job?.plan && (
         <ConfirmDialog
-          title={`Move ${job.plan.count} ${job.plan.label} clip${job.plan.count === 1 ? "" : "s"} into Rewind?`}
+          title={`Move ${job.plan.count} ${job.plan.label} clip${job.plan.count === 1 ? "" : "s"} into Hindsight?`}
           confirmLabel={job.running ? `Moving ${Math.min(job.done + 1, job.total)} of ${job.total}…` : `Move ${fmtSize(job.plan.bytes)}`}
           busy={job.running}
           onConfirm={doMove}
@@ -234,7 +272,7 @@ export function LibrarySettings({
           <ul className="modal-list wrap">
             <li>
               Into {job.plan.folders.slice(0, 4).map(([f, n]) => `${f} (${n})`).join(", ")}
-              {job.plan.folders.length > 4 ? ` and ${job.plan.folders.length - 4} more folders` : ""}, renamed like Rewind's
+              {job.plan.folders.length > 4 ? ` and ${job.plan.folders.length - 4} more folders` : ""}, renamed like Hindsight's
               clips, e.g. “{job.plan.examples[0]?.[0]}” → “{job.plan.examples[0]?.[1]}”.
             </li>
             <li>

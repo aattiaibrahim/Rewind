@@ -10,7 +10,7 @@
 //! Every request must carry the header `X-Rewind: 1`. Browsers can't add a
 //! custom header to a cross-site request without a CORS preflight, and the
 //! preflight is only approved for local pages (Stream Deck's plugin runs from
-//! a local file), so a website can't trigger Rewind behind your back.
+//! a local file), so a website can't trigger Hindsight behind your back.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};

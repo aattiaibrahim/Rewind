@@ -6,7 +6,7 @@
 //!
 //! Recording reuses the same capture: while it runs, every finished segment is
 //! copied out of the ring into a hidden folder next to the final file, and on
-//! stop they are joined. If Rewind crashes mid-recording, the copied segments
+//! stop they are joined. If Hindsight crashes mid-recording, the copied segments
 //! are still there and get recovered on the next start.
 //!
 //! A supervisor thread checks the monitor layout every second. When it changes
@@ -840,7 +840,7 @@ fn supervise(
         let devices = if s.desktop_audio || s.mic_enabled { audio::default_devices() } else { (None, None) };
         // Anything in here changing means "restart capture" (incl. a new default headset).
         let sig = format!(
-            "{}|{:?}|{:?}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{:?}",
+            "{}|{:?}|{:?}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{:?}",
             s.buffer_in_ram,
             mons,
             picked.as_ref().map(|m| m.index),
@@ -850,6 +850,7 @@ fn supervise(
             s.draw_cursor,
             s.buffer_seconds * 10_000 + s.output_height,
             s.desktop_audio,
+            s.discord_track,
             s.mic_enabled,
             s.mic_mono,
             s.mic_device,
@@ -1076,8 +1077,9 @@ fn spawn(s: &Settings, m: &monitors::Monitor, generation: &Gen) -> Result<Spawne
     // Audio first, so its sockets are listening when ffmpeg connects.
     let mut caps: Vec<(audio::Capture, &str, &str, String)> = Vec::new();
     let mut audio_errors = Vec::new();
+    let desktop = if s.desktop_audio && s.discord_track { audio::Source::DesktopNoDiscord } else { audio::Source::Desktop };
     if s.desktop_audio {
-        match audio::start(audio::Source::Desktop, AUDIO_DELAY_SECS) {
+        match audio::start(desktop, AUDIO_DELAY_SECS) {
             Ok(c) => {
                 let label = format!("Desktop: {}", c.device);
                 caps.push((c, "Desktop audio", "192k", label));
@@ -1092,6 +1094,12 @@ fn spawn(s: &Settings, m: &monitors::Monitor, generation: &Gen) -> Result<Spawne
                 caps.push((c, "Microphone", "96k", label));
             }
             Err(e) => audio_errors.push(format!("Mic: {e}")),
+        }
+    }
+    if s.desktop_audio && s.discord_track {
+        match audio::start(audio::Source::Discord, AUDIO_DELAY_SECS) {
+            Ok(c) => caps.push((c, "Discord audio", "160k", "Discord (own track)".to_string())),
+            Err(e) => audio_errors.push(format!("Discord: {e}")),
         }
     }
 

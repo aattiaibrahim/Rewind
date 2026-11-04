@@ -1,5 +1,6 @@
+import pkg from "../package.json";
 // Browser preview mode (dev only): when the UI runs in a normal browser
-// instead of inside Rewind, fake the backend with sample clips so the
+// instead of inside Hindsight, fake the backend with sample clips so the
 // interface can be clicked through without touching real files.
 
 type Clip = {
@@ -14,15 +15,15 @@ export function installDevMock() {
   const now = Date.now();
   const day = 86_400_000;
   let clips: Clip[] = [
-    ["VALORANT", "Ace on Ascent", 0.1, 61],
+    ["Counter-Strike 2", "Mirage AWP flick", 0.1, 61],
     ["VALORANT", "1v3 clutch", 0.2, 48],
-    ["Apex Legends", "Final ring", 0.3, 92],
-    ["Desktop", "Bug repro", 0.4, 22],
-    ["VALORANT", "Ranked win", 1.1, 75],
-    ["Apex Legends", "Kraber headshot", 1.2, 40],
-    ["Desktop", "Desktop 2026-10-28", 2.2, 18],
+    ["Overwatch 2", "5 kill streak", 0.3, 92],
+    ["Rainbow Six Siege", "Scoped clutch", 0.4, 22],
+    ["Marvel Rivals", "Team-up ult", 1.1, 75],
+    ["Hunt Showdown", "Bayou extract", 1.2, 40],
+    ["Payday The Heist", "Clean heist", 2.2, 18],
   ].map(([folder, name, ago, mb]) => ({
-    path: `C:\\Users\\you\\Videos\\Rewind\\${folder}\\${name}.mkv`,
+    path: `C:\\Users\\you\\Videos\\Hindsight\\${folder}\\${name}.mkv`,
     name: name as string,
     folder: folder as string,
     size: (mb as number) * 1024 * 1024,
@@ -37,15 +38,27 @@ export function installDevMock() {
     { path: "C:\\Users\\you\\nas\\VALORANT\\VALORANT 2026-11-02 - OTHER-PC.mkv", name: "VALORANT 2026-11-02 - OTHER-PC", folder: "VALORANT", size: 52 << 20, modified: now - 0.5 * day, external: false, location: "nas", onNas: false, source: "NAS" },
     { path: "C:\\Users\\you\\Medal\\Clips\\Valorant\\Medal clip.mp4", name: "Medal clip", folder: "Valorant", size: 30 << 20, modified: now - 0.6 * day, external: true, location: "linked", onNas: false, source: "Medal" },
   );
-  clips.sort((a, b) => b.modified - a.modified); // newest first, like Rewind's own list
+  // A few months of older clips, so the date timeline has something to show.
+  const games = ["VALORANT", "Counter-Strike 2", "Overwatch 2", "Rainbow Six Siege", "Marvel Rivals", "Hunt Showdown", "Payday The Heist"];
+  for (let i = 0; i < 40; i++) {
+    const ago = 3 + Math.floor(i * 3.1) + (i % 3) * 0.3;
+    const g = games[i % games.length];
+    clips.push({
+      path: `C:\\Users\\you\\Videos\\Hindsight\\${g}\\${g} old ${i}.mkv`, name: `${g} ${i + 1}`, folder: g,
+      size: (20 + (i * 7) % 90) << 20, modified: now - ago * day, external: false, location: "local", onNas: false, source: "",
+    });
+  }
+  clips.sort((a, b) => b.modified - a.modified); // newest first, like Hindsight's own list
   const bin: Clip[] = [];
+  const uploads: Record<string, unknown[]> = {};
+  const secrets: Record<string, boolean> = {};
   const settings = {
-    clipsDir: "C:\\Users\\you\\Videos\\Rewind", encoder: "av1", quality: 24, fps: 60, bufferSeconds: 120,
+    clipsDir: "C:\\Users\\you\\Videos\\Hindsight", encoder: "av1", quality: 24, fps: 60, bufferSeconds: 120,
     bufferInRam: true, captureEngine: "native", monitorMode: "primary", fixedMonitor: "", drawCursor: true, hotkey: "Alt+F10",
     recordHotkey: "Alt+F9", bufferEnabled: true, launchOnStartup: false, autoUpdate: true, startMinimized: true,
-    keepOriginalAfterRemux: true, replaceOriginalOnEdit: false, externalFiles: [], desktopAudio: true,
-    micEnabled: true, micMono: true, micDevice: "", theme: "midnight", accent: "lime", reduceMotion: false,
-    saveSound: true, nasDir: "", nasRemoveLocal: false, linkedFolders: [] as string[],
+    keepOriginalAfterRemux: true, replaceOriginalOnEdit: false, externalFiles: [], desktopAudio: true, discordTrack: true,
+    micEnabled: true, micMono: true, micDevice: "", micGainDb: 0, theme: "midnight", accent: "lime", reduceMotion: false,
+    saveSound: true, nasDir: "", nasRemoveLocal: false, linkedFolders: [] as string[], benchmarkMode: false, uploadHost: "catbox", litterboxTime: "72h", autoUpload: false, postLinkToDiscord: false, streamableEmail: "", discordWebhookName: "", confirmUploads: true, healthCheck: true,
   };
   const status = {
     enabled: true, running: true, monitor: "Display 1 · 1920×1080", width: 1920, height: 1080, encoder: "av1",
@@ -58,7 +71,26 @@ export function installDevMock() {
   const listeners = new Map<string, number[]>();
   const callbacks = new Map<number, (e: unknown) => void>();
   let nextCb = 1;
-  const emit = (event: string) =>
+  // Screenshot helpers (preview only): ?demo=studio opens the first clip,
+  // ?demo=settings-<tab> opens that Settings tab.
+  const demo = new URLSearchParams(location.search).get("demo") ?? "";
+  if (demo.startsWith("settings-")) {
+    try {
+      localStorage.setItem("rewind.settingsTab", demo.slice(9));
+    } catch {
+      /* fine */
+    }
+  }
+  if (demo === "performance") settings.benchmarkMode = true;
+  if (demo) {
+    setTimeout(() => {
+      const send = (event: string, payload: unknown) =>
+        (listeners.get(event) ?? []).forEach((id) => callbacks.get(id)?.({ event, id: 0, payload }));
+      if (demo === "studio") send("open-in-studio", clips[0].path);
+      if (demo.startsWith("settings-")) send("show-view", "settings");
+      if (demo === "performance") send("show-view", "performance");
+    }, 900);
+  }  const emit = (event: string) =>
     (listeners.get(event) ?? []).forEach((id) => callbacks.get(id)?.({ event, id: 0, payload: null }));
 
   const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
@@ -72,13 +104,36 @@ export function installDevMock() {
     get_update_state: () =>
       pendingUpdate
         ? { current: "0.1.12", stage: "ready", version: "0.1.13", notes: "Sample release notes.", error: null }
-        : { current: "dev", stage: "up-to-date", version: null, notes: null, error: null },
+        : { current: pkg.version, stage: "up-to-date", version: null, notes: null, error: null },
     "plugin:opener|open_url": () => null,
     get_nas_state: () =>
       settings.nasDir
-        ? { enabled: true, reachable: true, pending: 1, copying: null, copied: 3, lastError: null, lastSync: Date.now() - 20_000 }
-        : { enabled: false, reachable: false, pending: 0, copying: null, copied: 0, lastError: null, lastSync: null },
+        ? { enabled: true, reachable: true, pending: 1, copying: null, copied: 3, lastError: null, lastSync: Date.now() - 20_000, paused: false }
+        : { enabled: false, reachable: false, pending: 0, copying: null, copied: 0, lastError: null, lastSync: null, paused: false },
     sync_nas_now: () => null,
+    // Uploads (preview only): pretend to prepare and upload, with progress events, then give a fake link.
+    upload_clip: async (a) => {
+      const path = a.path as string, host = (a.host as string) ?? settings.uploadHost;
+      const send = (stage: string, sent = 0, total = 0, url: string | null = null) =>
+        (listeners.get("upload-progress") ?? []).forEach((id) => callbacks.get(id)?.({ event: "upload-progress", id: 0, payload: { path, host, stage, sent, total, url, error: null } }));
+      send("preparing");
+      await new Promise((r) => setTimeout(r, 600));
+      for (let i = 1; i <= 5; i++) { send("uploading", i * 2e6, 1e7); await new Promise((r) => setTimeout(r, 250)); }
+      const up = { host, url: "https://files.catbox.moe/preview.mp4", at: Date.now(), bytes: 1e7, expires: null };
+      (uploads[path] ??= []).push(up);
+      send("done", 1e7, 1e7, up.url);
+      return up;
+    },
+    upload_history: () => uploads,
+    clip_health: (a) => Object.fromEntries((a.paths as string[]).filter((p) => p.includes("Bayou")).map((p) => [p, { state: "damaged", damaged: [[0, 70]], best: [70, 180.2], duration: 180.2 }])),
+    health_progress: () => ({ checked: 31, total: 49, damaged: 1, paused: false, running: true }),
+    rescue_clip: (a) => (a.path as string).replace(/\.(\w+)$/, " (rescued).$1"),
+    heal_clip: async (a) => (await new Promise((r) => setTimeout(r, 900)), a.path as string),
+    export_audio: (a) => (a.path as string).replace(/\.(\w+)$/, " (audio).mp3"),
+    copy_text: () => null,
+    set_secret: (a) => { secrets[a.name as string] = !!a.value; return null; },
+    check_sharing: () => [["catbox", [{ host: "catbox.moe", state: "ok" }, { host: "files.catbox.moe", state: "blocked" }]], ["litterbox", [{ host: "litter.catbox.moe", state: "ok" }]], ["discord", [{ host: "discord.com", state: "ok" }]], ["streamable", [{ host: "streamable.com", state: "ok" }]]],
+    secrets_set: () => ({ discordWebhook: !!secrets.discord_webhook, streamablePassword: !!secrets.streamable_password }),
     plan_move_into_rewind: () => ({
       label: "Medal", count: 42, bytes: 3.2e9, otherDrive: false,
       folders: [["VALORANT", 30], ["Tom Clancys Rainbow Six Siege", 12]],
@@ -99,7 +154,26 @@ export function installDevMock() {
     list_monitors: () => [],
     list_audio_inputs: () => [],
     probe_file: () => ({ duration: 45, codec: "av1", width: 1920, height: 1080, fps: 60, audioTracks: 2, container: "matroska" }),
-    thumbnail: (a) => `/preview-thumb-${((a.path as string).length % 3) + 1}.jpg`,
+    // Thumbnails matched to each game (frames picked from real clips for the README screenshots).
+    thumbnail: (a) => {
+      const p = a.path as string;
+      const by: [string, string[]][] = [["VALORANT", ["valorant"]], ["Counter-Strike", ["cs2a", "cs2b"]], ["Overwatch", ["ow1", "ow2"]], ["Rainbow", ["r6"]], ["Marvel", ["marvel"]], ["Hunt", ["hunt"]], ["Payday", ["payday"]]];
+      const list = by.find(([k]) => p.toLowerCase().includes(k.toLowerCase()))?.[1] ?? ["cs2a"];
+      return `/thumb-${list[p.length % list.length]}.jpg`;
+    },
+    // A made-up 45 s game track (gunfire bursts) and mic (talking in stretches).
+    clip_waveforms: () => {
+      const n = 45 * 20;
+      const game = Array.from({ length: n }, (_, i) => {
+        const burst = [6, 7, 14, 22, 23, 31, 38].some((s) => i / 20 >= s && i / 20 < s + 1.2);
+        return Math.round(burst ? 200 + Math.random() * 50 : 95 + Math.sin(i / 9) * 20 + Math.random() * 25);
+      });
+      const mic = Array.from({ length: n }, (_, i) => {
+        const talk = [2, 10, 18, 27, 35].some((s) => i / 20 >= s && i / 20 < s + 4);
+        return Math.round(talk ? 120 + Math.random() * 100 : Math.random() * 20);
+      });
+      return [{ step: 0.05, levels: game }, { step: 0.05, levels: mic }];
+    },
     preview_audio: () => ({
       firstTitle: "Desktop audio",
       extra: [{ index: 1, title: "Microphone", path: "C:\\Users\\you\\preview\\mic.m4a" }],
@@ -126,7 +200,11 @@ export function installDevMock() {
       listeners.set(ev, [...(listeners.get(ev) ?? []), a.handler as number]);
       return a.handler;
     },
-    "plugin:event|unlisten": () => null,
+    "plugin:event|unlisten": (a) => {
+      const ev = a.event as string;
+      listeners.set(ev, (listeners.get(ev) ?? []).filter((id) => id !== (a.eventId as number)));
+      return null;
+    },
   };
 
   w.__TAURI_INTERNALS__ = {
@@ -138,7 +216,7 @@ export function installDevMock() {
     },
     unregisterCallback: (id: number) => callbacks.delete(id),
     // Every sample clip plays the same generated test video (public/preview-sample.mkv:
-    // AV1 1080p60 with a keyframe every second, like Rewind's own clips).
+    // AV1 1080p60 with a keyframe every second, like Hindsight's own clips).
     convertFileSrc: (p: string) =>
       p.endsWith("mic.m4a") ? "/preview-mic.m4a" : p.startsWith("C:\\Users\\you\\") ? "/preview-sample.mkv" : p,
     invoke: async (cmd: string, args: Record<string, unknown> = {}) => {
@@ -151,7 +229,7 @@ export function installDevMock() {
     },
   };
   w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
-  console.info("[preview] Rewind UI running with fake sample clips");
+  console.info("[preview] Hindsight UI running with fake sample clips");
 }
 
 // A believable 3-round result so the Performance page can be laid out in preview.
@@ -191,14 +269,14 @@ function sampleBenchReport() {
       { app: "medal", runs: 2, fpsCost: st(1.7, 0.3, 2), low1Cost: st(2.2, 0.9, 2), gpuMsAdded: st(0.06, 0.02, 2), cpuPercent: st(1.9, 0.2, 2), gpu3dPercent: st(2.0, 0.3, 2), encoderPercent: st(11.0, 0.4, 2), ramMb: st(540, 12, 2), verdict: "noMeasurableCost" },
     ],
     settings: [
-      { app: "rewind", width: 1920, height: 1080, fps: 60, codec: "AV1 (NVENC)", quality: "CQ 24", bufferSecs: 120, source: "Rewind settings" },
+      { app: "rewind", width: 1920, height: 1080, fps: 60, codec: "AV1 (NVENC)", quality: "CQ 24", bufferSecs: 120, source: "Hindsight settings" },
       { app: "obs", width: 1920, height: 1080, fps: 60, codec: "AV1 (NVENC)", quality: "CQP 16", bufferSecs: 180, source: 'OBS profile "Untitled"' },
-      { app: "nvidia", width: 1920, height: 1080, fps: 60, codec: null, quality: null, bufferSecs: 180, source: "NVIDIA Instant Replay settings (codec and bitrate aren't stored where Rewind can read them)" },
-      { app: "medal", width: null, height: null, fps: null, codec: "HEVC", quality: "7Mbps", bufferSecs: null, source: "Medal settings (resolution, FPS and clip length aren't stored where Rewind can read them)" },
+      { app: "nvidia", width: 1920, height: 1080, fps: 60, codec: null, quality: null, bufferSecs: 180, source: "NVIDIA Instant Replay settings (codec and bitrate aren't stored where Hindsight can read them)" },
+      { app: "medal", width: null, height: null, fps: null, codec: "HEVC", quality: "7Mbps", bufferSecs: null, source: "Medal settings (resolution, FPS and clip length aren't stored where Hindsight can read them)" },
     ],
     skipped: [],
     warnings: [
-      "Rewind couldn't read Medal's resolution and frame rate. Check they match Rewind's (1920×1080 at 60 fps).",
+      "Hindsight couldn't read Medal's resolution and frame rate. Check they match Hindsight's (1920×1080 at 60 fps).",
       "1 of 25 runs failed a check and were left out (see All runs).",
     ],
     error: null,

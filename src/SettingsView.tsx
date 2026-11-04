@@ -1,9 +1,10 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useCallback, useEffect, useState } from "react";
-import { Accent, api, bufferEstimateMb, errText, Monitor, Settings, Theme } from "./api";
+import { Accent, api, bufferEstimateMb, errText, fmtDb, Monitor, Settings, Theme } from "./api";
 import { ConfirmDialog } from "./ConfirmUpdate";
 import { LibrarySettings } from "./LibrarySettings";
+import { SharingSettings } from "./Share";
 import { Slider } from "./Slider";
 import { useUpdate } from "./hooks";
 
@@ -29,7 +30,6 @@ const THEMES: { id: Theme; label: string; c: [string, string, string] }[] = [
   { id: "midnight", label: "Midnight", c: ["#0e1014", "#1d222b", "#2b323d"] },
   { id: "graphite", label: "Graphite", c: ["#121212", "#252525", "#343434"] },
   { id: "oled", label: "OLED black", c: ["#000000", "#171717", "#262626"] },
-  { id: "light", label: "Light", c: ["#f3f4f7", "#ffffff", "#d3d8e0"] },
 ];
 
 const ACCENTS: { id: Accent; label: string; c: string }[] = [
@@ -77,6 +77,27 @@ function HotkeyInput({ value, label, onPick }: { value: string; label: string; o
   );
 }
 
+/** What each "Which monitor" choice does when screens change (checked every second). */
+const MONITOR_MODE_HINT: Record<Settings["monitorMode"], string> = {
+  primary:
+    "Records whichever screen Windows calls the main display. After Win+P, or plugging a screen in or out, it moves to the new main display within about a second.",
+  cursor: "Records the screen your mouse is on, switching within about a second when you move to another screen.",
+  fixed:
+    "Stays on the screen you pick below, whatever Win+P does. If that screen is unplugged it records the main display until it's back.",
+};
+
+const TABS = [
+  ["general", "General"],
+  ["appearance", "Appearance"],
+  ["recording", "Recording"],
+  ["audio", "Audio"],
+  ["library", "Library"],
+  ["sharing", "Sharing"],
+  ["integrations", "Stream Deck"],
+  ["advanced", "Advanced"],
+] as const;
+type TabId = (typeof TABS)[number][0];
+
 export function SettingsView({
   settings,
   update,
@@ -94,6 +115,22 @@ export function SettingsView({
   const [mics, setMics] = useState<string[]>([]);
   const upd = useUpdate();
   const [checking, setChecking] = useState(false);
+  const [tab, setTab] = useState<TabId>(() => {
+    try {
+      const t = localStorage.getItem("rewind.settingsTab") as TabId | null;
+      return t && TABS.some(([id]) => id === t) ? t : "general";
+    } catch {
+      return "general";
+    }
+  });
+  const pickTab = (t: TabId) => {
+    setTab(t);
+    try {
+      localStorage.setItem("rewind.settingsTab", t);
+    } catch {
+      /* private mode: just don't remember */
+    }
+  };
   const [askRamOff, setAskRamOff] = useState(false);
   const keepRam = useCallback(() => setAskRamOff(false), []);
   const checkNow = async () => {
@@ -113,7 +150,7 @@ export function SettingsView({
       case "downloading":
         return `Downloading ${upd.version}…`;
       case "ready":
-        return `Version ${upd.version} is downloaded. It installs when Rewind restarts.`;
+        return `Version ${upd.version} is downloaded. It installs when Hindsight restarts.`;
       case "available":
         return `Version ${upd.version} is available.`;
       case "up-to-date":
@@ -151,8 +188,28 @@ export function SettingsView({
   return (
     <div className="page">
       <h1>Settings</h1>
-      <div className="settings-grid">
-        <section className="group">
+      <div className="tabs" role="tablist" aria-label="Settings sections">
+        {TABS.map(([id, label]) => (
+          <button key={id} role="tab" aria-selected={tab === id} className={`tab ${tab === id ? "on" : ""}`} onClick={() => pickTab(id)}>
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="settings-grid" key={tab}>
+        <section className="group" hidden={tab !== "advanced"}>
+          <h2>Advanced</h2>
+          <label className="setting">
+            <span>
+              Benchmark mode
+              <small>
+                Shows the Performance page, which measures how much FPS Hindsight, OBS, NVIDIA Instant Replay and Medal cost
+                your game.
+              </small>
+            </span>
+            <Toggle label="Benchmark mode" checked={s.benchmarkMode} onChange={(v) => set({ benchmarkMode: v })} />
+          </label>
+        </section>
+        <section className="group" hidden={tab !== "appearance"}>
           <h2>Appearance</h2>
           <div className="themes" role="radiogroup" aria-label="Theme">
             {THEMES.map((t) => (
@@ -203,7 +260,7 @@ export function SettingsView({
           </label>
         </section>
 
-        <section className="group">
+        <section className="group" hidden={tab !== "general"}>
           <h2>General</h2>
           <label className="setting">
             <span>Launch with Windows</span>
@@ -234,12 +291,12 @@ export function SettingsView({
           <HotkeyInput label="Start / stop recording hotkey" value={s.recordHotkey} onPick={(hk) => set({ recordHotkey: hk })} />
         </section>
 
-        <section className="group">
+        <section className="group" hidden={tab !== "general"}>
           <h2>Updates</h2>
           <div className="setting">
             <span>
               <span className="version-line">
-                Rewind <strong className="mono">{upd?.current ?? "…"}</strong>
+                Hindsight <strong className="mono">{upd?.current ?? "…"}</strong>
               </span>
               <small>{updateLine}</small>
             </span>
@@ -263,7 +320,7 @@ export function SettingsView({
             <span>
               Update automatically
               <small>
-                Downloads in the background and installs when Rewind closes. Never restarts on its own during a recording
+                Downloads in the background and installs when Hindsight closes. Never restarts on its own during a recording
                 or while a game is open.
               </small>
             </span>
@@ -271,7 +328,7 @@ export function SettingsView({
           </label>
         </section>
 
-        <section className="group">
+        <section className="group" hidden={tab !== "recording"}>
           <h2>Recording</h2>
           <label className="setting">
             <span>
@@ -364,7 +421,7 @@ export function SettingsView({
             >
               <ul className="modal-list wrap">
                 <li>
-                  Rewind would write about {bufferEstimateMb(s)} MB to disk over and over the whole time it runs, which
+                  Hindsight would write about {bufferEstimateMb(s)} MB to disk over and over the whole time it runs, which
                   wears out your SSD over the years.
                 </li>
                 <li>The capture restarts, so what's in the replay buffer now is cleared.</li>
@@ -392,17 +449,17 @@ export function SettingsView({
           </label>
         </section>
 
-        <section className="group">
+        <section className="group" hidden={tab !== "integrations"}>
           <h2>Stream Deck &amp; other tools</h2>
           <div className="setting">
             <span>
-              Rewind plugin for Stream Deck
+              Hindsight plugin for Stream Deck
               <small>Buttons for Save clip, Record (lights up red), Replay buffer and Quality.</small>
             </span>
             <button
               className="btn small"
               onClick={() =>
-                openUrl("https://github.com/aattiaibrahim/Rewind/releases/latest/download/Rewind.streamDeckPlugin").catch((e) =>
+                openUrl("https://github.com/aattiaibrahim/Rewind/releases/latest/download/Hindsight.streamDeckPlugin").catch((e) =>
                   onError(errText(e)),
                 )
               }
@@ -421,7 +478,7 @@ export function SettingsView({
           </div>
         </section>
 
-        <section className="group">
+        <section className="group" hidden={tab !== "audio"}>
           <h2>Audio</h2>
           <label className="setting">
             <span>
@@ -430,6 +487,19 @@ export function SettingsView({
             </span>
             <Toggle label="Desktop audio" checked={s.desktopAudio} onChange={(v) => set({ desktopAudio: v })} />
           </label>
+          {s.desktopAudio && (
+            <label className="setting">
+              <span>
+                Discord on its own track
+                <small>
+                  Discord voice and sounds go to a separate track (track 3) and are left out of desktop audio, so in the
+                  editor you can mute your friends and keep the game, or the other way round. Exports and shares still mix
+                  everything together.
+                </small>
+              </span>
+              <Toggle label="Discord on its own track" checked={s.discordTrack} onChange={(v) => set({ discordTrack: v })} />
+            </label>
+          )}
           <label className="setting">
             <span>
               Microphone
@@ -457,6 +527,34 @@ export function SettingsView({
                 </span>
                 <Toggle label="Mono microphone" checked={s.micMono} onChange={(v) => set({ micMono: v })} />
               </label>
+              <label className="setting">
+                <span>
+                  Mic volume
+                  <small>
+                    Louder or quieter than Windows gives it, for new clips and recordings. Changes apply straight away. You can
+                    still adjust each clip in the editor.
+                  </small>
+                </span>
+                <span className="row" style={{ gap: 10 }}>
+                  <Slider
+                    aria-label="Mic volume"
+                    min={-20}
+                    max={20}
+                    step={0.5}
+                    value={s.micGainDb}
+                    onValue={(v) => set({ micGainDb: v })}
+                    style={{ width: 160 }}
+                  />
+                  <span className="muted" style={{ fontSize: 12, minWidth: 54, textAlign: "right" }}>
+                    {fmtDb(s.micGainDb)}
+                  </span>
+                  {s.micGainDb !== 0 && (
+                    <button className="btn small" onClick={() => set({ micGainDb: 0 })}>
+                      Reset
+                    </button>
+                  )}
+                </span>
+              </label>
             </>
           )}
           <span className="muted" style={{ fontSize: 11, paddingTop: 8, lineHeight: 1.5 }}>
@@ -464,7 +562,7 @@ export function SettingsView({
           </span>
         </section>
 
-        <section className="group">
+        <section className="group" hidden={tab !== "recording"}>
           <h2>Display &amp; capture</h2>
           <label className="setting">
             <span>
@@ -487,14 +585,14 @@ export function SettingsView({
           <label className="setting">
             <span>
               Which monitor
-              <small>Re-picked automatically after Win+P or plugging in a screen</small>
+              <small>{MONITOR_MODE_HINT[s.monitorMode]}</small>
             </span>
             <select
               className="select"
               value={s.monitorMode}
               onChange={(e) => set({ monitorMode: e.target.value as Settings["monitorMode"] })}
             >
-              <option value="primary">Follow primary</option>
+              <option value="primary">Follow main display (Win+P safe)</option>
               <option value="cursor">Follow my cursor</option>
               <option value="fixed">Always one monitor</option>
             </select>
@@ -531,7 +629,7 @@ export function SettingsView({
           </div>
         </section>
 
-        <section className="group">
+        <section className="group" hidden={tab !== "library"}>
           <h2>Files</h2>
           <div className="setting">
             <span>
@@ -600,7 +698,8 @@ export function SettingsView({
           </div>
         </section>
 
-        <LibrarySettings s={s} set={set} Toggle={Toggle} />
+        <LibrarySettings s={s} set={set} Toggle={Toggle} hidden={tab !== "library"} />
+        <SharingSettings s={s} set={set} Toggle={Toggle} hidden={tab !== "sharing"} onError={onError} />
       </div>
     </div>
   );

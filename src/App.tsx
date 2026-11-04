@@ -1,5 +1,9 @@
 import { listen } from "@tauri-apps/api/event";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { ShareConfirm, ShareRequest, useUploads } from "./Share";
+import { useHealth } from "./Health";
+import type { UploadProgress } from "./api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import { api, errText } from "./api";
 import { BufferCard } from "./BufferCard";
@@ -12,7 +16,7 @@ import logo from "./logo.svg";
 import { SettingsView } from "./SettingsView";
 import { Studio } from "./Studio";
 
-type View = "clips" | "studio" | "performance" | "settings";
+type View = "clips" | "damaged" | "studio" | "performance" | "settings";
 type ToastAction = { label: string; run: () => void };
 type Toast = { id: number; text: string; sub?: string; err?: boolean; action?: ToastAction };
 type PendingDelete = { paths: string[]; resolve: (deleted: boolean) => void };
@@ -26,6 +30,9 @@ export default function App() {
   const [settings, update] = useSettings();
   useAppearance(settings);
   const [clips, refresh] = useClips();
+  const uploads = useUploads();
+  const health = useHealth(clips);
+  const [shareReq, setShareReq] = useState<ShareRequest | null>(null);
   const upd = useUpdate();
   const [installing, setInstalling] = useState(false);
   const [dismissed, setDismissed] = useState<string | null>(null);
@@ -38,6 +45,14 @@ export default function App() {
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), err || action ? 8000 : 4500);
   }, []);
   const dropToast = (id: number) => setToasts((t) => t.filter((x) => x.id !== id));
+  // Share: ask first (unless turned off in Settings → Sharing), then upload.
+  const requestShare = useCallback(
+    (r: ShareRequest) => {
+      if (settings && !settings.confirmUploads) api.uploadClip(r.path, r.host).catch((e) => toast(errText(e), true));
+      else setShareReq(r);
+    },
+    [settings, toast],
+  );
 
   const showBanner =
     upd && (upd.stage === "ready" || upd.stage === "available") && upd.version && dismissed !== upd.version;
@@ -121,29 +136,106 @@ export default function App() {
     const b = listen<string>("clip-error", (e) => toast(e.payload, true));
     const c = listen<string>("open-in-studio", (e) => openInStudio(e.payload));
     const d = listen<View>("show-view", (e) => setView(e.payload));
+    // Uploads (also automatic ones): say when the link is ready, or why it failed.
+    const u = listen<UploadProgress>("upload-progress", (e) => {
+      const p = e.payload;
+      const name = p.path.split("\\").pop();
+      if (p.stage === "done" && p.url) {
+        const url = p.url;
+        toast(p.warning ? "Link copied, but it won't open on this network" : "Link copied", !!p.warning, p.warning ?? `${name} · ${url.replace(/^https?:\/\//, "").split("?")[0]}`, {
+          label: "Open",
+          run: () => openUrl(url).catch(() => {}),
+        });
+      } else if (p.stage === "error") {
+        toast(p.error ?? "Upload failed", true, name);
+      }
+    });
     return () => {
-      [a, b, c, d].forEach((p) => p.then((f) => f()));
+      [a, b, c, d, u].forEach((p) => p.then((f) => f()));
     };
   }, [toast, openInStudio]);
 
+  // Studio has no tab of its own: it opens when you click a clip. Performance
+  // only shows in Benchmark mode (Settings → Advanced).
+  // Damaged clips (found by the background health check), for their own section.
+  const damagedClips = useMemo(
+    () => (clips ? clips.filter((c) => health[c.path] && health[c.path].state !== "ok") : null),
+    [clips, health],
+  );
+  // Which list Studio goes back to.
+  const [listView, setListView] = useState<"clips" | "damaged">("clips");
+  useEffect(() => {
+    if (view === "clips" || view === "damaged") setListView(view);
+  }, [view]);
   const nav: [View, string][] = [
     ["clips", "Clips"],
-    ["studio", "Studio"],
-    ["performance", "Performance"],
+    ["damaged", "Damaged"],
+    ...(settings?.benchmarkMode ? ([["performance", "Performance"]] as [View, string][]) : []),
     ["settings", "Settings"],
   ];
+  const navOn = (id: View) => view === id || (id === listView && view === "studio");
+  const backToClips = useCallback(() => setView(listView), [listView]);
+  // Mouse back / forward (buttons 4 and 5) and Alt+← / Alt+→, like a browser:
+  // back = Studio → your clips, and on the clips → the top;
+  // forward = from the clips, reopen the clip you just left.
+  useEffect(() => {
+    const back = () => {
+      if (document.querySelector(".modal-backdrop")) return;
+      if (view === "studio") setView(listView);
+      else if (view === "clips" || view === "damaged") window.dispatchEvent(new Event("rewind-top"));
+      else setView("clips");
+    };
+    const forward = () => {
+      if (document.querySelector(".modal-backdrop")) return;
+      if ((view === "clips" || view === "damaged") && studioPath) setView("studio");
+    };
+    const onMouse = (e: MouseEvent) => {
+      if (e.button === 3 || e.button === 4) {
+        e.preventDefault();
+        if (e.button === 3) back();
+        else forward();
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+        e.preventDefault();
+        if (e.key === "ArrowLeft") back();
+        else forward();
+      }
+    };
+    window.addEventListener("mouseup", onMouse);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mouseup", onMouse);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [view, studioPath, listView]);
+  // Turning Benchmark mode off while on its page, or the open clip going away
+  // (deleted): go back to the clips.
+  useEffect(() => {
+    if ((view === "performance" && settings && !settings.benchmarkMode) || (view === "studio" && !studioPath)) setView("clips");
+  }, [view, settings, studioPath]);
 
   return (
     <div className="shell">
       <nav className="nav">
         <div className="brand">
           <img src={logo} alt="" width={26} height={26} />
-          REWIND
+          HINDSIGHT
           {upd?.current && <span className="brand-version">v{upd.current}</span>}
         </div>
         {nav.map(([id, label]) => (
-          <button key={id} className={`nav-item ${view === id ? "on" : ""}`} onClick={() => setView(id)}>
+          <button
+            key={id}
+            className={`nav-item ${navOn(id) ? "on" : ""}`}
+            onClick={() => (id === view && (id === "clips" || id === "damaged") ? window.dispatchEvent(new Event("rewind-top")) : setView(id))}
+          >
             {label}
+            {id === "damaged" && !!damagedClips?.length && (
+              <span className="nav-badge" title={`${damagedClips.length} damaged clip${damagedClips.length === 1 ? "" : "s"}`}>
+                {damagedClips.length}
+              </span>
+            )}
           </button>
         ))}
         <div className="nav-spacer" />
@@ -153,13 +245,13 @@ export default function App() {
         {showBanner && (
           <div className="update-banner" role="status">
             <span>
-              <strong>Rewind {upd!.version}</strong>{" "}
+              <strong>Hindsight {upd!.version}</strong>{" "}
               {upd!.stage === "ready" ? "is downloaded and ready." : "is available."}{" "}
               {status?.recording ? (
                 <span className="muted">Restarting stops and saves your recording.</span>
               ) : (
                 upd!.stage === "ready" && (
-                  <span className="muted">It also installs by itself the next time Rewind closes.</span>
+                  <span className="muted">It also installs by itself the next time Hindsight closes.</span>
                 )
               )}
             </span>
@@ -181,6 +273,27 @@ export default function App() {
             onChanged={refresh}
             onDelete={requestDelete}
             hotkey={settings?.hotkey ?? "Alt+F10"}
+            uploads={uploads.progress}
+            links={uploads.history}
+            focusPath={studioPath}
+            onShare={requestShare}
+            health={health}
+          />
+        )}
+        {view === "damaged" && (
+          <Library
+            clips={damagedClips}
+            mode="damaged"
+            onOpen={openInStudio}
+            onToast={(t, e) => toast(t, e)}
+            onChanged={refresh}
+            onDelete={requestDelete}
+            hotkey={settings?.hotkey ?? "Alt+F10"}
+            uploads={uploads.progress}
+            links={uploads.history}
+            focusPath={studioPath}
+            onShare={requestShare}
+            health={health}
           />
         )}
         {view === "studio" && (
@@ -192,6 +305,16 @@ export default function App() {
             onDelete={requestDelete}
             settings={settings}
             update={update}
+            onBack={backToClips}
+            uploads={uploads.progress}
+            links={uploads.history}
+            onShare={requestShare}
+            health={health[studioPath ?? ""]}
+            onRescued={(p) => {
+              refresh();
+              openInStudio(p);
+              toast("Rescued the good part", false, p.split("\\").pop());
+            }}
           />
         )}
         {view === "performance" && <Performance />}
@@ -205,10 +328,27 @@ export default function App() {
           />
         )}
       </main>
+      {shareReq && settings && (
+        <ShareConfirm
+          req={shareReq}
+          settings={settings}
+          update={update}
+          onClose={() => setShareReq(null)}
+          onOpenSettings={() => {
+            try {
+              localStorage.setItem("rewind.settingsTab", "sharing");
+            } catch {
+              /* only a convenience */
+            }
+            setView("settings");
+          }}
+          onError={(m) => toast(m, true)}
+        />
+      )}
       {askUpdate && upd?.version && (
         <ConfirmUpdate
           version={upd.version}
-          reasons={interrupts.length ? interrupts : ["Rewind closes and reopens on the new version."]}
+          reasons={interrupts.length ? interrupts : ["Hindsight closes and reopens on the new version."]}
           busy={installing}
           onConfirm={installNow}
           onCancel={closeAskUpdate}

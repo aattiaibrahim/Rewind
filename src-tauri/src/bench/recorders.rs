@@ -32,7 +32,7 @@ impl RecorderSettings {
     }
 }
 
-/// Rewind's own: its settings plus the size it's capturing at.
+/// Hindsight's own: its settings plus the size it's capturing at.
 pub fn rewind(s: &crate::settings::Settings, screen: (i32, i32)) -> RecorderSettings {
     let (sw, sh) = (screen.0.max(0) as u32, screen.1.max(0) as u32);
     let (width, height) = if s.output_height == 0 || sh == 0 {
@@ -53,7 +53,7 @@ pub fn rewind(s: &crate::settings::Settings, screen: (i32, i32)) -> RecorderSett
         }),
         quality: Some(format!("CQ {}", s.quality)),
         buffer_secs: Some(s.buffer_seconds),
-        source: "Rewind settings".into(),
+        source: "Hindsight settings".into(),
     }
 }
 
@@ -183,10 +183,15 @@ fn reg_bytes(path: &str, name: &str) -> Option<Vec<u8>> {
     }
 }
 
+/// A 4-byte little-endian registry value (REG_BINARY or REG_DWORD).
+pub(crate) fn reg_u32(path: &str, name: &str) -> Option<u32> {
+    reg_bytes(path, name).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+}
+
 /// NVIDIA keeps Instant Replay's settings as little-endian binary values.
 pub fn nvidia() -> RecorderSettings {
     const KEY: &str = r"Software\NVIDIA Corporation\Global\ShadowPlay\NVSPCAPS";
-    let mut r = RecorderSettings::empty(App::Nvidia, "NVIDIA Instant Replay settings (codec and bitrate aren't stored where Rewind can read them)");
+    let mut r = RecorderSettings::empty(App::Nvidia, "NVIDIA Instant Replay settings (codec and bitrate aren't stored where Hindsight can read them)");
     let u32_of = |name| reg_bytes(KEY, name).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
     r.width = u32_of("VideoWidth").filter(|v| *v > 0);
     r.height = u32_of("VideoHeight").filter(|v| *v > 0);
@@ -217,11 +222,11 @@ pub fn medal() -> RecorderSettings {
         other => other.to_string(),
     });
     r.quality = find_key(&j, "quality").and_then(|q| q.get("bitrate")).and_then(|v| v.as_str()).map(|b| format!("{b}bps"));
-    r.source = "Medal settings (resolution, FPS and clip length aren't stored where Rewind can read them)".into();
+    r.source = "Medal settings (resolution, FPS and clip length aren't stored where Hindsight can read them)".into();
     r
 }
 
-/// Where another recorder saves its clips, for showing them in Rewind's library.
+/// Where another recorder saves its clips, for showing them in Hindsight's library.
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ClipFolder {
@@ -288,7 +293,7 @@ pub fn read(app: App) -> RecorderSettings {
     }
 }
 
-/// Warn where a recorder captures at a different size or frame rate than Rewind.
+/// Warn where a recorder captures at a different size or frame rate than Hindsight.
 pub fn mismatches(all: &[RecorderSettings]) -> Vec<String> {
     let mut w = Vec::new();
     let Some(ours) = all.iter().find(|s| s.app == App::Rewind) else { return w };
@@ -306,18 +311,18 @@ pub fn mismatches(all: &[RecorderSettings]) -> Vec<String> {
             }
         }
         if !diffs.is_empty() {
-            w.push(format!("{name} records at {} — not the same work as Rewind, so the comparison isn't like for like. Match the settings and run again.", diffs.join(" and ")));
+            w.push(format!("{name} records at {} — not the same work as Hindsight, so the comparison isn't like for like. Match the settings and run again.", diffs.join(" and ")));
         }
         if let (Some(a), Some(b)) = (s.buffer_secs, ours.buffer_secs) {
             if a != b {
-                w.push(format!("{name} keeps a {a} s buffer and Rewind {b} s, so their RAM numbers aren't comparable (a buffer in RAM grows with its length)."));
+                w.push(format!("{name} keeps a {a} s buffer and Hindsight {b} s, so their RAM numbers aren't comparable (a buffer in RAM grows with its length)."));
             }
         }
         if s.codec.as_deref().is_some_and(|c| c.contains("CPU")) {
             w.push(format!("{name} encodes on the CPU (x264), not the GPU's encoder, so its cost is mostly CPU."));
         }
         if s.width.is_none() && s.fps.is_none() {
-            w.push(format!("Rewind couldn't read {name}'s resolution and frame rate. Check they match Rewind's ({}×{} at {} fps).",
+            w.push(format!("Hindsight couldn't read {name}'s resolution and frame rate. Check they match Hindsight's ({}×{} at {} fps).",
                 ours.width.unwrap_or(0), ours.height.unwrap_or(0), ours.fps.unwrap_or(0.0)));
         }
     }

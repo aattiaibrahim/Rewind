@@ -1,6 +1,7 @@
 //! Clip library: listing files, probing, thumbnails, and per-file tools
 //! (remux, trim, export, compress). Originals are never modified.
 
+use crate::audio_edit::AudioEdit;
 use crate::ffmpeg;
 use serde::Serialize;
 use serde_json::Value;
@@ -26,7 +27,7 @@ pub struct ClipFile {
     pub location: &'static str,
     /// A local clip that's also safely on the NAS
     pub on_nas: bool,
-    /// Where it came from, for a badge: "" (Rewind), "NAS", "Medal", "OBS", "NVIDIA" or a folder name
+    /// Where it came from, for a badge: "" (Hindsight), "NAS", "Medal", "OBS", "NVIDIA" or a folder name
     pub source: String,
 }
 
@@ -366,11 +367,11 @@ pub fn remux_mp4(path: &str, keep_original: bool) -> Result<String, String> {
 /// Fast = cut on keyframes, no re-encode. Exact = frame-accurate, re-encoded on NVENC.
 /// Trim to [start, end] seconds. `exact` is frame-accurate: a "smart cut"
 /// that re-encodes only the frames before the first keyframe in the range
-/// (under a second for Rewind's clips) and copies everything after it
+/// (under a second for Hindsight's clips) and copies everything after it
 /// untouched, so it's nearly as fast as a plain copy and keeps full quality.
 /// If the file isn't suited to that, or any check fails, the whole range is
 /// re-encoded instead. Without `exact`, the cut snaps to a keyframe.
-pub fn trim(path: &str, start: f64, end: f64, exact: bool) -> Result<String, String> {
+pub fn trim(path: &str, start: f64, end: f64, exact: bool, audio: &AudioEdit) -> Result<String, String> {
     if end <= start {
         return Err("The end point has to be after the start point.".into());
     }
@@ -381,7 +382,7 @@ pub fn trim(path: &str, start: f64, end: f64, exact: bool) -> Result<String, Str
     };
     let out = unique(src, " (trim)", &ext);
     if exact {
-        match smart_trim(path, start, end, &out) {
+        match smart_trim(path, start, end, &out, audio) {
             Ok(()) => return Ok(out.to_string_lossy().into_owned()),
             Err(e) => {
                 eprintln!("[rewind] smart trim not used ({e}); re-encoding the whole range");
@@ -392,7 +393,22 @@ pub fn trim(path: &str, start: f64, end: f64, exact: bool) -> Result<String, Str
     let (ss, to) = (format!("{start:.3}"), format!("{end:.3}"));
     let mut args = ffmpeg::args(&["-hide_banner", "-loglevel", "error", "-ss", &ss, "-to", &to, "-i"]);
     args.push(path.into());
-    args.extend(ffmpeg::args(&["-map", "0:v:0", "-map", "0:a?"]));
+    // Changed audio has to be re-encoded, so a keyframe cut becomes an exact one.
+    let exact = exact || !audio.is_empty();
+    args.extend(ffmpeg::args(&["-map", "0:v:0"]));
+    if audio.is_empty() {
+        args.extend(ffmpeg::args(&["-map", "0:a?"]));
+    } else {
+        // The input starts at the cut (-ss before -i), so mute times shift by `start`.
+        let n = probe(path).map(|p| p.audio_tracks).unwrap_or(0) as usize;
+        let graph: Vec<String> = (0..n).map(|i| format!("{}anull[a{i}]", audio.chain(i, start))).collect();
+        if n > 0 {
+            args.extend(ffmpeg::args(&["-filter_complex", &graph.join(";")]));
+        }
+        for i in 0..n {
+            args.extend(ffmpeg::args(&["-map", &format!("[a{i}]"), &format!("-map_metadata:s:a:{i}"), &format!("0:s:a:{i}")]));
+        }
+    }
     if exact {
         let p = probe(path).unwrap_or_default();
         let gop = (p.fps.round() as i64).max(1).to_string();
@@ -417,9 +433,55 @@ struct CutInfo {
     /// Raw bitstream format for this codec ("obu", "hevc", "h264").
     raw: &'static str,
     fps: f64,
-    /// Time of the first video frame (Rewind's clips start at one frame in).
+    /// Time of the first video frame (Hindsight's clips start at one frame in).
     first: f64,
     audio: usize,
+    /// Codec level as ffprobe reports it (AV1: seq_level_idx, 31 = none; H.264: 41 = 4.1; HEVC: 123 = 4.1)
+    level: i64,
+    profile: String,
+    /// What has to match between the re-encoded start and the copied rest
+    /// (otherwise strict players, like Windows' hardware AV1 decoder, refuse the file).
+    sig: String,
+}
+
+/// The stream properties a decoder sets itself up from.
+fn stream_sig(v: &Value) -> String {
+    let s = |k: &str| v[k].as_str().map(str::to_string).or_else(|| v[k].as_i64().map(|n| n.to_string())).unwrap_or_default();
+    ["profile", "level", "pix_fmt", "color_range", "color_space", "color_primaries", "color_transfer", "width", "height"]
+        .iter()
+        .map(|k| {
+            let mut val = s(k);
+            // Unmarked colour info means the default: limited ("tv") range, unspecified primaries.
+            if val == "unknown" || val == "unspecified" || val == "reserved" {
+                val.clear();
+            }
+            if *k == "color_range" && val.is_empty() {
+                val = "tv".into();
+            }
+            format!("{k}={val}")
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// NVENC options that make a re-encode match the source's profile and level.
+fn match_level_args(ci: &CutInfo) -> Vec<String> {
+    let mut a = Vec::new();
+    match ci.codec.as_str() {
+        // av1_nvenc's level numbers are seq_level_idx; 31 means "no level" = NVENC's auto.
+        "av1" if (0..24).contains(&ci.level) => a.extend(["-level".to_string(), ci.level.to_string()]),
+        "hevc" | "h264" if ci.level > 0 => a.extend(["-level".to_string(), ci.level.to_string()]),
+        _ => {}
+    }
+    if ci.codec == "h264" {
+        let p = match ci.profile.to_lowercase().as_str() {
+            "main" => "main",
+            p if p.contains("baseline") => "baseline",
+            _ => "high",
+        };
+        a.extend(["-profile:v".to_string(), p.to_string()]);
+    }
+    a
 }
 
 fn cut_info(path: &str) -> Result<CutInfo, String> {
@@ -446,13 +508,15 @@ fn cut_info(path: &str) -> Result<CutInfo, String> {
     };
     let (fps, avg) = (rate("r_frame_rate"), rate("avg_frame_rate"));
     // Raw streams get their timing back from a fixed frame rate, so only
-    // constant-frame-rate files qualify (all of Rewind's own clips are).
+    // constant-frame-rate files qualify (all of Hindsight's own clips are).
     if fps <= 0.0 || (avg - fps).abs() > fps * 0.002 {
         return Err(format!("variable frame rate ({fps:.3} vs {avg:.3})"));
     }
     let first = v["start_time"].as_str().and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
     let audio = streams.iter().filter(|s| s["codec_type"] == "audio").count();
-    Ok(CutInfo { codec, raw, fps, first, audio })
+    let level = v["level"].as_i64().unwrap_or(-99);
+    let profile = v["profile"].as_str().unwrap_or("").to_string();
+    Ok(CutInfo { codec, raw, fps, first, audio, level, profile, sig: stream_sig(v) })
 }
 
 /// Frame numbers (from the first frame) of the keyframes between `from` and `to` seconds.
@@ -471,7 +535,7 @@ fn keyframes(path: &str, ci: &CutInfo, from: f64, to: f64) -> Result<Vec<i64>, S
         .collect())
 }
 
-fn smart_trim(path: &str, start: f64, end: f64, out: &Path) -> Result<(), String> {
+fn smart_trim(path: &str, start: f64, end: f64, out: &Path, audio: &AudioEdit) -> Result<(), String> {
     let ci = cut_info(path)?;
     let fps = ci.fps;
     // Work in frame numbers so rounding can't add or drop a frame.
@@ -496,7 +560,8 @@ fn smart_trim(path: &str, start: f64, end: f64, out: &Path) -> Result<(), String
         let audio_job = (ci.audio > 0).then(|| {
             let mut graph = Vec::new();
             for i in 0..ci.audio {
-                graph.push(format!("[0:a:{i}]atrim=start={}:end={},asetpts=PTS-STARTPTS[a{i}]", at(i_start), at(i_end)));
+                // Volume and mutes first, on the original's timeline.
+                graph.push(format!("{}atrim=start={}:end={},asetpts=PTS-STARTPTS[a{i}]", audio.chain(i as usize, 0.0), at(i_start), at(i_end)));
             }
             let mut a = ffmpeg::args(&["-hide_banner", "-loglevel", "error", "-y", "-i"]);
             a.push(path.into());
@@ -518,10 +583,25 @@ fn smart_trim(path: &str, start: f64, end: f64, out: &Path) -> Result<(), String
             a.extend(ffmpeg::args(&["-map", "0:v:0", "-an", "-vf", &format!("trim=start={}:end={}", before(i_start), before(i_key))]));
             a.extend(ffmpeg::args(&[
                 "-c:v", nvenc_for(&ci.codec), "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", "16", "-b:v", "0", "-bf", "0", "-g", &gop,
-                "-pix_fmt", "yuv420p", "-f", ci.raw,
+                "-pix_fmt", "yuv420p",
             ]));
+            // Same level and profile as the original, so the stream doesn't change halfway.
+            a.extend(match_level_args(&ci).into_iter().map(OsString::from));
+            a.extend(ffmpeg::args(&["-f", ci.raw]));
             a.push(head.clone().into());
             ffmpeg::run("ffmpeg", &a)?;
+            // Joining two different-looking streams makes a file some players refuse
+            // (e.g. an OBS clip at AV1 level 4.1 with a start at "no level"):
+            // if anything still differs, re-encode the whole range instead.
+            if i_key < i_end {
+                let mut p = ffmpeg::args(&["-v", "error", "-f", ci.raw, "-print_format", "json", "-show_streams", "-i"]);
+                p.push(head.clone().into());
+                let j: Value = serde_json::from_str(&ffmpeg::run("ffprobe", &p)?).map_err(|e| e.to_string())?;
+                let got = j["streams"].get(0).map(stream_sig).unwrap_or_default();
+                if got != ci.sig {
+                    return Err(format!("the re-encoded start wouldn't match the rest ({got} vs {})", ci.sig));
+                }
+            }
         }
         // 2. From the keyframe on: copied untouched.
         let tail = dir.join("tail.raw");
@@ -579,15 +659,20 @@ fn smart_trim(path: &str, start: f64, end: f64, out: &Path) -> Result<(), String
 
 /// Map video plus one audio track: desktop + mic mixed when there are several,
 /// because most players and Discord only play the first track.
-fn map_mixed_audio(args: &mut Vec<OsString>, audio_tracks: u32) {
+fn map_mixed_audio(args: &mut Vec<OsString>, audio_tracks: u32, audio: &AudioEdit) {
     args.extend(ffmpeg::args(&["-map", "0:v:0"]));
     match audio_tracks {
         0 => {}
-        1 => args.extend(ffmpeg::args(&["-map", "0:a:0"])),
-        n => {
-            let inputs: String = (0..n).map(|i| format!("[0:a:{i}]")).collect();
-            let graph = format!("{inputs}amix=inputs={n}:duration=longest:normalize=0[mix]");
+        1 if audio.is_empty() => args.extend(ffmpeg::args(&["-map", "0:a:0"])),
+        1 => {
+            let graph = format!("{}anull[mix]", audio.chain(0, 0.0));
             args.extend(ffmpeg::args(&["-filter_complex", &graph, "-map", "[mix]"]));
+        }
+        n => {
+            let mut parts: Vec<String> = (0..n as usize).map(|i| format!("{}anull[t{i}]", audio.chain(i, 0.0))).collect();
+            let inputs: String = (0..n).map(|i| format!("[t{i}]")).collect();
+            parts.push(format!("{inputs}amix=inputs={n}:duration=longest:normalize=0[mix]"));
+            args.extend(ffmpeg::args(&["-filter_complex", &parts.join(";"), "-map", "[mix]"]));
         }
     }
 }
@@ -647,7 +732,7 @@ fn deletable(path: &Path, clips_dir: &Path, external: &[String], linked: &[Strin
     }
     let inside = within(clips_dir) || linked.iter().any(|l| within(Path::new(l)));
     let listed = external.iter().any(|e| Path::new(e) == path);
-    if inside || listed { Ok(()) } else { Err("Not part of your Rewind library".into()) }
+    if inside || listed { Ok(()) } else { Err("Not part of your Hindsight library".into()) }
 }
 
 /// Move clips to the Recycle Bin (one batch, so Windows can restore them together).
@@ -728,12 +813,15 @@ pub fn replace_original(original: &str, edited: &str, expected_secs: Option<f64>
 }
 
 /// An H.264 + AAC MP4 that plays everywhere (audio tracks mixed into one).
-pub fn export_h264(path: &str) -> Result<String, String> {
+pub fn export_h264(path: &str, audio: &AudioEdit) -> Result<String, String> {
+    export_h264_into(path, unique(Path::new(path), " (H.264)", "mp4"), audio)
+}
+
+pub fn export_h264_into(path: &str, out: PathBuf, audio: &AudioEdit) -> Result<String, String> {
     let info = probe(path)?;
-    let out = unique(Path::new(path), " (H.264)", "mp4");
     let mut args = ffmpeg::args(&["-hide_banner", "-loglevel", "error", "-i"]);
     args.push(path.into());
-    map_mixed_audio(&mut args, info.audio_tracks);
+    map_mixed_audio(&mut args, info.audio_tracks, audio);
     args.extend(ffmpeg::args(&[
         "-c:v", "h264_nvenc", "-preset", "p5", "-cq", "21", "-b:v", "0",
         "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
@@ -742,8 +830,49 @@ pub fn export_h264(path: &str) -> Result<String, String> {
     finish(args, out)
 }
 
+/// Just the sound of [start, end] as an MP3: every track mixed into one, or
+/// one track on its own (`track`). Audio edits (mutes, volume) are applied.
+/// `label` names the file, e.g. "Clip (Microphone).mp3".
+pub fn export_audio(path: &str, start: f64, end: f64, track: Option<usize>, label: &str, audio: &AudioEdit) -> Result<String, String> {
+    let info = probe(path)?;
+    let n = info.audio_tracks as usize;
+    if n == 0 {
+        return Err("This clip has no audio.".into());
+    }
+    if track.is_some_and(|i| i >= n) {
+        return Err("That audio track isn't in this clip.".into());
+    }
+    let start = start.max(0.0);
+    let end = if end > start + 0.05 { end } else { info.duration };
+    let label: String = label.chars().filter(|c| c.is_alphanumeric() || " -_&".contains(*c)).collect();
+    let label = label.trim();
+    let suffix = if label.is_empty() { " (audio)".to_string() } else { format!(" ({label})") };
+    let out = unique(Path::new(path), &suffix, "mp3");
+    let (ss, to) = (format!("{start:.3}"), format!("{end:.3}"));
+    let mut args = ffmpeg::args(&["-hide_banner", "-loglevel", "error", "-ss", &ss, "-to", &to, "-i"]);
+    args.push(path.into());
+    // The input starts at the cut (-ss before -i), so mute times shift by `start`.
+    let graph = match track {
+        Some(i) => format!("{}anull[out]", audio.chain(i, start)),
+        None if n == 1 => format!("{}anull[out]", audio.chain(0, start)),
+        None => {
+            let mut parts: Vec<String> = (0..n).map(|i| format!("{}anull[t{i}]", audio.chain(i, start))).collect();
+            let inputs: String = (0..n).map(|i| format!("[t{i}]")).collect();
+            parts.push(format!("{inputs}amix=inputs={n}:duration=longest:normalize=0[out]"));
+            parts.join(";")
+        }
+    };
+    args.extend(ffmpeg::args(&["-filter_complex", &graph, "-map", "[out]", "-vn", "-c:a", "libmp3lame", "-b:a", "256k"]));
+    args.push(out.clone().into());
+    finish(args, out)
+}
+
 /// Fit under `target_mb` (e.g. Discord's limit). Drops to 720p when the bitrate gets low.
-pub fn compress(path: &str, target_mb: u32) -> Result<String, String> {
+pub fn compress(path: &str, target_mb: u32, audio: &AudioEdit) -> Result<String, String> {
+    compress_into(path, target_mb, unique(Path::new(path), &format!(" ({target_mb} MB)"), "mp4"), audio)
+}
+
+pub fn compress_into(path: &str, target_mb: u32, out: PathBuf, audio: &AudioEdit) -> Result<String, String> {
     let info = probe(path)?;
     if info.duration <= 0.0 {
         return Err("Couldn't read the video length.".into());
@@ -751,11 +880,10 @@ pub fn compress(path: &str, target_mb: u32) -> Result<String, String> {
     let audio_kbps = if info.audio_tracks > 0 { 128.0 } else { 0.0 };
     let total_kbps = target_mb as f64 * 8.0 * 1024.0 * 0.93 / info.duration;
     let video_kbps = (total_kbps - audio_kbps).max(300.0).round() as u64;
-    let out = unique(Path::new(path), &format!(" ({target_mb} MB)"), "mp4");
     let (b, buf) = (format!("{video_kbps}k"), format!("{}k", video_kbps * 2));
     let mut args = ffmpeg::args(&["-hide_banner", "-loglevel", "error", "-i"]);
     args.push(path.into());
-    map_mixed_audio(&mut args, info.audio_tracks);
+    map_mixed_audio(&mut args, info.audio_tracks, audio);
     if video_kbps < 2500 && info.height > 720 {
         args.extend(ffmpeg::args(&["-vf", "scale=-2:720"]));
     }
@@ -771,8 +899,8 @@ pub fn compress(path: &str, target_mb: u32) -> Result<String, String> {
 mod tests {
     use super::*;
 
-    /// A 6 s 720p60 test video with two audio tracks (like a real Rewind clip).
-    /// A 6 s, 60 fps clip like Rewind's (keyframe every second, two audio
+    /// A 6 s 720p60 test video with two audio tracks (like a real Hindsight clip).
+    /// A 6 s, 60 fps clip like Hindsight's (keyframe every second, two audio
     /// tracks, video starting one frame in) in the given codec.
     fn rewind_like(dir: &Path, name: &str, vcodec: &str) -> String {
         crate::ffmpeg::init(None);
@@ -809,7 +937,7 @@ mod tests {
             // Start between keyframes (frame 76 of the clip), end mid-GOP.
             let (start, end) = (0.017 + 76.0 / 60.0 + 0.004, 0.017 + 280.0 / 60.0 + 0.004);
             let t = std::time::Instant::now();
-            let out = trim(&src, start, end, true).unwrap();
+            let out = trim(&src, start, end, true, &AudioEdit::default()).unwrap();
             let took = t.elapsed();
             let p = probe(&out).unwrap();
             let mut a = ffmpeg::args(&["-v", "error", "-count_packets", "-select_streams", "v:0", "-show_entries", "stream=nb_read_packets", "-of", "csv=p=0", "-i"]);
@@ -826,6 +954,62 @@ mod tests {
         let _ = fs::remove_dir_all(d);
     }
 
+    /// Every AV1 level the stream's sequence headers announce, start to end.
+    fn av1_levels(path: &str) -> std::collections::BTreeSet<String> {
+        let mut a = ffmpeg::args(&["-hide_banner", "-v", "trace", "-i"]);
+        a.push(path.into());
+        a.extend(ffmpeg::args(&["-map", "0:v:0", "-c", "copy", "-bsf:v", "trace_headers", "-f", "null", "-"]));
+        let out = crate::ffmpeg::cmd("ffmpeg").args(&a).output().unwrap();
+        String::from_utf8_lossy(&out.stderr)
+            .lines()
+            .filter(|l| l.contains("seq_level_idx[0]"))
+            .filter_map(|l| l.rsplit('=').next().map(|v| v.trim().to_string()))
+            .collect()
+    }
+
+    /// Clips from other recorders (OBS, NVIDIA) carry a real level, e.g. 4.1, and full-range colour.
+    /// The trimmed file must keep exactly that everywhere, and still copy the untouched frames.
+    #[test]
+    fn smart_trim_keeps_the_source_level_and_profile() {
+        let d = tmp("smart-level");
+        crate::ffmpeg::init(None);
+        fs::create_dir_all(&d).unwrap();
+        for (codec, name, extra) in [
+            ("av1_nvenc", "obs.mkv", vec!["-level", "9", "-color_range", "pc"]),
+            ("hevc_nvenc", "obs-h.mkv", vec!["-level", "123"]),
+            ("h264_nvenc", "obs-x.mkv", vec!["-level", "41", "-profile:v", "main"]),
+        ] {
+            let src = d.join(name);
+            let mut args = ffmpeg::args(&[
+                "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=60",
+                "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", "6", "-map", "0:v", "-map", "1:a",
+                "-c:v", codec, "-g", "250", "-bf", "0", "-pix_fmt", "yuv420p",
+            ]);
+            args.extend(ffmpeg::args(&extra));
+            args.extend(ffmpeg::args(&["-c:a", "aac"]));
+            args.push(src.clone().into());
+            ffmpeg::run("ffmpeg", &args).expect("make sample");
+            // Keyframes every 250 frames (like OBS): 0 and 4.17 s. Start mid-GOP.
+            let src_s = src.to_string_lossy().into_owned();
+            let out = trim(&src_s, 1.5, 5.8, true, &AudioEdit::default()).unwrap();
+            let sig = |p: &str| {
+                let mut a = ffmpeg::args(&["-v", "error", "-select_streams", "v:0", "-print_format", "json", "-show_streams", "-i"]);
+                a.push(p.into());
+                let j: Value = serde_json::from_str(&ffmpeg::run("ffprobe", &a).unwrap()).unwrap();
+                stream_sig(&j["streams"][0])
+            };
+            assert_eq!(sig(&out), sig(&src_s), "{codec}: same profile, level and colour as the source");
+            if codec == "av1_nvenc" {
+                let levels = av1_levels(&out);
+                assert_eq!(levels.into_iter().collect::<Vec<_>>(), vec!["9".to_string()], "one AV1 level all the way through");
+            }
+            // The keyframe at 250 is copied: identical to the source (smart path used, not a full re-encode).
+            let at = 250 - 90; // trim starts at frame 90 (1.5 s)
+            assert_eq!(frame_hashes(&out, at, 20), frame_hashes(&src_s, 250, 20), "{codec}: copied frames must be bit-identical");
+        }
+        let _ = fs::remove_dir_all(d);
+    }
+
     /// Smart-trims a real clip: REWIND_TRIM_CLIP=path, cuts 5.237 s to 10 s before the end.
     /// cargo test smart_trim_real_clip -- --ignored --nocapture
     #[test]
@@ -835,9 +1019,12 @@ mod tests {
         let Ok(src) = std::env::var("REWIND_TRIM_CLIP") else { return };
         let len = probe(&src).unwrap().duration;
         let t = std::time::Instant::now();
-        let out = trim(&src, 5.237, len - 10.0, true).unwrap();
+        let out = trim(&src, 5.237, len - 10.0, true, &AudioEdit::default()).unwrap();
         let p = probe(&out).unwrap();
         println!("trimmed {:.1} s of {:.1} s in {:?}: {:.3} s, {} MB, {} audio tracks", len - 15.237, len, t.elapsed(), p.duration, fs::metadata(&out).unwrap().len() / 1_000_000, p.audio_tracks);
+        if p.codec == "av1" {
+            println!("AV1 levels in the source: {:?}, in the trim: {:?}", av1_levels(&src), av1_levels(&out));
+        }
         let _ = fs::remove_file(out);
     }
 
@@ -893,14 +1080,14 @@ mod tests {
     fn trims_fast_and_exact_keep_both_audio_tracks() {
         let d = tmp("trim");
         let src = sample(&d, "a.mkv");
-        let fast = trim(&src, 1.0, 4.0, false).unwrap();
-        let exact = trim(&src, 1.5, 3.5, true).unwrap();
+        let fast = trim(&src, 1.0, 4.0, false, &AudioEdit::default()).unwrap();
+        let exact = trim(&src, 1.5, 3.5, true, &AudioEdit::default()).unwrap();
         let (f, e) = (probe(&fast).unwrap(), probe(&exact).unwrap());
         assert!((f.duration - 3.0).abs() < 2.1, "fast {}", f.duration); // keyframe-aligned
         assert!((e.duration - 2.0).abs() < 0.15, "exact {}", e.duration);
         assert_eq!((f.audio_tracks, e.audio_tracks), (2, 2));
         assert!(Path::new(&src).exists(), "original must be untouched");
-        assert!(trim(&src, 3.0, 2.0, true).is_err(), "end before start is refused");
+        assert!(trim(&src, 3.0, 2.0, true, &AudioEdit::default()).is_err(), "end before start is refused");
         let _ = fs::remove_dir_all(d);
     }
 
@@ -932,19 +1119,70 @@ mod tests {
     #[test]
     fn export_h264_mixes_audio_into_one_track() {
         let d = tmp("export");
-        let out = export_h264(&sample(&d, "a.mkv")).unwrap();
+        let out = export_h264(&sample(&d, "a.mkv"), &AudioEdit::default()).unwrap();
         let p = probe(&out).unwrap();
         assert_eq!((p.codec.as_str(), p.audio_tracks), ("h264", 1));
         let _ = fs::remove_dir_all(d);
     }
 
     #[test]
+    fn export_audio_is_an_mp3_of_the_range() {
+        let d = tmp("export-audio");
+        let src = sample(&d, "a.mkv");
+        let mixed = export_audio(&src, 0.5, 1.5, None, "", &AudioEdit::default()).unwrap();
+        assert!(mixed.ends_with("a (audio).mp3"), "{mixed}");
+        let p = probe(&mixed).unwrap();
+        assert_eq!((p.codec.as_str(), p.audio_tracks), ("", 1));
+        assert!((p.duration - 1.0).abs() < 0.15, "{}", p.duration);
+        let one = export_audio(&src, 0.0, 0.0, Some(1), "Microphone", &AudioEdit::default()).unwrap();
+        assert!(one.ends_with("a (Microphone).mp3"), "{one}");
+        assert!(export_audio(&src, 0.0, 1.0, Some(9), "", &AudioEdit::default()).is_err());
+        let _ = fs::remove_dir_all(d);
+    }
+
+    #[test]
     fn compress_hits_target_size() {
         let d = tmp("compress");
-        let out = compress(&sample(&d, "a.mkv"), 1).unwrap();
+        let out = compress(&sample(&d, "a.mkv"), 1, &AudioEdit::default()).unwrap();
         let size = fs::metadata(&out).unwrap().len();
         assert!(size <= 1024 * 1024 + 64 * 1024, "{size} bytes");
         assert_eq!(probe(&out).unwrap().audio_tracks, 1);
+        let _ = fs::remove_dir_all(d);
+    }
+
+    /// Mean level (0-255) of a track between two times of a file.
+    fn level(path: &str, track: u32, a: f64, b: f64) -> f64 {
+        let w = crate::audio_edit::decode(path, track).unwrap();
+        let (i, j) = ((a / w.step) as usize, (b / w.step) as usize);
+        let s = &w.levels[i..j.min(w.levels.len())];
+        s.iter().map(|&v| v as f64).sum::<f64>() / s.len().max(1) as f64
+    }
+
+    #[test]
+    fn trim_mutes_and_boosts_the_chosen_track_only() {
+        use crate::audio_edit::TrackEdit;
+        let d = tmp("audio-edit");
+        let src = sample(&d, "a.mkv");
+        // Mute the mic (track 2) from 2.0 to 3.0 s of the original, boost the game track.
+        let edit = AudioEdit(vec![
+            TrackEdit { gain_db: 6.0, mutes: vec![] },
+            TrackEdit { gain_db: 0.0, mutes: vec![[2.0, 3.0]] },
+        ]);
+        for exact in [true, false] {
+            let out = trim(&src, 1.0, 5.0, exact, &edit).unwrap();
+            assert_eq!(probe(&out).unwrap().audio_tracks, 2);
+            // In the trimmed file the mute sits at 1.0-2.0 s.
+            assert!(level(&out, 1, 1.15, 1.85) < 5.0, "muted stretch is silent ({exact})");
+            assert!(level(&out, 1, 0.2, 0.8) > 150.0, "mic before the mute is kept ({exact})");
+            assert!(level(&out, 1, 2.3, 3.5) > 150.0, "mic after the mute is kept ({exact})");
+            assert!(level(&out, 0, 1.15, 1.85) > 150.0, "game track isn't muted ({exact})");
+            let louder = level(&out, 0, 0.5, 3.5) - level(&src, 0, 1.5, 4.5);
+            assert!(louder > 20.0, "+6 dB shows ({louder}, {exact})");
+            let _ = fs::remove_file(out);
+        }
+        // Export mixes the tracks, with the same edits.
+        let out = export_h264(&src, &edit).unwrap();
+        assert!(level(&out, 0, 2.15, 2.85) > 150.0, "the game track still plays in the mix");
         let _ = fs::remove_dir_all(d);
     }
 
@@ -952,7 +1190,7 @@ mod tests {
     fn replace_original_swaps_in_the_edit() {
         let d = tmp("replace");
         let src = sample(&d, "a.mkv");
-        let edited = trim(&src, 1.0, 3.0, true).unwrap();
+        let edited = trim(&src, 1.0, 3.0, true, &AudioEdit::default()).unwrap();
         let final_path = replace_original(&src, &edited, Some(2.0)).unwrap();
         assert_eq!(final_path, src, "same name, same place");
         assert!(!Path::new(&edited).exists());
@@ -1050,7 +1288,7 @@ mod library_merge_tests {
     fn one_library_from_this_pc_the_nas_and_other_recorders() {
         let d = std::env::temp_dir().join(format!("rewind-merge-{}", std::process::id()));
         let _ = fs::remove_dir_all(&d);
-        let (clips, nas, medal, obs) = (d.join("Rewind"), d.join("nas"), d.join("Medal"), d.join("OBS"));
+        let (clips, nas, medal, obs) = (d.join("Hindsight"), d.join("nas"), d.join("Medal"), d.join("OBS"));
         put(&clips, "VALORANT/a.mkv");
         put(&nas, "VALORANT/a.mkv"); // also on the NAS
         put(&nas, "VALORANT/b - OTHER-PC.mkv"); // only on the NAS
@@ -1072,7 +1310,7 @@ mod library_merge_tests {
         let m = find("m");
         assert!(m.location == "linked" && m.folder == "Valorant" && m.source == "Medal");
         assert_eq!(find("2026-11-03 10-00-00").folder, "OBS");
-        // NAS clips can't be deleted from Rewind (no Recycle Bin there); linked ones can.
+        // NAS clips can't be deleted from Hindsight (no Recycle Bin there); linked ones can.
         assert!(deletable(&nas.join("VALORANT/b - OTHER-PC.mkv"), &clips, &[], &[], &nas.to_string_lossy()).is_err());
         assert!(deletable(&medal.join("Clips/Valorant/m.mp4"), &clips, &[], &[medal.to_string_lossy().into_owned()], "").is_ok());
         let _ = fs::remove_dir_all(&d);

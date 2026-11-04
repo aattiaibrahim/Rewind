@@ -1,4 +1,4 @@
-# Packs the Stream Deck plugin into Rewind.streamDeckPlugin (double-click to install).
+# Packs the Stream Deck plugin into Hindsight.streamDeckPlugin (double-click to install).
 #   powershell -ExecutionPolicy Bypass -File scripts\package-streamdeck.ps1
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
@@ -7,7 +7,7 @@ $name = "com.rewind.clipper.sdPlugin"
 $src = Join-Path $root "streamdeck\$name"
 $outDir = Join-Path $root "streamdeck\dist"
 New-Item -ItemType Directory -Force $outDir | Out-Null
-$out = Join-Path $outDir "Rewind.streamDeckPlugin"
+$out = Join-Path $outDir "Hindsight.streamDeckPlugin"
 if (Test-Path $out) { Remove-Item $out -Force }
 
 # Zip entries must use forward slashes, which Compress-Archive on PowerShell 5 doesn't do.

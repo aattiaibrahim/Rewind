@@ -1,6 +1,6 @@
 [package]
 name = "rewind"
-version = "0.1.16"
+version = "0.1.24"
 description = "Lightweight NVENC replay-buffer clipper"
 authors = ["Rewind"]
 edition = "2024"
@@ -26,6 +26,11 @@ chrono = "0.4"
 trash = "5"
 cpal = "0.15"
 tauri-plugin-updater = "2"
+# Uploads (Catbox / Litterbox / Discord / Streamable). Same reqwest + rustls the updater already uses.
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "multipart", "blocking", "json"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+
+windows-core = "0.61"
 
 [dependencies.windows]
 version = "0.61"
@@ -35,6 +40,7 @@ features = [
   "Win32_Graphics_Dxgi_Common",
   "Win32_Graphics_Gdi",
   "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_Input_KeyboardAndMouse",
   "Win32_System_Threading",
   "Win32_System_JobObjects",
   "Win32_Storage_FileSystem",
@@ -56,6 +62,12 @@ features = [
   "Graphics_DirectX_Direct3D11",
   "Win32_Security",
   "Win32_Media_Audio",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_Variant",
+  "Win32_Security_Cryptography",
+  "Win32_System_DataExchange",
+  "Win32_System_Memory",
 ]
 
 [profile.release]

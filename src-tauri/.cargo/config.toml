@@ -1,0 +1,10 @@
+# Keep the build machine's folders (and so the Windows user name) out of the
+# released app: Rust embeds source paths in error messages. These rewrite them
+# to neutral names when building.
+[build]
+rustflags = [
+  "--remap-path-prefix=C:\\Users\\Admin\\.cargo\\registry\\src=crates",
+  "--remap-path-prefix=C:\\Users\\Admin\\.cargo\\git\\checkouts=git",
+  "--remap-path-prefix=C:\\Users\\Admin\\.rustup=rustup",
+  "--remap-path-prefix=C:\\Users\\Admin\\Desktop\\Rewind=rewind",
+]

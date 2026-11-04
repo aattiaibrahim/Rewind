@@ -2,8 +2,12 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, ClipFile, codecLabel, errText, fmtSize, fmtTime, PreviewAudio, Probe, Settings } from "./api";
+import { api, ClipFile, codecLabel, errText, fmtSize, fmtTime, Health, PreviewAudio, Probe, Settings, TrackEdit, Upload, UploadProgress, Waveform } from "./api";
+import { AudioLanes, hasAudioEdits, isMutedAt } from "./AudioLanes";
 import { useThumb } from "./hooks";
+import { SharePanel, ShareRequest } from "./Share";
+import { HealReview } from "./HealReview";
+import { HealthNotice } from "./Health";
 import { Slider } from "./Slider";
 
 type Job = { label: string } | null;
@@ -97,7 +101,78 @@ const Icon = {
       <path d="M15 6v12" />
     </svg>
   ),
+  back5: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3" />
+      <path d="M4.5 4.5v3.2h3.2" />
+      <text x="12" y="15.2" textAnchor="middle" fontSize="7.5" fontWeight="700" fill="currentColor" stroke="none">5</text>
+    </svg>
+  ),
+  fwd5: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3" />
+      <path d="M19.5 4.5v3.2h-3.2" />
+      <text x="12" y="15.2" textAnchor="middle" fontSize="7.5" fontWeight="700" fill="currentColor" stroke="none">5</text>
+    </svg>
+  ),
+  markIn: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M10 5H7v14h3" />
+      <path d="M13 12h5M15.5 9.5 18 12l-2.5 2.5" />
+    </svg>
+  ),
+  markOut: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M14 5h3v14h-3" />
+      <path d="M11 12H6M8.5 9.5 6 12l2.5 2.5" />
+    </svg>
+  ),
+  reset: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v4h4" />
+    </svg>
+  ),
 };
+
+/** Tick spacing for the ruler: a labelled tick every `major` seconds, small ones every `minor`. */
+export function rulerSteps(duration: number): { major: number; minor: number } {
+  const steps: [number, number][] = [
+    [1, 0.5], [2, 1], [5, 1], [10, 2], [15, 5], [30, 10], [60, 10], [120, 30], [300, 60], [600, 120], [900, 300], [1800, 600],
+  ];
+  for (const [major, minor] of steps) if (duration / major <= 7) return { major, minor };
+  return { major: 3600, minor: 900 };
+}
+
+function rulerLabel(t: number) {
+  const m = Math.floor(t / 60);
+  const s = Math.round(t % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+/** Time ruler under the timeline: small ticks plus labelled bigger ones, spaced to fit the clip. */
+function Ruler({ duration, onPointerDown }: { duration: number; onPointerDown: (e: React.PointerEvent) => void }) {
+  if (!duration) return <div className="ruler" />;
+  const { major, minor } = rulerSteps(duration);
+  const ticks: { t: number; big: boolean }[] = [];
+  const n = Math.floor(duration / minor + 1e-6);
+  for (let i = 0; i <= n; i++) {
+    const t = i * minor;
+    ticks.push({ t, big: Math.abs(t / major - Math.round(t / major)) < 1e-6 });
+  }
+  return (
+    <div className="ruler" onPointerDown={onPointerDown} aria-hidden="true">
+      {ticks.map(({ t, big }) => (
+        <span key={t} className={`tick ${big ? "big" : ""}`} style={{ left: `${(t / duration) * 100}%` }}>
+          {/* Skip a label that would crowd the clip's end. */}
+          {big && (duration - t) / duration > 0.04 && <em>{rulerLabel(t)}</em>}
+        </span>
+      ))}
+      <span className="tick big end" style={{ left: "100%" }}>
+        <em>{rulerLabel(duration)}</em>
+      </span>
+    </div>
+  );
+}
 
 /** The app window, or null in the browser preview. */
 function appWindow() {
@@ -165,9 +240,21 @@ export function Studio({
   onDelete,
   settings,
   update,
+  onBack,
+  uploads,
+  links,
+  onShare,
+  health,
+  onRescued,
 }: {
+  health?: Health;
+  onRescued?: (path: string) => void;
+  onShare?: (r: ShareRequest) => void;
+  uploads?: Record<string, UploadProgress>;
+  links?: Record<string, Upload[]>;
   path: string | null;
   clips: ClipFile[] | null;
+  onBack: () => void;
   onOpen: (path: string) => void;
   onDone: () => void;
   onDelete: (paths: string[]) => Promise<boolean>;
@@ -180,6 +267,10 @@ export function Studio({
   const bar = useRef<HTMLDivElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const [fullscreen, setFullscreen] = useState(false);
+  const [ar, setAr] = useState(16 / 9);
+  // Shown in the player until the first frame is decoded (no black box while a clip loads).
+  const openClip = (clips ?? []).find((c) => c.path === path);
+  const poster = useThumb(path ?? "", openClip?.modified ?? 0);
   const [theater, setTheater] = useState(() => loadJson("rewind.theater", false));
   // Overlay controls: shown while the pointer moves over the video, hidden after a moment of stillness.
   const [hover, setHover] = useState(false);
@@ -218,23 +309,45 @@ export function Studio({
     saveJson("rewind.trackVolume", next);
     if (v > 0) setTrackMuted((m) => ({ ...m, [title]: false }));
   };
+  // Audio edits for the saved file (per track: volume in dB, muted stretches), heard in the preview too.
+  const [audioEdits, setAudioEdits] = useState<TrackEdit[]>([]);
+  const [waves, setWaves] = useState<Waveform[] | null>(null);
+  const audioEdited = hasAudioEdits(audioEdits);
+  const editsForSave = audioEdited ? audioEdits : undefined;
+  const [audioOnly, setAudioOnly] = useState("all");
+  const [healOpen, setHealOpen] = useState(false);
   // Keep every element's volume in step (also after it remounts for a new clip).
-  useEffect(() => {
+  const applyVolumes = useRef(() => {});
+  applyVolumes.current = () => {
     const allMuted = muted || volume === 0;
     const v = video.current;
+    const now = v?.currentTime ?? 0;
+    const gain = (i: number) => Math.pow(10, (audioEdits[i]?.gainDb ?? 0) / 20);
     if (v) {
       const first = tracks?.firstTitle ?? "Game";
-      v.volume = Math.min(1, volume * tv(first));
-      v.muted = allMuted || !!trackMuted[first];
+      v.volume = Math.min(1, volume * tv(first) * gain(0));
+      v.muted = allMuted || !!trackMuted[first] || isMutedAt(audioEdits[0], now);
     }
     tracks?.extra.forEach((t) => {
       const a = extraAudio.current.get(t.index);
       if (a) {
-        a.volume = Math.min(1, volume * tv(t.title));
-        a.muted = allMuted || !!trackMuted[t.title];
+        a.volume = Math.min(1, volume * tv(t.title) * gain(t.index));
+        a.muted = allMuted || !!trackMuted[t.title] || isMutedAt(audioEdits[t.index], now);
       }
     });
-  });
+  };
+  useEffect(() => applyVolumes.current());
+  // Muted stretches start and stop on the frame while playing, not at the next time update.
+  useEffect(() => {
+    if (!playing || !audioEdits.some((e) => e.mutes.length)) return;
+    let raf = 0;
+    const tick = () => {
+      applyVolumes.current();
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [playing, audioEdits]);
   // Mirror play / pause / seek / speed from the video onto the extra tracks,
   // and nudge them back if they drift more than ~60 ms.
   const syncExtra = useCallback((hard = false) => {
@@ -265,8 +378,14 @@ export function Studio({
     setRange([0, 0]);
     setDuration(0);
     setTracks(null);
+    setAudioEdits([]);
+    setWaves(null);
     if (!path) return;
     let alive = true;
+    api
+      .clipWaveforms(path)
+      .then((w) => alive && setWaves(w))
+      .catch(() => alive && setWaves([]));
     api
       .previewAudio(path)
       .then((t) => alive && setTracks(t))
@@ -344,7 +463,7 @@ export function Studio({
     } else v.pause();
   }, [range]);
 
-  // Fullscreen: Rewind's window goes fullscreen and the player covers it.
+  // Fullscreen: Hindsight's window goes fullscreen and the player covers it.
   // (Not the browser Fullscreen API, which embedded web views can refuse.)
   // Esc, F or the button leave it.
   const toggleFullscreen = useCallback(() => setFullscreen((f) => !f), []);
@@ -402,11 +521,12 @@ export function Studio({
       } else if (e.key === "m" || e.key === "M") toggleMute();
       else if ((e.key === "f" || e.key === "F") && !e.ctrlKey && !e.altKey) toggleFullscreen();
       else if (e.key === "Escape" && fullscreen) setFullscreen(false);
+      else if (e.key === "Escape" && !document.querySelector(".modal-backdrop")) onBack();
       else if ((e.key === "t" || e.key === "T") && !e.ctrlKey && !e.altKey && !fullscreen) toggleTheater();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [path, toggle, seek, volume, setVolume, toggleMute, toggleFullscreen, toggleTheater, fullscreen]);
+  }, [path, toggle, seek, volume, setVolume, toggleMute, toggleFullscreen, toggleTheater, fullscreen, onBack]);
 
   // Dragging on the timeline: handles move in/out, anywhere else scrubs.
   const drag = (kind: "in" | "out" | "seek") => (e: React.PointerEvent) => {
@@ -514,26 +634,36 @@ export function Studio({
   const name = path.split("\\").pop() ?? path;
   const busy = !!job;
   const wholeFile = a <= 0.01 && duration - b <= 0.05;
+  const trackTitles = tracks ? [tracks.firstTitle, ...tracks.extra.map((t) => t.title)].slice(0, info?.audioTracks ?? 1) : [];
 
   return (
     <div className="studio">
       <div className="studio-top">
+        <button className="btn back" onClick={onBack} title="Back to your clips (Esc)">
+          <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M10 3 5 8l5 5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          Clips
+        </button>
         <div className="studio-title" style={{ flex: 1 }} title={path}>
           {name}
         </div>
         <button
           className="btn primary"
-          disabled={busy || wholeFile}
-          title="Cuts exactly at your start and end frames. Only the moment before the first keyframe is re-encoded (under a second for Rewind's clips); the rest is copied untouched, so it's quick and keeps full quality."
-          onClick={() => run("Saving trim…", () => api.trim(path, a, b, true, replace), replace)}
+          disabled={busy || (wholeFile && !audioEdited)}
+          title="Cuts exactly at your start and end frames, with your audio changes. Only the moment before the first keyframe is re-encoded (under a second for Hindsight's clips); the rest of the video is copied untouched, so it's quick and keeps full quality."
+          onClick={() => run(wholeFile ? "Saving audio changes…" : "Saving trim…", () => api.trim(path, a, b, true, replace, editsForSave), replace)}
         >
-          Save trim
+          {wholeFile && audioEdited ? "Save audio changes" : "Save trim"}
         </button>
       </div>
       <div className={`studio-body ${theater ? "theater" : ""}`}>
         <div className="stage">
+          {/* The box takes the video's own shape, so its rounded corners are the picture's corners. */}
+          <div className="video-box">
           <div
             ref={wrap}
+            style={{ "--ar": ar } as React.CSSProperties}
             className={`video-wrap ${fullscreen ? "fs" : ""} ${hover && (active || !playing) ? "ui" : ""} ${fullscreen && playing && !active ? "idle" : ""}`}
             onPointerMove={() => {
               setHover(true);
@@ -545,9 +675,14 @@ export function Studio({
             <video
               key={`${path}#${reload}`}
               ref={video}
-              src={convertFileSrc(path)}
+              poster={poster ?? undefined}
+              // The version tag makes the player load the file fresh after an edit replaced it
+              // in place (same name); otherwise WebView2 can reuse its cached copy of the old file.
+              src={`${convertFileSrc(path)}?v=${(clips ?? []).find((c) => c.path === path)?.modified ?? 0}-${reload}`}
               onLoadedMetadata={(e) => {
                 const d = e.currentTarget.duration;
+                const { videoWidth: vw, videoHeight: vh } = e.currentTarget;
+                if (vw && vh) setAr(vw / vh);
                 if (isFinite(d) && d > 0) {
                   setDuration(d);
                   // The player's own length wins over anything set before it loaded.
@@ -656,18 +791,21 @@ export function Studio({
               </div>
             )}
           </div>
+          </div>
           <div className="transport">
-            <button className="round" aria-label="Back 5 seconds" onClick={() => seek(time - 5)}>
-              «
-            </button>
-            <button className="round play" aria-label={playing ? "Pause" : "Play"} onClick={toggle}>
-              {playing ? "❚❚" : "▶"}
-            </button>
-            <button className="round" aria-label="Forward 5 seconds" onClick={() => seek(time + 5)}>
-              »
-            </button>
-            <span className="mono">
-              {fmtTime(time)} / {fmtTime(duration)}
+            <span className="transport-pill">
+              <button className="round icon" aria-label="Back 5 seconds" title="Back 5 s (←)" onClick={() => seek(time - 5)}>
+                {Icon.back5}
+              </button>
+              <button className="round play" aria-label={playing ? "Pause" : "Play"} title="Play / pause (Space)" onClick={toggle}>
+                {playing ? Icon.pause : Icon.play}
+              </button>
+              <button className="round icon" aria-label="Forward 5 seconds" title="Forward 5 s (→)" onClick={() => seek(time + 5)}>
+                {Icon.fwd5}
+              </button>
+            </span>
+            <span className="mono time-readout">
+              {fmtTime(time)} <span className="muted">/ {fmtTime(duration)}</span>
             </span>
             <div className="volume" role="group" aria-label="Volume">
               <button
@@ -691,15 +829,19 @@ export function Studio({
               </span>
             </div>
             <span style={{ flex: 1 }} />
-            <button className="btn small" onClick={() => setRange(([, y]) => [Math.min(time, y - 0.1), y])}>
-              Set start (I)
-            </button>
-            <button className="btn small" onClick={() => setRange(([x]) => [x, Math.max(time, x + 0.1)])}>
-              Set end (O)
-            </button>
-            <button className="btn small" onClick={() => setRange([0, duration])}>
-              Reset
-            </button>
+            <span className="transport-pill">
+              <button className="btn pill" title="Start the trim here (I)" onClick={() => setRange(([, y]) => [Math.min(time, y - 0.1), y])}>
+                {Icon.markIn}
+                Start
+              </button>
+              <button className="btn pill" title="End the trim here (O)" onClick={() => setRange(([x]) => [x, Math.max(time, x + 0.1)])}>
+                {Icon.markOut}
+                End
+              </button>
+              <button className="round icon" aria-label="Reset trim" title="Use the whole clip" onClick={() => setRange([0, duration])}>
+                {Icon.reset}
+              </button>
+            </span>
           </div>
           <div className="timeline" ref={bar} onPointerDown={drag("seek")}>
             <div className="tl-range" style={{ left: pct(a), width: `calc(${pct(b)} - ${pct(a)})` }}>
@@ -708,6 +850,19 @@ export function Studio({
             </div>
             <div className="tl-head" style={{ left: pct(time) }} />
           </div>
+          <Ruler duration={duration} onPointerDown={drag("seek")} />
+          {tracks && (info?.audioTracks ?? 0) > 0 && (
+            <AudioLanes
+              titles={[tracks.firstTitle, ...tracks.extra.map((t) => t.title)].slice(0, info?.audioTracks ?? 1)}
+              waves={waves}
+              edits={audioEdits}
+              setEdits={setAudioEdits}
+              duration={duration}
+              time={time}
+              range={range}
+              onSeek={seek}
+            />
+          )}
           <div className="tl-foot">
             <span className="mono">
               Start {fmtTime(a)} · End {fmtTime(b)} · Length {fmtTime(Math.max(0, b - a))}
@@ -764,7 +919,7 @@ export function Studio({
                   );
                 })}
                 <span className="muted" style={{ fontSize: 11, lineHeight: 1.5 }}>
-                  Only changes what you hear here. Saved files keep every track as recorded.
+                  Only changes what you hear here. To change the saved file, use the track's Volume under the timeline.
                 </span>
               </div>
               {tracks.extra.map((t) => (
@@ -781,24 +936,79 @@ export function Studio({
               ))}
             </>
           )}
+          <HealthNotice
+            path={path}
+            health={health}
+            busy={busy}
+            onHeal={() => {
+              video.current?.pause();
+              setHealOpen(true);
+            }}
+            onRescued={(p) => onRescued?.(p)}
+          />
+          {healOpen && health && clips?.find((c) => c.path === path) && (
+            <HealReview
+              clips={clips.filter((c) => c.path === path)}
+              health={{ [path]: health }}
+              onClose={() => setHealOpen(false)}
+              onToast={(text, err) => setResult({ text, err })}
+              onHealed={() => {
+                onDone();
+                setReload((k) => k + 1);
+              }}
+            />
+          )}
+          <div className="label">Share</div>
+          <SharePanel path={path} settings={settings} progress={uploads?.[path]} links={links?.[path]} onShare={(r) => onShare?.(r)} />
           <div className="label">This file only</div>
           <div className="stack">
-            <button className="btn block" disabled={busy} onClick={() => run("Remuxing…", () => api.remuxMp4(path))}>
-              Remux to MP4 (no quality loss)
-            </button>
+            {!path.toLowerCase().endsWith(".mp4") && (
+              <button
+                className="btn block"
+                disabled={busy}
+                title="Same video and sound, just in an .mp4 file instead of .mkv. Instant and lossless, but the video stays AV1/HEVC, which some phones and older apps can't play."
+                onClick={() => run("Remuxing…", () => api.remuxMp4(path))}
+              >
+                Change to .mp4 (instant, lossless)
+              </button>
+            )}
             <button
               className="btn block"
               disabled={busy}
-              onClick={() => run("Exporting H.264…", () => api.exportH264(path, replace), replace)}
+              title="Re-encodes the video as H.264 and mixes the audio into one track, so it plays on every phone, browser, editor and Discord. Slower and a little bigger, with your audio changes."
+              onClick={() => run("Exporting H.264…", () => api.exportH264(path, replace, editsForSave), replace)}
             >
-              Export as H.264 MP4
+              Export H.264 (plays everywhere)
             </button>
             <div className="row">
               <button
                 className="btn block"
                 style={{ flex: 1 }}
+                disabled={busy || !info?.audioTracks}
+                title="Just the sound of your trimmed part as an MP3, with your audio changes"
+                onClick={() => {
+                  const k = audioOnly === "all" ? null : Number(audioOnly);
+                  const label = k == null ? "audio" : (trackTitles[k] ?? `track ${k + 1}`).replace(/ audio$/i, "");
+                  run("Exporting audio…", () => api.exportAudio(path, a, b, k, label, editsForSave));
+                }}
+              >
+                Audio only (MP3)
+              </button>
+              <select className="select" aria-label="Which audio" value={audioOnly} onChange={(e) => setAudioOnly(e.target.value)}>
+                <option value="all">All tracks</option>
+                {trackTitles.map((t, k) => (
+                  <option key={k} value={String(k)}>
+                    {t.replace(/ audio$/i, "")}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="row">
+              <button
+                className="btn block"
+                style={{ flex: 1 }}
                 disabled={busy}
-                onClick={() => run(`Compressing to ${targetMb} MB…`, () => api.compress(path, targetMb, replace), replace)}
+                onClick={() => run(`Compressing to ${targetMb} MB…`, () => api.compress(path, targetMb, replace, editsForSave), replace)}
               >
                 Compress to
               </button>
@@ -849,9 +1059,11 @@ export function Studio({
               {result.text}
               {result.path && (
                 <div className="row" style={{ marginTop: 8 }}>
-                  <button className="btn small" onClick={() => onOpen(result.path!)}>
-                    Open it
-                  </button>
+                  {!/\.mp3$/i.test(result.path) && (
+                    <button className="btn small" onClick={() => onOpen(result.path!)}>
+                      Open it
+                    </button>
+                  )}
                   <button className="btn small" onClick={() => api.reveal(result.path!)}>
                     Show
                   </button>

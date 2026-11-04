@@ -24,20 +24,33 @@ export type Settings = {
   nasDir: string;
   nasRemoveLocal: boolean;
   linkedFolders: string[];
+  benchmarkMode: boolean;
+  uploadHost: UploadHost;
+  litterboxTime: "1h" | "12h" | "24h" | "72h";
+  autoUpload: boolean;
+  postLinkToDiscord: boolean;
+  streamableEmail: string;
+  discordWebhookName: string;
+  confirmUploads: boolean;
+  healthCheck: boolean;
   startMinimized: boolean;
   keepOriginalAfterRemux: boolean;
   replaceOriginalOnEdit: boolean;
   externalFiles: string[];
   desktopAudio: boolean;
+  /** Discord on its own track, left out of desktop audio */
+  discordTrack: boolean;
   micEnabled: boolean;
   micMono: boolean;
   micDevice: string;
+  /** Mic volume while recording, dB (-20..+20). */
+  micGainDb: number;
   theme: Theme;
   accent: Accent;
   reduceMotion: boolean;
 };
 
-export type Theme = "midnight" | "graphite" | "oled" | "light";
+export type Theme = "midnight" | "graphite" | "oled";
 export type Accent = "lime" | "cyan" | "violet" | "amber" | "rose" | "green";
 
 export type Status = {
@@ -168,9 +181,39 @@ export type NasState = {
   copied: number;
   lastError: string | null;
   lastSync: number | null;
+  /** Waiting because a game is running or a recording is going */
+  paused: boolean;
 };
 
 export type ClipFolder = { label: string; path: string; exists: boolean };
+
+export type Health = {
+  state: "ok" | "damaged" | "unreadable";
+  damaged: [number, number][];
+  best: [number, number] | null;
+  duration: number;
+};
+export type HealthProgress = { checked: number; total: number; damaged: number; paused: boolean; running: boolean };
+
+export type UploadHost = "catbox" | "litterbox" | "discord" | "streamable";
+export const UPLOAD_HOSTS: { id: UploadHost; label: string; hint: string }[] = [
+  { id: "catbox", label: "Catbox", hint: "Free, no account, keeps the clip. Plays inside Discord. Up to 200 MB." },
+  { id: "litterbox", label: "Litterbox", hint: "Free, no account, deletes the clip after a while. Up to 1 GB." },
+  { id: "discord", label: "Discord webhook", hint: "Posts the clip into your channel. Compressed under Discord's 10 MB." },
+  { id: "streamable", label: "Streamable", hint: "Clip page with a player. Needs a Streamable account." },
+];
+export type Upload = { host: UploadHost; url: string; at: number; bytes: number; expires: number | null };
+export type UploadProgress = {
+  path: string;
+  host: UploadHost;
+  stage: "preparing" | "uploading" | "done" | "error";
+  sent: number;
+  total: number;
+  url: string | null;
+  error: string | null;
+  warning: string | null;
+};
+export type Reach = { host: string; state: "ok" | "blocked" | "unreachable" | "webhook" };
 
 export type MovePlan = {
   label: string;
@@ -254,11 +297,16 @@ export const api = {
   benchState: () => invoke<[boolean, BenchReport | null]>("bench_state"),
   previewAudio: (path: string) => invoke<PreviewAudio>("preview_audio", { path }),
   remuxMp4: (path: string) => invoke<string>("remux_mp4", { path }),
-  trim: (path: string, start: number, end: number, exact: boolean, replace = false) =>
-    invoke<string>("trim_clip", { path, start, end, exact, replace }),
-  exportH264: (path: string, replace = false) => invoke<string>("export_h264", { path, replace }),
-  compress: (path: string, targetMb: number, replace = false) =>
-    invoke<string>("compress_clip", { path, targetMb, replace }),
+  trim: (path: string, start: number, end: number, exact: boolean, replace = false, audio?: TrackEdit[]) =>
+    invoke<string>("trim_clip", { path, start, end, exact, replace, audio: audio ?? null }),
+  clipWaveforms: (path: string) => invoke<Waveform[]>("clip_waveforms", { path }),
+  exportH264: (path: string, replace = false, audio?: TrackEdit[]) =>
+    invoke<string>("export_h264", { path, replace, audio: audio ?? null }),
+  /** MP3 of [start, end]: every track mixed (track null) or one track alone. */
+  exportAudio: (path: string, start: number, end: number, track: number | null, label: string, audio?: TrackEdit[]) =>
+    invoke<string>("export_audio", { path, start, end, track, label, audio: audio ?? null }),
+  compress: (path: string, targetMb: number, replace = false, audio?: TrackEdit[]) =>
+    invoke<string>("compress_clip", { path, targetMb, replace, audio: audio ?? null }),
   listAudioInputs: () => invoke<string[]>("list_audio_inputs"),
   reveal: (path: string) => invoke<void>("reveal_file", { path }),
   deleteClips: (paths: string[]) => invoke<DeleteResult>("delete_clips", { paths }),
@@ -272,10 +320,22 @@ export const api = {
   checkForUpdates: () => invoke<string | null>("check_for_updates"),
   installUpdate: () => invoke<void>("install_update"),
   getNasState: () => invoke<NasState>("get_nas_state"),
+  uploadClip: (path: string, host?: UploadHost) => invoke<Upload>("upload_clip", { path, host: host ?? null }),
+  uploadHistory: () => invoke<Record<string, Upload[]>>("upload_history"),
+  copyText: (text: string) => invoke<void>("copy_text", { text }),
+  setSecret: (name: "discord_webhook" | "streamable_password", value: string) =>
+    invoke<{ name: string; channelId: string } | null>("set_secret", { name, value }),
+  checkSharing: () => invoke<[UploadHost, Reach[]][]>("check_sharing"),
+  clipHealth: (paths: string[]) => invoke<Record<string, Health>>("clip_health", { paths }),
+  healthProgress: () => invoke<HealthProgress>("health_progress"),
+  rescueClip: (path: string) => invoke<string>("rescue_clip", { path }),
+  /** Replace a damaged clip with its longest good part (original to the Recycle Bin). */
+  healClip: (path: string) => invoke<string>("heal_clip", { path }),
+  secretsSet: () => invoke<{ discordWebhook: boolean; streamablePassword: boolean }>("secrets_set"),
   syncNasNow: () => invoke<void>("sync_nas_now"),
   recorderClipFolders: () => invoke<ClipFolder[]>("recorder_clip_folders"),
-  planMoveIntoRewind: (folder: string) => invoke<MovePlan>("plan_move_into_rewind", { folder }),
-  moveIntoRewind: (folder: string) => invoke<MoveOutcome>("move_into_rewind", { folder }),
+  planMoveIntoRewind: (folders: string[]) => invoke<MovePlan>("plan_move_into_rewind", { folders }),
+  moveIntoRewind: (folders: string[]) => invoke<MoveOutcome>("move_into_rewind", { folders }),
   lastMove: () => invoke<LastMove | null>("last_move"),
   undoLastMove: () => invoke<MoveOutcome>("undo_last_move"),
 };
@@ -287,6 +347,15 @@ export function fmtDuration(sec: number) {
   const m = Math.floor(sec / 60);
   const s = Math.floor(sec % 60);
   return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+/** One audio track's loudness over time: levels[i] (0-255) covers `step` seconds. */
+export type Waveform = { step: number; levels: number[] };
+/** Studio's changes to one audio track: volume in dB and muted stretches (seconds of the original). */
+export type TrackEdit = { gainDb: number; mutes: [number, number][] };
+
+export function fmtDb(db: number) {
+  return db === 0 ? "0 dB" : `${db > 0 ? "+" : ""}${db.toFixed(1).replace(/\.0$/, "")} dB`;
 }
 
 export function fmtTime(sec: number) {

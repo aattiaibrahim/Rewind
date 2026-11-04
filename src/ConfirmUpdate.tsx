@@ -67,7 +67,7 @@ export function updateInterrupts(status: Status | null): string[] {
     const t = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
     out.push(`You're recording (${t}). The recording stops and is saved to your clips first.`);
   }
-  if (status.game) out.push(`${status.game} is open. Capture pauses for a few seconds while Rewind restarts.`);
+  if (status.game) out.push(`${status.game} is open. Capture pauses for a few seconds while Hindsight restarts.`);
   return out;
 }
 
@@ -99,7 +99,7 @@ export function ConfirmUpdate({
         ))}
         <li>The replay buffer starts empty again, so save a clip first if you want what's in it.</li>
       </ul>
-      <p className="muted">Or click Later: the update installs by itself the next time Rewind closes.</p>
+      <p className="muted">Or click Later: the update installs by itself the next time Hindsight closes.</p>
     </ConfirmDialog>
   );
 }

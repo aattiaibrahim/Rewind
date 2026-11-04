@@ -39,3 +39,6 @@ public/preview-mic.m4a
 .install-outside.ps1
 Fix Rewind install.cmd
 install-log.txt
+# Preview-only thumbnails (frames from real clips; only the final README screenshots are published)
+public/thumb-*.jpg
+readme-thumbnail-picks.jpg

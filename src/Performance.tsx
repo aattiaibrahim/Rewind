@@ -13,13 +13,13 @@ function shareUrl(r: BenchReport, version: string | undefined) {
 }
 
 const OTHERS: { app: BenchApp; label: string; how: string }[] = [
-  { app: "obs", label: "OBS replay buffer", how: "Started and stopped for you, or a voice asks you to" },
-  { app: "nvidia", label: "NVIDIA Instant Replay", how: "A voice asks you to press Alt+Shift+F10 each round" },
-  { app: "medal", label: "Medal", how: "A voice asks you to turn clipping on and off each round" },
+  { app: "obs", label: "OBS replay buffer", how: "Hindsight opens and closes OBS for you." },
+  { app: "nvidia", label: "NVIDIA Instant Replay", how: "Hindsight presses your Instant Replay shortcut for you." },
+  { app: "medal", label: "Medal", how: "Hindsight opens and closes Medal for you. Clipping must be on in Medal's settings." },
 ];
 
 const NAME: Record<BenchApp, string> = {
-  rewind: "Rewind",
+  rewind: "Hindsight",
   obs: "OBS replay buffer",
   nvidia: "NVIDIA Instant Replay",
   medal: "Medal",
@@ -67,7 +67,7 @@ function res(s: RecorderSettings) {
 function asText(r: BenchReport) {
   const b = r.baseline;
   const lines = [
-    `Rewind performance test: ${r.game}, ${r.started}`,
+    `Hindsight performance test: ${r.game}, ${r.started}`,
     `${r.rounds} rounds × ${r.seconds} s runs, interleaved with nothing-recording runs, shuffled order, ${r.warmupSecs} s warm-up, ${f1(r.minutes)} min total`,
     `Nothing recording: ${b.fps ? `${f1(b.fps.mean)} FPS` : "–"} over ${b.runs} runs, run-to-run noise ±${f1(b.noisePercent ?? 0)}%, drift ${signed(b.driftPercent ?? 0)}%` +
       (b.gpuBusyShare !== null ? `, GPU busy ${Math.round(b.gpuBusyShare * 100)}% of each frame` : ""),
@@ -153,25 +153,28 @@ export function Performance() {
     }
   };
 
-  // Each recorder run and the baseline after it, plus switching time (manual ones take longer).
+  // Each recorder run and the baseline after it, plus switching time (opening OBS or Medal takes longer).
   const recorders = 1 + compare.length;
-  const manual = compare.filter((a) => a !== "obs").length;
+  const slow = compare.filter((a) => a !== "nvidia").length;
   const minutes = Math.ceil(
-    (30 + 20 + seconds + rounds * (recorders * (2 * seconds + 2 * 4 + 8 + 5 + 6) + manual * 15)) / 60,
+    (30 + 20 + seconds + rounds * (recorders * (2 * seconds + 2 * 4 + 8 + 5 + 6) + slow * 15)) / 60,
   );
 
   return (
     <div className="page">
       <h1>Performance test</h1>
       <p className="muted" style={{ margin: 0, maxWidth: 760, lineHeight: 1.6 }}>
-        Measures your game's frame rate with nothing recording, then with each recorder, switching back and forth several times in
-        a shuffled order. Each recorder is compared with the runs right before and after it, and the repeats show how sure the
-        result is. Differences smaller than the game's own run-to-run noise are reported as "no measurable cost".
+        Shows how much each recorder slows your game. Hindsight measures your frame rate with nothing recording, then with each
+        recorder on, back and forth several times, and switches every recorder on and off by itself. You just play.
       </p>
 
       {!running && (
         <section className="group" style={{ maxWidth: 760 }}>
-          <h2>Compare Rewind with</h2>
+          <h2>Compare Hindsight with</h2>
+          <p className="muted" style={{ margin: "0 0 4px", fontSize: 13 }}>
+            Hindsight is always measured. Switch on the recorders you have installed to measure them too; each one adds a few minutes.
+            Leave them all off to measure Hindsight alone.
+          </p>
           {OTHERS.map((o) => (
             <label key={o.app} className="setting">
               <span>
@@ -208,17 +211,26 @@ export function Performance() {
               <option value={30}>30 seconds</option>
             </select>
           </label>
-          <ul className="muted bench-tips">
-            <li>Best: the game's built-in benchmark, or standing still in a quiet spot (training range, an empty map).</li>
-            <li>Turn off V-Sync and FPS caps for the test, or a recorder's cost gets hidden. Rewind warns if it sees either.</li>
-            <li>Close other heavy apps. Plug in a laptop.</li>
-          </ul>
+          <h2 style={{ marginTop: 16 }}>How to run it</h2>
+          <ol className="muted bench-tips">
+            <li>
+              Open your game and stand somewhere quiet that looks the same every time: a training range, an empty map, or the
+              game's built-in benchmark.
+            </li>
+            <li>Turn off V-Sync and any FPS cap in the game, or the cost gets hidden.</li>
+            <li>Press <b>Start test</b>, then switch to the game within 10 seconds.</li>
+            <li>
+              Keep playing in that spot until a voice says the test is finished (about {minutes} min). Don't switch windows. If
+              something needs you, the voice tells you.
+            </li>
+            <li>Come back here for the results.</li>
+          </ol>
           <div className="row" style={{ paddingTop: 12, gap: 12, flexWrap: "wrap" }}>
             <button className="btn primary" onClick={start}>
               Start test
             </button>
             <span className="muted" style={{ fontSize: 12 }}>
-              Start your game first. After you press Start, switch to the game within 10 seconds. A voice guides you from there.
+              Recorders are put back the way they were when the test ends.
             </span>
           </div>
           {err && <div className="err-text">{err}</div>}

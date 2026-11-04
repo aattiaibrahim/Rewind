@@ -1,4 +1,4 @@
-//! Rewind's native recording engine: Windows Graphics Capture → GPU colour
+//! Hindsight's native recording engine: Windows Graphics Capture → GPU colour
 //! convert/resize → NVENC, everything on the GPU and stamped on one clock.
 
 pub mod capture;

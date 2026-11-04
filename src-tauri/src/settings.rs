@@ -36,11 +36,16 @@ pub struct Settings {
     /// Videos opened from outside the clips folder
     pub external_files: Vec<String>,
     pub desktop_audio: bool,
+    /// Record Discord on its own track (and leave it out of desktop audio)
+    pub discord_track: bool,
     pub mic_enabled: bool,
     pub mic_mono: bool,
     /// "" = Windows default microphone
     pub mic_device: String,
-    /// Look of the app: "midnight" | "graphite" | "oled" | "light"
+    /// Microphone volume while recording, in dB (-20..+20, 0 = as Windows gives it).
+    #[serde(default)]
+    pub mic_gain_db: f64,
+    /// Look of the app: "midnight" | "graphite" | "oled" (an old "light" becomes "midnight")
     pub theme: String,
     /// Highlight colour: "lime" | "cyan" | "violet" | "amber" | "rose" | "green"
     pub accent: String,
@@ -54,6 +59,23 @@ pub struct Settings {
     pub nas_remove_local: bool,
     /// Other recorders' folders (Medal, OBS, NVIDIA, any folder) shown in the library in place
     pub linked_folders: Vec<String>,
+    /// Show the Performance page (benchmark against other recorders)
+    pub benchmark_mode: bool,
+    /// Where Upload sends clips: "catbox" | "litterbox" | "discord" | "streamable"
+    pub upload_host: String,
+    /// How long Litterbox keeps a clip: "1h" | "12h" | "24h" | "72h"
+    pub litterbox_time: String,
+    /// Upload every newly saved clip in the background (link copied when done)
+    pub auto_upload: bool,
+    /// After uploading to Catbox / Litterbox / Streamable, also post the link to the Discord webhook
+    pub post_link_to_discord: bool,
+    pub streamable_email: String,
+    /// The saved Discord webhook's name (just for display; the address itself is a secret)
+    pub discord_webhook_name: String,
+    /// Ask before uploading (a link is public to anyone who has it)
+    pub confirm_uploads: bool,
+    /// Check clips for damage in the background (only while no game is in front)
+    pub health_check: bool,
 }
 
 impl Default for Settings {
@@ -80,9 +102,11 @@ impl Default for Settings {
             replace_original_on_edit: false,
             external_files: Vec::new(),
             desktop_audio: true,
+            discord_track: true,
             mic_enabled: true,
             mic_mono: true,
             mic_device: String::new(),
+            mic_gain_db: 0.0,
             theme: "midnight".into(),
             accent: "lime".into(),
             reduce_motion: false,
@@ -90,6 +114,15 @@ impl Default for Settings {
             nas_dir: String::new(),
             nas_remove_local: false,
             linked_folders: Vec::new(),
+            benchmark_mode: false,
+            upload_host: "catbox".into(),
+            litterbox_time: "72h".into(),
+            auto_upload: false,
+            post_link_to_discord: false,
+            streamable_email: String::new(),
+            discord_webhook_name: String::new(),
+            confirm_uploads: true,
+            health_check: true,
         }
     }
 }
@@ -110,6 +143,7 @@ impl Settings {
         self.quality = self.quality.clamp(10, 45);
         self.fps = self.fps.clamp(15, 240);
         self.buffer_seconds = self.buffer_seconds.clamp(5, 1800);
+        self.mic_gain_db = if self.mic_gain_db.is_finite() { (self.mic_gain_db.clamp(-20.0, 20.0) * 2.0).round() / 2.0 } else { 0.0 };
         if ![0, 720, 1080, 1440, 2160].contains(&self.output_height) {
             self.output_height = 0;
         }
@@ -124,9 +158,16 @@ impl Settings {
         if self.nas_dir.is_empty() {
             self.nas_remove_local = false;
         }
+        if !["catbox", "litterbox", "discord", "streamable"].contains(&self.upload_host.as_str()) {
+            self.upload_host = d.upload_host.clone();
+        }
+        if !["1h", "12h", "24h", "72h"].contains(&self.litterbox_time.as_str()) {
+            self.litterbox_time = d.litterbox_time.clone();
+        }
+        self.streamable_email = self.streamable_email.trim().to_string();
         self.linked_folders.retain(|f| !f.trim().is_empty());
         self.linked_folders.dedup();
-        if !["midnight", "graphite", "oled", "light"].contains(&self.theme.as_str()) {
+        if !["midnight", "graphite", "oled"].contains(&self.theme.as_str()) {
             self.theme = d.theme.clone();
         }
         if !["lime", "cyan", "violet", "amber", "rose", "green"].contains(&self.accent.as_str()) {

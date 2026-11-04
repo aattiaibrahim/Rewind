@@ -50,7 +50,7 @@ export function Flyout() {
     <div className="flyout">
       <div className="fly-row">
         <span className="brand" style={{ padding: 0 }}>
-          REWIND
+          HINDSIGHT
         </span>
         <button className="btn small" onClick={() => api.showMain()}>
           Open app

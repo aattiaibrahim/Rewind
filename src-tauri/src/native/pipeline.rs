@@ -120,8 +120,9 @@ impl Pipeline {
         let mut tracks = Vec::new();
         let mut labels = Vec::new();
         let mut errors = Vec::new();
+        let desktop = if s.desktop_audio && s.discord_track { audio::Source::DesktopNoDiscord } else { audio::Source::Desktop };
         if s.desktop_audio {
-            match audio::start_ring(audio::Source::Desktop, keep_secs) {
+            match audio::start_ring(desktop, keep_secs) {
                 Ok((c, ring)) => {
                     labels.push(format!("Desktop: {}", c.device));
                     tracks.push(AudioTrack { title: "Desktop audio", bitrate: "192k", ring });
@@ -138,6 +139,16 @@ impl Pipeline {
                     caps.push(c);
                 }
                 Err(e) => errors.push(format!("Mic: {e}")),
+            }
+        }
+        if s.desktop_audio && s.discord_track {
+            match audio::start_ring(audio::Source::Discord, keep_secs) {
+                Ok((c, ring)) => {
+                    labels.push("Discord (own track)".into());
+                    tracks.push(AudioTrack { title: "Discord audio", bitrate: "160k", ring });
+                    caps.push(c);
+                }
+                Err(e) => errors.push(format!("Discord: {e}")),
             }
         }
 
@@ -443,7 +454,7 @@ pub fn save(runs: &[Arc<Buffers>], seconds: u32, out: &Path, scratch: &Path) -> 
     result
 }
 
-/// What a save's staging folder needs to be finished later, if Rewind is
+/// What a save's staging folder needs to be finished later, if Hindsight is
 /// closed (or crashes) between writing the raw files and the MKV.
 #[derive(Serialize, Deserialize)]
 struct SaveMeta {
@@ -484,7 +495,7 @@ fn mux_span(s: &Span, out: &Path, staging: &Path, resumable: bool) -> Result<(),
     mux(&video_path, format, fps, &tracks, out, Duration::from_secs_f64(60.0 + secs))
 }
 
-/// Finish saves that were cut off (Rewind closed or crashed mid-save).
+/// Finish saves that were cut off (Hindsight closed or crashed mid-save).
 /// Returns the clips written.
 pub fn recover_saves(clips_dir: &Path) -> Vec<String> {
     let mut done = Vec::new();
@@ -594,7 +605,7 @@ pub fn mux_recording_parts(dir: &Path) {
 mod tests {
     use super::*;
 
-    /// A save cut off after its raw files were written (Rewind closed or
+    /// A save cut off after its raw files were written (Hindsight closed or
     /// crashed) is finished on the next start, and its folder removed.
     #[test]
     fn unfinished_save_is_finished_on_next_start() {

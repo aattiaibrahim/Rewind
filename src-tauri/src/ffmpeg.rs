@@ -26,7 +26,11 @@ static JOB: OnceLock<usize> = OnceLock::new();
 
 /// Use the copy bundled next to the app, or the one in vendor/ during development.
 pub fn init(resource_dir: Option<PathBuf>) {
+    // Development fallback only: release builds don't carry this folder's path.
+    #[cfg(debug_assertions)]
     let dev = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../vendor/ffmpeg/bin"));
+    #[cfg(not(debug_assertions))]
+    let dev = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("ffmpeg"))).unwrap_or_default();
     let dir = match resource_dir.map(|r| r.join("ffmpeg")) {
         Some(d) if d.join("ffmpeg.exe").exists() => d,
         _ => dev,
@@ -66,7 +70,7 @@ pub fn args(a: &[&str]) -> Vec<std::ffi::OsString> {
 
 /// ffmpeg's default AAC search ("twoloop") can loop forever on some audio
 /// (seen with a 44.1 kHz mic resampled to 48 kHz, build N-128198). The
-/// "fast" coder never does and sounds the same at Rewind's bitrates, so
+/// "fast" coder never does and sounds the same at Hindsight's bitrates, so
 /// every AAC encode uses it.
 pub const AAC_SAFE: [&str; 2] = ["-aac_coder", "fast"];
 
@@ -136,7 +140,7 @@ pub fn run_limited<S: AsRef<std::ffi::OsStr>>(name: &str, args: &[S], limit: Opt
     }
 }
 
-/// Put a child in a job object so it dies with Rewind, even if Rewind crashes.
+/// Put a child in a job object so it dies with Hindsight, even if Hindsight crashes.
 pub fn adopt(child: &Child) {
     let raw = *JOB.get_or_init(|| unsafe {
         let Ok(job) = CreateJobObjectW(None, PCWSTR::null()) else {

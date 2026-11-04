@@ -10,6 +10,8 @@
 //! - Copied clips are remembered (nas-synced.txt), so a clip deleted on the NAS
 //!   isn't copied back again.
 //! - Optionally the local copy is removed once the NAS copy is verified.
+//! - Nothing is copied while a game is running (in front or tabbed out of)
+//!   or a recording is going, so it never costs frames.
 //! - The worker never touches the network on the save path: duplicate-name
 //!   checks use the cached NAS listing.
 
@@ -34,11 +36,13 @@ pub struct NasState {
     pub pending: usize,
     /// File being copied right now
     pub copying: Option<String>,
-    /// Clips copied since Rewind started
+    /// Clips copied since Hindsight started
     pub copied: usize,
     pub last_error: Option<String>,
     /// When the last full pass finished (ms since 1970)
     pub last_sync: Option<i64>,
+    /// Waiting because a game is running or a clip is recording
+    pub paused: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -185,6 +189,8 @@ pub fn sync_once(
     remove_local: bool,
     min_age: Duration,
     mut on_copy: impl FnMut(Option<&str>),
+    // Checked before each copy: true stops the pass (a game started).
+    stop: &dyn Fn() -> bool,
 ) -> Result<Pass, String> {
     if !nas.is_dir() {
         return Err(format!("Can't reach {}", nas.display()));
@@ -214,6 +220,9 @@ pub fn sync_once(
             None => {}
         }
         pass.pending += 1;
+        if stop() {
+            continue; // counted as waiting, copied on a later pass
+        }
         on_copy(Some(&rel));
         let name = dest.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let tmp = dest.with_file_name(format!(".{name}{PARTIAL}"));
@@ -307,6 +316,20 @@ pub fn start(app: AppHandle) {
                 publish(&app, |st| *st = NasState::default());
                 continue;
             }
+            // Copying reads the SSD and uses the network: wait until the game is closed.
+            let app_busy = {
+                let st = app.state::<crate::AppState>();
+                st.engine.is_recording()
+            };
+            if crate::games::game_running() || app_busy {
+                publish(&app, |st| {
+                    st.enabled = true;
+                    st.paused = true;
+                    st.copying = None;
+                });
+                continue;
+            }
+            publish(&app, |st| st.paused = false);
             if crate::engine::saves_in_progress() > 0 {
                 std::thread::sleep(Duration::from_secs(3));
                 wake();
@@ -322,7 +345,7 @@ pub fn start(app: AppHandle) {
             let result = sync_once(Path::new(&s.clips_dir), &nas, &mut synced, s.nas_remove_local, SETTLE, |now| {
                 let now = now.map(|r| r.rsplit('/').next().unwrap_or(r).to_string());
                 publish(&a, |st| st.copying = now);
-            });
+            }, &|| crate::games::game_running());
             if let Some(p) = &manifest {
                 save_synced(p, &s.nas_dir, &synced);
             }
@@ -382,13 +405,28 @@ mod tests {
     }
 
     #[test]
+    fn nothing_is_copied_while_a_game_is_running() {
+        let (local, nas) = (tmp("g-local"), tmp("g-nas"));
+        fs::create_dir_all(&nas).unwrap();
+        clip(&local, "VALORANT/a.mkv", 1000);
+        let mut synced = HashSet::new();
+        let pass = sync_once(&local, &nas, &mut synced, true, Duration::ZERO, |_| {}, &|| true).unwrap();
+        assert!(pass.copied.is_empty() && pass.removed.is_empty());
+        assert_eq!(pass.pending, 1);
+        assert!(local.join("VALORANT/a.mkv").exists() && !nas.join("VALORANT/a.mkv").exists());
+        // Game closed: the next pass copies it.
+        let pass = sync_once(&local, &nas, &mut synced, false, Duration::ZERO, |_| {}, &|| false).unwrap();
+        assert_eq!(pass.copied.len(), 1);
+    }
+
+    #[test]
     fn copies_clips_into_matching_game_folders() {
         let (local, nas) = (tmp("a-local"), tmp("a-nas"));
         clip(&local, "VALORANT/VALORANT 2026-11-03 10-00-00 - PC1.mkv", 1000);
         clip(&local, "Desktop/Desktop 2026-11-03 10-01-00 - PC1.mkv", 500);
         clip(&local, ".rewind-save-123/part.mkv", 50); // in-progress save: never copied
         let mut synced = HashSet::new();
-        let pass = sync_once(&local, &nas, &mut synced, false, Duration::ZERO, |_| {}).unwrap();
+        let pass = sync_once(&local, &nas, &mut synced, false, Duration::ZERO, |_| {}, &|| false).unwrap();
         assert_eq!(pass.copied.len(), 2, "{pass:?}");
         assert_eq!(pass.pending, 0);
         assert_eq!(size(&nas.join("VALORANT/VALORANT 2026-11-03 10-00-00 - PC1.mkv")), Some(1000));
@@ -398,7 +436,7 @@ mod tests {
         // Local copies are kept unless asked.
         assert!(local.join("VALORANT/VALORANT 2026-11-03 10-00-00 - PC1.mkv").exists());
         // A second pass does nothing.
-        let again = sync_once(&local, &nas, &mut synced, false, Duration::ZERO, |_| {}).unwrap();
+        let again = sync_once(&local, &nas, &mut synced, false, Duration::ZERO, |_| {}, &|| false).unwrap();
         assert!(again.copied.is_empty() && again.errors.is_empty());
         let _ = (fs::remove_dir_all(&local), fs::remove_dir_all(&nas));
     }
@@ -408,7 +446,7 @@ mod tests {
         let (local, nas) = (tmp("b-local"), tmp("b-nas"));
         clip(&local, "Game/new.mkv", 100);
         let mut synced = HashSet::new();
-        let pass = sync_once(&local, &nas, &mut synced, false, Duration::from_secs(60), |_| {}).unwrap();
+        let pass = sync_once(&local, &nas, &mut synced, false, Duration::from_secs(60), |_| {}, &|| false).unwrap();
         assert!(pass.copied.is_empty());
         assert!(!nas.join("Game").exists());
         let _ = (fs::remove_dir_all(&local), fs::remove_dir_all(&nas));
@@ -419,16 +457,16 @@ mod tests {
         let (local, nas) = (tmp("c-local"), tmp("c-nas"));
         let a = clip(&local, "Game/a.mkv", 300);
         let mut synced = HashSet::new();
-        sync_once(&local, &nas, &mut synced, false, Duration::ZERO, |_| {}).unwrap();
+        sync_once(&local, &nas, &mut synced, false, Duration::ZERO, |_| {}, &|| false).unwrap();
         // Deleted on the NAS: not copied back.
         fs::remove_file(nas.join("Game/a.mkv")).unwrap();
-        let pass = sync_once(&local, &nas, &mut synced, true, Duration::ZERO, |_| {}).unwrap();
+        let pass = sync_once(&local, &nas, &mut synced, true, Duration::ZERO, |_| {}, &|| false).unwrap();
         assert!(pass.copied.is_empty());
         // ...and the local copy is kept, because there's no NAS copy to rely on.
         assert!(a.exists());
         // A new clip with "remove local" on: copied, verified, then removed here.
         let b = clip(&local, "Game/b.mkv", 400);
-        let pass = sync_once(&local, &nas, &mut synced, true, Duration::ZERO, |_| {}).unwrap();
+        let pass = sync_once(&local, &nas, &mut synced, true, Duration::ZERO, |_| {}, &|| false).unwrap();
         assert_eq!(pass.copied, vec!["Game/b.mkv".to_string()]);
         assert_eq!(pass.removed, vec!["Game/b.mkv".to_string()]);
         assert!(!b.exists());
@@ -442,7 +480,7 @@ mod tests {
         clip(&local, "Game/x.mkv", 100);
         clip(&nas, "Game/x.mkv", 999);
         let mut synced = HashSet::new();
-        let pass = sync_once(&local, &nas, &mut synced, true, Duration::ZERO, |_| {}).unwrap();
+        let pass = sync_once(&local, &nas, &mut synced, true, Duration::ZERO, |_| {}, &|| false).unwrap();
         assert!(pass.copied.is_empty());
         assert_eq!(pass.errors.len(), 1);
         assert_eq!(size(&nas.join("Game/x.mkv")), Some(999));
@@ -454,7 +492,7 @@ mod tests {
     fn unreachable_nas_is_an_error_not_a_crash() {
         let local = tmp("e-local");
         let mut synced = HashSet::new();
-        assert!(sync_once(&local, Path::new(r"Z:\no\such\nas"), &mut synced, false, Duration::ZERO, |_| {}).is_err());
+        assert!(sync_once(&local, Path::new(r"Z:\no\such\nas"), &mut synced, false, Duration::ZERO, |_| {}, &|| false).is_err());
         let _ = fs::remove_dir_all(&local);
     }
 
