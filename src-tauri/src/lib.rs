@@ -4,6 +4,7 @@ mod audio_edit;
 mod bench;
 mod consolidate;
 mod control;
+mod drives;
 mod engine;
 mod ffmpeg;
 mod folder_merge;
@@ -417,6 +418,82 @@ async fn undo_last_move(app: AppHandle) -> Result<consolidate::Outcome, String> 
     let log = latest_move_log(&app).ok_or("Nothing to undo.")?;
     let out = blocking(move || Ok(consolidate::undo(&log))).await?;
     let _ = app.emit("clips-changed", ());
+    Ok(out)
+}
+
+/// Cleanup's Shrink: compress to about 40% of the size, replace the original (it goes to the
+/// Recycle Bin), and keep the clip's date so it stays where it was in the library.
+#[tauri::command]
+async fn shrink_clip(app: AppHandle, path: String) -> Result<String, String> {
+    let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+    let when = meta.modified().ok();
+    let target_mb = ((meta.len() as f64 / 1_048_576.0) * 0.4).round().max(8.0) as u32;
+    if (target_mb as u64) * 1_048_576 >= meta.len() {
+        return Err("It's already small; shrinking wouldn't save anything.".into());
+    }
+    let secs = duration_of(&path);
+    let out = edit(app.clone(), path, true, secs, move |p| library::compress(p, target_mb, &Default::default())).await?;
+    if let Some(t) = when {
+        let _ = std::fs::File::options().write(true).open(&out).and_then(|f| f.set_modified(t));
+    }
+    let _ = app.emit("clips-changed", ());
+    Ok(out)
+}
+
+// ---------- Clips on other drives (an external HDD, an old Medal folder) ----------
+
+/// Look through every drive for folders with clips. Read only; can take a few seconds.
+#[tauri::command]
+async fn find_clip_folders(app: AppHandle) -> Result<Vec<drives::FoundFolder>, String> {
+    let s = settings_of(&app);
+    blocking(move || {
+        let mut avoid = vec![PathBuf::from(&s.clips_dir)];
+        if !s.nas_dir.is_empty() {
+            avoid.push(PathBuf::from(&s.nas_dir));
+        }
+        let shown: Vec<PathBuf> = s.linked_folders.iter().map(PathBuf::from).collect();
+        Ok(drives::find(&drives::drive_roots(), &avoid, &shown))
+    })
+    .await
+}
+
+fn import_plan(s: &Settings, path: &str, copy: bool) -> Result<consolidate::Plan, String> {
+    let p = PathBuf::from(path);
+    if !p.is_dir() {
+        return Err("That folder isn't there anymore (is the drive still connected?).".into());
+    }
+    let root = library::LinkedRoot { label: drives::label_for(&p), path: p };
+    let avoid: Vec<PathBuf> = move_avoid(s).into_iter().filter(|a| !library::same_path(a, &root.path)).collect();
+    let plan = consolidate::plan_many(std::slice::from_ref(&root), std::path::Path::new(&s.clips_dir), &avoid);
+    Ok(if copy { consolidate::as_copy(plan) } else { plan })
+}
+
+/// What importing a folder would do: how many clips, how big, where they land. Nothing is touched.
+#[tauri::command]
+async fn plan_import(app: AppHandle, path: String, copy: bool) -> Result<consolidate::Plan, String> {
+    let s = settings_of(&app);
+    blocking(move || import_plan(&s, &path, copy)).await
+}
+
+/// Copy (originals stay) or move a folder's clips into Hindsight's game folders. Undo with "Undo last move".
+#[tauri::command]
+async fn import_folder(app: AppHandle, path: String, copy: bool) -> Result<consolidate::Outcome, String> {
+    let s = settings_of(&app);
+    let dir = moves_dir(&app)?;
+    let a = app.clone();
+    let out = blocking(move || {
+        let plan = import_plan(&s, &path, copy)?;
+        let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+        let tag = format!("{}{}", plan.label, if copy { "+copied" } else { "" })
+            .replace(|c: char| !c.is_ascii_alphanumeric() && c != '+', "_");
+        let log = dir.join(format!("{stamp}-{tag}.jsonl"));
+        Ok(consolidate::run(&plan, &log, |done, total| {
+            let _ = a.emit("move-progress", (done, total));
+        }))
+    })
+    .await?;
+    let _ = app.emit("clips-changed", ());
+    nas::wake();
     Ok(out)
 }
 
@@ -1249,6 +1326,10 @@ pub fn run() {
             last_move,
             undo_last_move,
             similar_game_folders,
+            find_clip_folders,
+            shrink_clip,
+            plan_import,
+            import_folder,
             merge_game_folders,
             keep_folders_separate,
             start_bench,

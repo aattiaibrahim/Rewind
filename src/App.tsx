@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import { api, errText } from "./api";
 import { BufferCard } from "./BufferCard";
+import { Cleanup } from "./Cleanup";
 import { ConfirmDelete } from "./ConfirmDelete";
 import { ConfirmUpdate, updateInterrupts } from "./ConfirmUpdate";
 import { MergeDialog, SimilarBanner, spellings, useNewSimilar, useSimilarFolders } from "./FolderMerge";
@@ -18,7 +19,10 @@ import logo from "./logo.svg";
 import { SettingsView } from "./SettingsView";
 import { Studio } from "./Studio";
 
-type View = "clips" | "damaged" | "studio" | "performance" | "settings";
+type View = "clips" | "local" | "synced" | "damaged" | "cleanup" | "studio" | "performance" | "settings";
+/** The clip lists (Studio goes back to whichever you came from). */
+type ListView = "clips" | "local" | "synced" | "damaged";
+const isList = (v: View): v is ListView => v === "clips" || v === "local" || v === "synced" || v === "damaged";
 type ToastAction = { label: string; run: () => void };
 type Toast = { id: number; text: string; sub?: string; err?: boolean; action?: ToastAction };
 type PendingDelete = { paths: string[]; resolve: (deleted: boolean) => void };
@@ -197,14 +201,27 @@ export default function App() {
     () => (clips ? clips.filter((c) => health[c.path] && health[c.path].state !== "ok") : null),
     [clips, health],
   );
+  // With a NAS: the clips on this PC, and the ones on the NAS (synced from here, or from other PCs).
+  const syncing = !!settings?.nasDir;
+  const localClips = useMemo(() => (clips ? clips.filter((c) => c.location !== "nas") : null), [clips]);
+  const syncedClips = useMemo(() => (clips ? clips.filter((c) => c.onNas || c.location === "nas") : null), [clips]);
   // Which list Studio goes back to.
-  const [listView, setListView] = useState<"clips" | "damaged">("clips");
+  const [listView, setListView] = useState<ListView>("clips");
   useEffect(() => {
-    if (view === "clips" || view === "damaged") setListView(view);
-  }, [view]);
-  const nav: [View, string][] = [
+    if (isList(view)) setListView(view);
+    if ((view === "local" || view === "synced") && !syncing) setView("clips");
+  }, [view, syncing]);
+  /** [view, label, sub-item under Clips] */
+  const nav: [View, string, boolean?][] = [
     ["clips", "Clips"],
+    ...(syncing
+      ? ([
+          ["local", "Local clips", true],
+          ["synced", "Synced clips", true],
+        ] as [View, string, boolean][])
+      : []),
     ["damaged", "Damaged"],
+    ["cleanup", "Cleanup"],
     ...(settings?.benchmarkMode ? ([["performance", "Performance"]] as [View, string][]) : []),
     ["settings", "Settings"],
   ];
@@ -217,12 +234,12 @@ export default function App() {
     const back = () => {
       if (document.querySelector(".modal-backdrop")) return;
       if (view === "studio") setView(listView);
-      else if (view === "clips" || view === "damaged") window.dispatchEvent(new Event("rewind-top"));
+      else if (isList(view)) window.dispatchEvent(new Event("rewind-top"));
       else setView("clips");
     };
     const forward = () => {
       if (document.querySelector(".modal-backdrop")) return;
-      if ((view === "clips" || view === "damaged") && studioPath) setView("studio");
+      if (isList(view) && studioPath) setView("studio");
     };
     const onMouse = (e: MouseEvent) => {
       if (e.button === 3 || e.button === 4) {
@@ -259,11 +276,11 @@ export default function App() {
           HINDSIGHT
           {upd?.current && <span className="brand-version">v{upd.current}</span>}
         </div>
-        {nav.map(([id, label]) => (
+        {nav.map(([id, label, sub]) => (
           <button
             key={id}
-            className={`nav-item ${navOn(id) ? "on" : ""}`}
-            onClick={() => (id === view && (id === "clips" || id === "damaged") ? window.dispatchEvent(new Event("rewind-top")) : setView(id))}
+            className={`nav-item ${sub ? "nav-sub" : ""} ${navOn(id) ? "on" : ""}`}
+            onClick={() => (id === view && isList(id) ? window.dispatchEvent(new Event("rewind-top")) : setView(id))}
           >
             {label}
             {id === "damaged" && !!damagedClips?.length && (
@@ -316,6 +333,34 @@ export default function App() {
             focusPath={studioPath}
             onShare={requestShare}
             health={health}
+          />
+        )}
+        {(view === "local" || view === "synced") && (
+          <Library
+            key={view}
+            clips={view === "local" ? localClips : syncedClips}
+            mode={view}
+            onOpen={openInStudio}
+            onToast={(t, e) => toast(t, e)}
+            onChanged={refresh}
+            onDelete={requestDelete}
+            hotkey={settings?.hotkey ?? "Alt+F10"}
+            uploads={uploads.progress}
+            links={uploads.history}
+            focusPath={studioPath}
+            onShare={requestShare}
+            health={health}
+          />
+        )}
+        {view === "cleanup" && settings && (
+          <Cleanup
+            clips={clips}
+            settings={settings}
+            update={update}
+            onOpen={openInStudio}
+            onDelete={requestDelete}
+            onToast={(t, e) => toast(t, e)}
+            onChanged={refresh}
           />
         )}
         {view === "damaged" && (

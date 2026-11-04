@@ -25,6 +25,9 @@ pub struct Move {
     pub to: PathBuf,
     #[serde(default)]
     pub size: u64,
+    /// Copied (the original stays where it was) rather than moved
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub copied: bool,
 }
 
 #[derive(Serialize, Clone, Debug, Default)]
@@ -39,6 +42,8 @@ pub struct Plan {
     pub examples: Vec<(String, String)>,
     /// Moving to another drive copies the data (slower) instead of renaming
     pub other_drive: bool,
+    /// Copy into Hindsight and leave the originals where they are
+    pub copy: bool,
     #[serde(skip)]
     pub moves: Vec<Move>,
 }
@@ -139,7 +144,7 @@ pub fn plan_many(roots: &[LinkedRoot], clips_dir: &Path, avoid: &[PathBuf]) -> P
             None => plan.folders.push((folder.clone(), 1)),
         }
         plan.bytes += c.size;
-        plan.moves.push(Move { from, to, size: c.size });
+        plan.moves.push(Move { from, to, size: c.size, copied: false });
     }
     plan.count = plan.moves.len();
     plan.folders.sort_by(|a, b| b.1.cmp(&a.1));
@@ -191,6 +196,39 @@ pub(crate) fn move_file(from: &Path, to: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Copy one file, keeping the original: a hidden partial file first, size checked, then renamed.
+pub(crate) fn copy_file(from: &Path, to: &Path) -> Result<(), String> {
+    if to.exists() {
+        return Err("something with that name already exists".into());
+    }
+    if let Some(dir) = to.parent() {
+        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let size = fs::metadata(from).map_err(|e| e.to_string())?.len();
+    let name = to.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let tmp = to.with_file_name(format!(".{name}.rewind-partial"));
+    let res = (|| {
+        fs::copy(from, &tmp).map_err(|e| e.to_string())?;
+        if fs::metadata(&tmp).map(|m| m.len()).ok() != Some(size) {
+            return Err("the copy came out the wrong size".to_string());
+        }
+        fs::rename(&tmp, to).map_err(|e| e.to_string())
+    })();
+    if res.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    res
+}
+
+/// The same plan, but copying: the clips stay where they are, a copy lands in Hindsight.
+pub fn as_copy(mut plan: Plan) -> Plan {
+    plan.copy = true;
+    for m in &mut plan.moves {
+        m.copied = true;
+    }
+    plan
+}
+
 /// Carry out a plan. Each finished move is logged immediately (one JSON line).
 pub fn run(plan: &Plan, log: &Path, mut progress: impl FnMut(usize, usize)) -> Outcome {
     let mut out = Outcome::default();
@@ -200,7 +238,8 @@ pub fn run(plan: &Plan, log: &Path, mut progress: impl FnMut(usize, usize)) -> O
     let mut f = fs::OpenOptions::new().create(true).append(true).open(log).ok();
     for (i, m) in plan.moves.iter().enumerate() {
         progress(i, plan.moves.len());
-        match move_file(&m.from, &m.to) {
+        let done = if m.copied { copy_file(&m.from, &m.to) } else { move_file(&m.from, &m.to) };
+        match done {
             Ok(()) => {
                 out.moved += 1;
                 if let (Some(f), Ok(line)) = (f.as_mut(), serde_json::to_string(m)) {
@@ -227,6 +266,18 @@ pub fn undo(log: &Path) -> Outcome {
     for m in read_log(log).into_iter().rev() {
         if !m.to.exists() {
             out.failed.push((m.to.to_string_lossy().into_owned(), "it's not there anymore".into()));
+            continue;
+        }
+        if m.copied {
+            // The original never moved: undoing a copy removes the copy, if it's still the same file.
+            let same = fs::metadata(&m.to).map(|x| x.len()).ok() == Some(m.size) && m.from.exists();
+            match if same { fs::remove_file(&m.to).map_err(|e| e.to_string()) } else { Err("it changed since it was copied, so it was left".into()) } {
+                Ok(()) => out.moved += 1,
+                Err(e) => {
+                    out.failed.push((m.to.to_string_lossy().into_owned(), e));
+                    left.push(m);
+                }
+            }
             continue;
         }
         match move_file(&m.to, &m.from) {
@@ -337,6 +388,31 @@ mod tests {
         assert_eq!(safe_name("Rainbow Six: Siege"), "Rainbow Six Siege");
         assert_eq!(safe_name("  A/B?  "), "A B");
         assert_eq!(safe_name("..."), "Other");
+    }
+
+    #[test]
+    fn copy_keeps_the_originals_and_undo_removes_only_the_copies() {
+        let base = std::env::temp_dir().join(format!("rewind-copy-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let hdd = base.join("HDD/recording");
+        let clips = base.join("Hindsight");
+        old_file(&hdd.join("2024-01-01 10-00-00.mkv"), 40);
+        old_file(&hdd.join("2024-01-02 10-00-00.mkv"), 50);
+        fs::create_dir_all(&clips).unwrap();
+        let root = LinkedRoot { path: hdd.clone(), label: "recording".into() };
+        let plan = as_copy(plan(&root, &clips, &[]));
+        assert!(plan.copy && plan.count == 2 && plan.bytes == 90);
+        let log = base.join("copy.jsonl");
+        let out = run(&plan, &log, |_, _| {});
+        assert_eq!(out.moved, 2, "{:?}", out.failed);
+        assert_eq!(fs::read_dir(&hdd).unwrap().count(), 2, "originals stay");
+        let copies: Vec<_> = plan.moves.iter().map(|m| m.to.clone()).collect();
+        assert!(copies.iter().all(|c| c.exists()));
+        let back = undo(&log);
+        assert_eq!(back.moved, 2, "{:?}", back.failed);
+        assert!(copies.iter().all(|c| !c.exists()), "copies removed");
+        assert_eq!(fs::read_dir(&hdd).unwrap().count(), 2, "originals untouched");
+        let _ = fs::remove_dir_all(&base);
     }
 
     #[test]

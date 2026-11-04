@@ -134,7 +134,7 @@ pub fn plan(roots: &[PathBuf], key: &str, target: &str) -> Result<Plan, String> 
             plan.bytes += bytes;
             if !target_here && others.len() == 1 {
                 // No rival on this side: one rename does it (instant, also on the NAS).
-                plan.moves.push(Move { from, to: dest.clone(), size: 0 });
+                plan.moves.push(Move { from, to: dest.clone(), size: 0, copied: false });
                 continue;
             }
             let mut taken: HashSet<String> = HashSet::new();
@@ -145,7 +145,7 @@ pub fn plan(roots: &[PathBuf], key: &str, target: &str) -> Result<Plan, String> 
                 }
                 let to = free_name(&dest, &fname, &mut taken);
                 let size = fs::metadata(&f).map(|m| m.len()).unwrap_or(0);
-                plan.moves.push(Move { from: f, to, size });
+                plan.moves.push(Move { from: f, to, size, copied: false });
             }
         }
     }

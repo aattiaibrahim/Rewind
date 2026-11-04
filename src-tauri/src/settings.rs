@@ -63,6 +63,8 @@ pub struct Settings {
     pub folder_names: std::collections::BTreeMap<String, String>,
     /// Games whose folder spellings the user chose to keep separate (game keys)
     pub similar_dismissed: Vec<String>,
+    /// Cleanup: clips the user chose to keep (path → size then), hidden until the next cleanup check
+    pub cleanup_kept: std::collections::BTreeMap<String, u64>,
     /// Show the Performance page (benchmark against other recorders)
     pub benchmark_mode: bool,
     /// Where Upload sends clips: "catbox" | "litterbox" | "discord" | "streamable"
@@ -120,6 +122,7 @@ impl Default for Settings {
             linked_folders: Vec::new(),
             folder_names: std::collections::BTreeMap::new(),
             similar_dismissed: Vec::new(),
+            cleanup_kept: std::collections::BTreeMap::new(),
             benchmark_mode: false,
             upload_host: "catbox".into(),
             litterbox_time: "72h".into(),
