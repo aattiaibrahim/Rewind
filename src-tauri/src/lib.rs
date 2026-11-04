@@ -1,3 +1,4 @@
+mod app_audio;
 mod audio;
 mod audio_edit;
 mod bench;
@@ -606,6 +607,23 @@ async fn rescue_clip(app: AppHandle, path: String) -> Result<String, String> {
     Ok(out)
 }
 
+/// Replace a damaged clip with its longest good part (original to the Recycle Bin).
+#[tauri::command]
+async fn heal_clip(app: AppHandle, path: String) -> Result<String, String> {
+    let cache = data_file(&app, "health.json")?;
+    let out = blocking(move || {
+        let h = health::results(&cache, std::slice::from_ref(&path)).remove(&path).ok_or("Check the clip first.")?;
+        let best = h.best.ok_or("There's no undamaged part long enough to keep.")?;
+        let healed = health::heal(&path, best)?;
+        // The healed file gets checked again in the background like any new clip.
+        health::forget(&cache, &path);
+        Ok(healed)
+    })
+    .await?;
+    let _ = app.emit("clips-changed", ());
+    Ok(out)
+}
+
 /// Medal / OBS / NVIDIA clip folders found on this PC.
 #[tauri::command]
 async fn recorder_clip_folders() -> Result<Vec<bench::recorders::ClipFolder>, String> {
@@ -704,6 +722,19 @@ async fn export_h264(app: AppHandle, path: String, replace: bool, audio: Option<
     let secs = duration_of(&path);
     let audio = audio.unwrap_or_default();
     edit(app, path, replace, secs, move |p| library::export_h264(p, &audio)).await
+}
+
+#[tauri::command]
+async fn export_audio(
+    path: String,
+    start: f64,
+    end: f64,
+    track: Option<usize>,
+    label: String,
+    audio: Option<audio_edit::AudioEdit>,
+) -> Result<String, String> {
+    let audio = audio.unwrap_or_default();
+    blocking(move || library::export_audio(&path, start, end, track, &label, &audio)).await
 }
 
 #[tauri::command]
@@ -1089,6 +1120,7 @@ pub fn run() {
             trim_clip,
             clip_waveforms,
             export_h264,
+            export_audio,
             compress_clip,
             reveal_file,
             delete_clips,
@@ -1113,6 +1145,7 @@ pub fn run() {
             clip_health,
             health_progress,
             rescue_clip,
+            heal_clip,
             plan_move_into_rewind,
             move_into_rewind,
             last_move,

@@ -6,6 +6,7 @@ import { liveLink, progressText, ShareRequest, timeLeft } from "./Share";
 import { Timeline } from "./Timeline";
 import { DamagedStatus, damagedText } from "./Health";
 import { DeletePreview } from "./DeletePreview";
+import { HealReview } from "./HealReview";
 
 /** Where each list (all clips, damaged clips) was scrolled to, kept while you're in Studio (the page itself unmounts). */
 const memories: Record<string, { scroll: number; folder: string; query: string }> = {};
@@ -293,6 +294,7 @@ export function Library({
 
   const selecting = selected.size > 0;
   const [previewing, setPreviewing] = useState(false);
+  const [healing, setHealing] = useState(false);
   // In the order they appear on the page.
   const selectedClips = useMemo(
     () => (clips ?? []).filter((c) => selected.has(c.path) && visible.includes(c.path)),
@@ -404,7 +406,13 @@ export function Library({
             Open any video…
           </button>
         )}
+        {damagedMode && !!clips?.length && (
+          <button className="btn primary" onClick={() => setHealing(true)} title="Go through them one by one: watch what's kept, then heal or skip each">
+            Review and heal ({clips.length})…
+          </button>
+        )}
       </div>
+      {healing && clips && health && <HealReview clips={clips} health={health} onClose={() => setHealing(false)} onToast={onToast} />}
       {damagedMode && <DamagedStatus count={clips?.length ?? 0} />}
 
       {selecting ? (

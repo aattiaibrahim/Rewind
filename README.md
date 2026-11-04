@@ -56,7 +56,7 @@
 - **Tray icon shows a red dot** while capturing, like OBS.
 - **Save clip hotkey** (default `Alt+F10`). Clips from a detected game go to `Videos\Hindsight\<Game>\`; everything else goes to `Videos\Hindsight\Desktop\`.
 - **Full recording** (default `Alt+F9`, or the Record buttons). It reuses the same capture, so there's no second encoder. A crash mid-recording is recovered on the next start, and recording stops by itself if the disk drops below 1.5 GB free.
-- **Clip health check**: finds clips that won't play properly (common with NVIDIA and OBS MP4s after a driver hiccup or crash), marks them in the library, and rescues the good part into a new file without re-encoding. It runs only while no game is in front, on the GPU's video decoder, and stops the moment a game starts.
+- **Clip health check**: finds clips that won't play properly (common with NVIDIA and OBS MP4s after a driver hiccup or crash), marks them in the library, and heals them: you review each one (the part that would be kept plays first) and choose whether to cut it down to its good part, without re-encoding. The original goes to the Recycle Bin; clips on a NAS are never replaced, only copied. It runs only while no game is in front, on the GPU's video decoder, and stops the moment a game starts.
 - **Game detection**: known game exes, game-library installs (Steam, Epic, Riot, Xbox, GOG, Ubisoft, EA, Rockstar, Battle.net) and fullscreen apps. Browsers, Discord, launchers and so on count as Desktop. Steam and Epic games get their store names, and a clip saved while you're tabbed out of a game that's still running goes to that game.
 - **Capture always runs at below-normal CPU priority**, so games get the CPU first.
 - **Win+P safe capture**: the monitor is re-picked within about 1 s after Win+P, a resolution change or a monitor being plugged in. Modes: follow primary, follow cursor, or one fixed monitor.
@@ -66,7 +66,9 @@
 - **NAS library** (Settings → Library & NAS):
   - Clips save to this PC first, so saving stays instant and works offline. They then copy in the background to a network folder in the same `<Game>\` layout, verified by size before they count as copied.
   - Several PCs can share one NAS: file names include the PC's name, and clips from other PCs show up in the library.
+  - Copying waits until your game is closed (in front or tabbed out of) and stops between files if one starts, so it never costs frames.
   - Optionally, the local copy is removed once it's safely on the NAS.
+  - Other recorders' clips (Medal, NVIDIA, OBS) aren't copied until you move them into Hindsight's folders; the setting says so and has a button for it.
 - **Clips from other recorders**: Medal, OBS and NVIDIA folders are found from their own settings and shown in the library in place, grouped by game. Nothing is moved or copied. Any other folder can be added too.
 - **Move into Hindsight**: tidies a linked folder into Hindsight's layout (`<Game>\<Game> <date time>`), merging game names across spellings.
   - Same-drive moves are instant renames. Other drives copy, check the size, and only then remove the original.
@@ -80,19 +82,19 @@
   - The webhook address and Streamable password are stored encrypted with Windows DPAPI, never in settings.json.
 - **Save sound**: a short chime when a clip or recording is saved, a low tone if it fails (can be turned off).
 - **Open any video** from any folder; it shows up under "Imported".
-- **Audio tracks in the editor**: each track (desktop sound, microphone) gets its own lane under the timeline with its waveform, so you can see where the action is. Drag across a lane to mute that part, mute a whole track, or make a track louder or quieter (±20 dB). The changes go into the saved trim, export or compress.
+- **Audio tracks in the editor**: each track (desktop sound, microphone, Discord) gets its own lane under the timeline with its waveform, so you can see where the action is. Drag across a lane to mute that part, mute a whole track, or make a track louder or quieter (±20 dB). The changes go into the saved trim, export or compress. **Audio only** saves the trimmed part as an MP3, all tracks mixed or one on its own.
 - **Mic volume** (Settings → Recording → Audio): makes the microphone louder or quieter for everything you record, ±20 dB, applied straight away without restarting the buffer.
 - **Damaged section**: every clip the health check finds broken, in one place, with the same date timeline as the library. A badge on the sidebar shows how many there are.
 - **Studio**: preview, drag in/out handles, one frame-exact **Save trim** that re-encodes only the moment before the first keyframe (under a second) and copies the rest untouched, so it takes a few seconds and keeps full quality.
 - **Per-file tools**: remux to MP4 (only for the file you pick), export H.264 MP4, compress to 10/25/50/100 MB. Originals are never changed.
 
-- **Audio**: desktop sound (WASAPI loopback, track 1) and the microphone (mono by default, track 2), both on by default. Synced to video within about 10 ms. Exports and compresses mix both tracks into one.
+- **Audio**: desktop sound (track 1), the microphone (mono by default, track 2) and Discord on its own track (track 3, left out of desktop sound, Windows 10 2004 or later), all on by default. Synced to video within about 10 ms. Exports and compresses mix the tracks into one.
 - **Replace original** option: trims, exports and compresses overwrite the edited file, and the old one goes to the Recycle Bin.
 - **Performance test** (Performance page, shown when **Settings → Advanced → Benchmark mode** is on): compares your game's FPS, 1% lows and GPU time per frame with nothing recording vs Hindsight, OBS replay buffer, NVIDIA Instant Replay and Medal. Hindsight switches each recorder on and off by itself (it opens and closes OBS and Medal, and presses your NVIDIA Instant Replay shortcut), so you just keep playing, and puts them back the way they were afterwards. After a warm-up, runs alternate nothing → recorder → nothing over several rounds in a shuffled order; each recorder is compared with the runs either side of it, and results carry 95% confidence ranges, so differences inside the game's own noise are reported as "no measurable cost". Every run is checked (game in front, the right recorder encoding, nothing else encoding), and it warns about drift, V-Sync, FPS caps, CPU-bound scenes and recorders set to a different resolution, FPS or buffer length. Frame times come from Intel PresentMon. **Share on GitHub** sends your results to the [benchmarks](benchmarks/README.md) page.
 
 ## Not yet
 
-- Per-game profiles, per-app audio tracks, the in-game overlay, a multi-track editor (text, merge), and HDR tone-mapping.
+- Per-game profiles, more per-app audio tracks, the in-game overlay, a multi-track editor (text, merge), and HDR tone-mapping.
 
 ## How it works (native engine, default)
 

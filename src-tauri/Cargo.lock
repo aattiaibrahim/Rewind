@@ -3265,7 +3265,7 @@ dependencies = [
 
 [[package]]
 name = "rewind"
-version = "0.1.23"
+version = "0.1.24"
 dependencies = [
  "chrono",
  "cpal",
@@ -3283,6 +3283,7 @@ dependencies = [
  "tauri-plugin-updater",
  "trash",
  "windows 0.61.3",
+ "windows-core 0.61.2",
 ]
 
 [[package]]

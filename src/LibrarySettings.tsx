@@ -37,6 +37,8 @@ function nasLine(s: Settings, n: NasState | null) {
   if (!s.nasDir) return "Off. Clips stay on this PC only.";
   if (!n || !n.enabled) return "Starting…";
   if (!n.reachable) return `Can't reach it right now. Clips keep saving here and copy over once it's back. (${n.lastError ?? ""})`;
+  if (n.paused)
+    return `Paused while you play${n.pending ? ` (${n.pending} clip${n.pending === 1 ? "" : "s"} waiting)` : ""}. Copying starts again once the game is closed.`;
   if (n.copying) return `Copying ${n.copying}…`;
   const parts = [n.pending ? `${n.pending} clip${n.pending === 1 ? "" : "s"} waiting to copy` : "Everything is copied"];
   if (n.lastSync) parts.push(`checked ${ago(n.lastSync)}`);
@@ -143,7 +145,8 @@ export function LibrarySettings({
           <small style={{ wordBreak: "break-all" }}>{s.nasDir || "Not set"}</small>
           <small>
             Clips save to this PC first (instant, works offline), then copy to the NAS in the background into the same game
-            folders. Several PCs can share one NAS: file names include each PC's name.
+            folders, only once you've closed your game so it never costs frames. Several PCs can share one NAS: file names
+            include each PC's name.
           </small>
           <small className={nas && s.nasDir && !nas.reachable && nas.enabled ? "err-text" : ""}>{nasLine(s, nas)}</small>
         </span>
@@ -171,6 +174,22 @@ export function LibrarySettings({
           </span>
           <Toggle label="Remove local copy" checked={s.nasRemoveLocal} onChange={(v) => set({ nasRemoveLocal: v })} />
         </label>
+      )}
+
+      {s.nasDir && s.linkedFolders.length > 0 && (
+        <div className="setting sub">
+          <span>
+            Clips from other recorders aren't copied
+            <small>
+              The {s.linkedFolders.length} other recorder folder{s.linkedFolders.length === 1 ? "" : "s"} below (Medal, NVIDIA,
+              OBS…) only show in your library, they stay where they are. Move them into Hindsight's folders first and they'll
+              copy to the NAS like your own clips{s.nasRemoveLocal ? ", then be removed from this PC" : ""}.
+            </small>
+          </span>
+          <button className="btn small" disabled={!!job} onClick={() => askMove(s.linkedFolders)}>
+            Move into Hindsight…
+          </button>
+        </div>
       )}
 
       <HealthSetting on={s.healthCheck} set={(v) => set({ healthCheck: v })} Toggle={Toggle} />

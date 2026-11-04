@@ -487,6 +487,19 @@ export function SettingsView({
             </span>
             <Toggle label="Desktop audio" checked={s.desktopAudio} onChange={(v) => set({ desktopAudio: v })} />
           </label>
+          {s.desktopAudio && (
+            <label className="setting">
+              <span>
+                Discord on its own track
+                <small>
+                  Discord voice and sounds go to a separate track (track 3) and are left out of desktop audio, so in the
+                  editor you can mute your friends and keep the game, or the other way round. Exports and shares still mix
+                  everything together.
+                </small>
+              </span>
+              <Toggle label="Discord on its own track" checked={s.discordTrack} onChange={(v) => set({ discordTrack: v })} />
+            </label>
+          )}
           <label className="setting">
             <span>
               Microphone

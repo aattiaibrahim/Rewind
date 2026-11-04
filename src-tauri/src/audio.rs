@@ -42,6 +42,10 @@ fn apply_gain(samples: &mut [f32], g: f32) {
 
 pub enum Source {
     Desktop,
+    /// Everything except Discord (falls back to `Desktop` on older Windows)
+    DesktopNoDiscord,
+    /// Only Discord
+    Discord,
     Mic { device: String, mono: bool },
 }
 
@@ -101,6 +105,23 @@ fn open(src: Source, chunks: Option<Chunks>) -> Result<Opened, String> {
     let queue: Queue = Arc::new(Mutex::new(VecDeque::new()));
     let (tx, rx) = mpsc::channel::<Result<(u32, u16, String), String>>();
 
+    let per_app = match &src {
+        Source::DesktopNoDiscord => Some(crate::app_audio::Target::AllButDiscord),
+        Source::Discord => Some(crate::app_audio::Target::Discord),
+        _ => None,
+    };
+    if let Some(target) = per_app {
+        match open_per_app(target, stop.clone(), queue.clone(), chunks.clone()) {
+            Ok(name) => return Ok((stop, queue, crate::app_audio::RATE, crate::app_audio::CHANNELS, name)),
+            // Older Windows: desktop audio still works, just with Discord in it.
+            Err(e) if target == crate::app_audio::Target::AllButDiscord => {
+                eprintln!("[rewind] desktop audio without Discord isn't available ({e}); using all desktop audio");
+                return open(Source::Desktop, chunks);
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
     // The cpal stream has to stay on the thread that made it.
     {
         let (stop, queue) = (stop.clone(), queue.clone());
@@ -123,11 +144,42 @@ fn open(src: Source, chunks: Option<Chunks>) -> Result<Opened, String> {
     Ok((stop, queue, rate, channels, device))
 }
 
+/// Per-app capture (see app_audio) feeding the same queue / chunks as cpal.
+fn open_per_app(target: crate::app_audio::Target, stop: Arc<AtomicBool>, q: Queue, chunks: Option<Chunks>) -> Result<String, String> {
+    let (tx, rx) = mpsc::channel();
+    let max = crate::app_audio::RATE as usize * crate::app_audio::CHANNELS as usize * 2;
+    thread::Builder::new()
+        .name("rewind-app-audio".into())
+        .spawn(move || {
+            crate::app_audio::run(target, stop, tx, move |at, samples| {
+                if let Some(chunks) = &chunks {
+                    let mut c = chunks.lock().unwrap();
+                    c.push_back((at, samples));
+                    while c.len() > 400 {
+                        c.pop_front();
+                    }
+                } else {
+                    let mut q = q.lock().unwrap();
+                    q.extend(samples);
+                    while q.len() > max {
+                        q.pop_front();
+                    }
+                }
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rx.recv_timeout(Duration::from_secs(6)).map_err(|_| "Per-app audio didn't respond.".to_string())??;
+    Ok(match target {
+        crate::app_audio::Target::AllButDiscord => "everything except Discord".into(),
+        crate::app_audio::Target::Discord => "Discord".into(),
+    })
+}
+
 fn open_stream(src: &Source, q: Queue, chunks: Option<Chunks>) -> Result<(cpal::Stream, u32, u16, String), String> {
     let host = cpal::default_host();
     let is_mic = matches!(src, Source::Mic { .. });
     let (dev, cfg, mono) = match src {
-        Source::Desktop => {
+        Source::Desktop | Source::DesktopNoDiscord | Source::Discord => {
             let d = host.default_output_device().ok_or("No speakers or headphones found.")?;
             let c = d.default_output_config().map_err(|e| e.to_string())?;
             (d, c, false)

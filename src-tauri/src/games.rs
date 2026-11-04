@@ -221,6 +221,16 @@ pub fn current_game() -> Option<String> {
     (s.at.elapsed() < STICKY && still_running(s.pid)).then(|| s.game.clone())
 }
 
+/// Is a game being played: in front, or still running after you tabbed out
+/// of it (however long ago). For work that should wait until you're done.
+pub fn game_running() -> bool {
+    if foreground_game().is_some() {
+        return true;
+    }
+    let last = LAST.lock().unwrap();
+    last.as_ref().is_some_and(|s| still_running(s.pid))
+}
+
 /// Clip folder for right now: the game's name, or "Desktop".
 pub fn clip_folder() -> String {
     current_game().map(|g| folder_name(&g)).unwrap_or_else(|| DESKTOP_FOLDER.into())

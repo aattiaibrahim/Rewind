@@ -830,6 +830,43 @@ pub fn export_h264_into(path: &str, out: PathBuf, audio: &AudioEdit) -> Result<S
     finish(args, out)
 }
 
+/// Just the sound of [start, end] as an MP3: every track mixed into one, or
+/// one track on its own (`track`). Audio edits (mutes, volume) are applied.
+/// `label` names the file, e.g. "Clip (Microphone).mp3".
+pub fn export_audio(path: &str, start: f64, end: f64, track: Option<usize>, label: &str, audio: &AudioEdit) -> Result<String, String> {
+    let info = probe(path)?;
+    let n = info.audio_tracks as usize;
+    if n == 0 {
+        return Err("This clip has no audio.".into());
+    }
+    if track.is_some_and(|i| i >= n) {
+        return Err("That audio track isn't in this clip.".into());
+    }
+    let start = start.max(0.0);
+    let end = if end > start + 0.05 { end } else { info.duration };
+    let label: String = label.chars().filter(|c| c.is_alphanumeric() || " -_&".contains(*c)).collect();
+    let label = label.trim();
+    let suffix = if label.is_empty() { " (audio)".to_string() } else { format!(" ({label})") };
+    let out = unique(Path::new(path), &suffix, "mp3");
+    let (ss, to) = (format!("{start:.3}"), format!("{end:.3}"));
+    let mut args = ffmpeg::args(&["-hide_banner", "-loglevel", "error", "-ss", &ss, "-to", &to, "-i"]);
+    args.push(path.into());
+    // The input starts at the cut (-ss before -i), so mute times shift by `start`.
+    let graph = match track {
+        Some(i) => format!("{}anull[out]", audio.chain(i, start)),
+        None if n == 1 => format!("{}anull[out]", audio.chain(0, start)),
+        None => {
+            let mut parts: Vec<String> = (0..n).map(|i| format!("{}anull[t{i}]", audio.chain(i, start))).collect();
+            let inputs: String = (0..n).map(|i| format!("[t{i}]")).collect();
+            parts.push(format!("{inputs}amix=inputs={n}:duration=longest:normalize=0[out]"));
+            parts.join(";")
+        }
+    };
+    args.extend(ffmpeg::args(&["-filter_complex", &graph, "-map", "[out]", "-vn", "-c:a", "libmp3lame", "-b:a", "256k"]));
+    args.push(out.clone().into());
+    finish(args, out)
+}
+
 /// Fit under `target_mb` (e.g. Discord's limit). Drops to 720p when the bitrate gets low.
 pub fn compress(path: &str, target_mb: u32, audio: &AudioEdit) -> Result<String, String> {
     compress_into(path, target_mb, unique(Path::new(path), &format!(" ({target_mb} MB)"), "mp4"), audio)
@@ -1085,6 +1122,21 @@ mod tests {
         let out = export_h264(&sample(&d, "a.mkv"), &AudioEdit::default()).unwrap();
         let p = probe(&out).unwrap();
         assert_eq!((p.codec.as_str(), p.audio_tracks), ("h264", 1));
+        let _ = fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn export_audio_is_an_mp3_of_the_range() {
+        let d = tmp("export-audio");
+        let src = sample(&d, "a.mkv");
+        let mixed = export_audio(&src, 0.5, 1.5, None, "", &AudioEdit::default()).unwrap();
+        assert!(mixed.ends_with("a (audio).mp3"), "{mixed}");
+        let p = probe(&mixed).unwrap();
+        assert_eq!((p.codec.as_str(), p.audio_tracks), ("", 1));
+        assert!((p.duration - 1.0).abs() < 0.15, "{}", p.duration);
+        let one = export_audio(&src, 0.0, 0.0, Some(1), "Microphone", &AudioEdit::default()).unwrap();
+        assert!(one.ends_with("a (Microphone).mp3"), "{one}");
+        assert!(export_audio(&src, 0.0, 1.0, Some(9), "", &AudioEdit::default()).is_err());
         let _ = fs::remove_dir_all(d);
     }
 

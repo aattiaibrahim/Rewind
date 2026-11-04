@@ -36,6 +36,8 @@ pub struct Settings {
     /// Videos opened from outside the clips folder
     pub external_files: Vec<String>,
     pub desktop_audio: bool,
+    /// Record Discord on its own track (and leave it out of desktop audio)
+    pub discord_track: bool,
     pub mic_enabled: bool,
     pub mic_mono: bool,
     /// "" = Windows default microphone
@@ -100,6 +102,7 @@ impl Default for Settings {
             replace_original_on_edit: false,
             external_files: Vec::new(),
             desktop_audio: true,
+            discord_track: true,
             mic_enabled: true,
             mic_mono: true,
             mic_device: String::new(),

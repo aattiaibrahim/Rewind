@@ -28,7 +28,20 @@ export function damagedText(h: Health) {
 }
 
 /** Studio: what's wrong, and a one-click rescue of the good part. */
-export function HealthNotice({ path, health, onRescued }: { path: string; health: Health | undefined; onRescued: (p: string) => void }) {
+export function HealthNotice({
+  path,
+  health,
+  busy: editing = false,
+  onHeal,
+  onRescued,
+}: {
+  path: string;
+  health: Health | undefined;
+  busy?: boolean;
+  /** Replace the clip with its good part */
+  onHeal?: () => void;
+  onRescued: (p: string) => void;
+}) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   if (!health || health.state === "ok") return null;
@@ -51,11 +64,19 @@ export function HealthNotice({ path, health, onRescued }: { path: string; health
         The file was already like this when it was saved (it's common with NVIDIA and OBS MP4s after a driver hiccup or a
         crash). Hindsight's own clips are saved as MKV, which survives crashes, so they're far less likely to be hit.
       </small>
+      {best && onHeal && (
+        <button
+          className="btn small primary"
+          disabled={busy || editing}
+          onClick={onHeal}
+          title="Shows the part that would be kept. After you've watched it you can cut the clip down to it (nothing is re-encoded; the original goes to the Recycle Bin)."
+        >
+          Review and heal…
+        </button>
+      )}
       {best && (
-        <button className="btn small" disabled={busy} onClick={rescue} title="Copies the good part into a new file. Nothing is re-encoded and the original stays.">
-          {busy
-            ? "Rescuing…"
-            : `Rescue the good part (${fmtTime(best[0]).replace(/\.\d+$/, "")}–${fmtTime(best[1]).replace(/\.\d+$/, "")})`}
+        <button className="btn small" disabled={busy || editing} onClick={rescue} title="Copies the good part into a new file. Nothing is re-encoded and the original stays.">
+          {busy ? "Saving…" : "Save the good part as a copy"}
         </button>
       )}
       {err && <small className="err-text">{err}</small>}
@@ -89,7 +110,7 @@ export function DamagedStatus({ count }: { count: number }) {
   return (
     <p className="muted damaged-status">
       {count > 0
-        ? "These clips won't play properly all the way through. Open one to see which part is damaged and rescue the rest into a new file. The original is never changed."
+        ? "These clips won't play properly all the way through. Review and heal shows each one's good part so you can decide, one clip at a time, whether to cut it down to that part (nothing is re-encoded, originals go to the Recycle Bin)."
         : "Hindsight checks your clips in the background, one at a time, only while you're not gaming or recording."}{" "}
       <span className="damaged-progress">{statusText(p)}</span>
     </p>
@@ -113,7 +134,7 @@ export function HealthSetting({
       <span>
         Check clips for damage
         <small>
-          Finds clips that won't play properly and offers to rescue the good part. Runs only while no game is in front, on
+          Finds clips that won't play properly and offers to heal them (keep only the good part). Runs only while no game is in front, on
           the graphics card's video decoder, one clip at a time, and stops the moment a game starts.
         </small>
         <small>{status}</small>

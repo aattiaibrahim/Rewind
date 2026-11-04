@@ -38,6 +38,8 @@ export type Settings = {
   replaceOriginalOnEdit: boolean;
   externalFiles: string[];
   desktopAudio: boolean;
+  /** Discord on its own track, left out of desktop audio */
+  discordTrack: boolean;
   micEnabled: boolean;
   micMono: boolean;
   micDevice: string;
@@ -179,6 +181,8 @@ export type NasState = {
   copied: number;
   lastError: string | null;
   lastSync: number | null;
+  /** Waiting because a game is running or a recording is going */
+  paused: boolean;
 };
 
 export type ClipFolder = { label: string; path: string; exists: boolean };
@@ -298,6 +302,9 @@ export const api = {
   clipWaveforms: (path: string) => invoke<Waveform[]>("clip_waveforms", { path }),
   exportH264: (path: string, replace = false, audio?: TrackEdit[]) =>
     invoke<string>("export_h264", { path, replace, audio: audio ?? null }),
+  /** MP3 of [start, end]: every track mixed (track null) or one track alone. */
+  exportAudio: (path: string, start: number, end: number, track: number | null, label: string, audio?: TrackEdit[]) =>
+    invoke<string>("export_audio", { path, start, end, track, label, audio: audio ?? null }),
   compress: (path: string, targetMb: number, replace = false, audio?: TrackEdit[]) =>
     invoke<string>("compress_clip", { path, targetMb, replace, audio: audio ?? null }),
   listAudioInputs: () => invoke<string[]>("list_audio_inputs"),
@@ -322,6 +329,8 @@ export const api = {
   clipHealth: (paths: string[]) => invoke<Record<string, Health>>("clip_health", { paths }),
   healthProgress: () => invoke<HealthProgress>("health_progress"),
   rescueClip: (path: string) => invoke<string>("rescue_clip", { path }),
+  /** Replace a damaged clip with its longest good part (original to the Recycle Bin). */
+  healClip: (path: string) => invoke<string>("heal_clip", { path }),
   secretsSet: () => invoke<{ discordWebhook: boolean; streamablePassword: boolean }>("secrets_set"),
   syncNasNow: () => invoke<void>("sync_nas_now"),
   recorderClipFolders: () => invoke<ClipFolder[]>("recorder_clip_folders"),

@@ -170,6 +170,43 @@ pub fn rescue(path: &str, from: f64, to: f64) -> Result<String, String> {
     Ok(out.to_string_lossy().into_owned())
 }
 
+/// Network shares and mapped network drives have no Recycle Bin: anything
+/// "recycled" there is gone for good.
+pub fn on_network(path: &str) -> bool {
+    use windows::Win32::Storage::FileSystem::GetDriveTypeW;
+    use windows::core::HSTRING;
+    if path.starts_with(r"\\") || path.starts_with("//") {
+        return true;
+    }
+    let Some(root) = path.get(..3).filter(|r| r.ends_with(":\\") || r.ends_with(":/")) else { return false };
+    const DRIVE_REMOTE: u32 = 4;
+    unsafe { GetDriveTypeW(&HSTRING::from(root)) == DRIVE_REMOTE }
+}
+
+/// Heal a damaged clip in place: keep only its longest good part (copied
+/// untouched, from the first keyframe after the damage), check the result,
+/// send the original to the Recycle Bin and give the healed file its name and
+/// date, so it stays in the same spot in the library.
+pub fn heal(path: &str, best: (f64, f64)) -> Result<String, String> {
+    if on_network(path) {
+        return Err("This clip is on a network folder (like the NAS), which has no Recycle Bin, so healing it in place could \
+                    lose the original for good. Use \"Save the good part as a copy\" instead."
+            .into());
+    }
+    let (a, b) = best;
+    let modified = fs::metadata(path).and_then(|m| m.modified()).ok();
+    let out = rescue(path, a, b)?;
+    let healed = crate::library::replace_original(path, &out, Some(b - a)).inspect_err(|_| {
+        let _ = fs::remove_file(&out);
+    })?;
+    if let Some(t) = modified
+        && let Ok(f) = fs::File::options().write(true).open(&healed)
+    {
+        let _ = f.set_modified(t);
+    }
+    Ok(healed)
+}
+
 // ---------- results cache + background checker ----------
 
 static CACHE: Mutex<Option<(PathBuf, BTreeMap<String, Health>)>> = Mutex::new(None);
@@ -306,6 +343,15 @@ mod tests {
     }
 
     #[test]
+    fn clips_on_the_network_are_never_healed_in_place() {
+        let nas = format!("{0}{0}nas{0}clips{0}VALORANT{0}a.mp4", '\\');
+        assert!(on_network(&nas));
+        assert!(!on_network(r"C:\Users\me\Videos\a.mp4"));
+        let err = heal(&nas, (70.0, 180.0)).unwrap_err();
+        assert!(err.contains("no Recycle Bin"), "{err}");
+    }
+
+    #[test]
     fn muxer_timestamp_warnings_are_not_damage() {
         assert!(!is_decode_error("[null @ 000002123df851c0] Application provided invalid, non monotonically increasing dts to muxer in stream 0: 99 >= 99"));
         assert!(!is_decode_error("    Last message repeated 3 times"));
@@ -331,5 +377,28 @@ mod tests {
             let again = check(&out, &|| true).unwrap();
             println!("rescued -> {out}: {} ({:.1} s, damaged {:?})", again.state, again.duration, again.damaged);
         }
+    }
+}
+
+#[cfg(test)]
+mod live_heal {
+    /// Heals a COPY of a damaged clip and checks it again: REWIND_HEAL_CLIP=path
+    /// cargo test live_heal -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn live_heal() {
+        crate::ffmpeg::init(None);
+        let Ok(p) = std::env::var("REWIND_HEAL_CLIP") else { return };
+        let before = std::fs::metadata(&p).unwrap().modified().unwrap();
+        let h = super::check(&p, &|| true).unwrap();
+        println!("before: {} {:?} best {:?} of {:.1}", h.state, h.damaged, h.best, h.duration);
+        let t = std::time::Instant::now();
+        let out = super::heal(&p, h.best.unwrap()).unwrap();
+        println!("healed in {:?} -> {out}", t.elapsed());
+        assert_eq!(out, p, "keeps the name");
+        assert_eq!(std::fs::metadata(&out).unwrap().modified().unwrap(), before, "keeps the date");
+        let again = super::check(&out, &|| true).unwrap();
+        println!("after: {} {:?} of {:.1}", again.state, again.damaged, again.duration);
+        assert_eq!(again.state, "ok");
     }
 }

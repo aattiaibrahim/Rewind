@@ -120,8 +120,9 @@ impl Pipeline {
         let mut tracks = Vec::new();
         let mut labels = Vec::new();
         let mut errors = Vec::new();
+        let desktop = if s.desktop_audio && s.discord_track { audio::Source::DesktopNoDiscord } else { audio::Source::Desktop };
         if s.desktop_audio {
-            match audio::start_ring(audio::Source::Desktop, keep_secs) {
+            match audio::start_ring(desktop, keep_secs) {
                 Ok((c, ring)) => {
                     labels.push(format!("Desktop: {}", c.device));
                     tracks.push(AudioTrack { title: "Desktop audio", bitrate: "192k", ring });
@@ -138,6 +139,16 @@ impl Pipeline {
                     caps.push(c);
                 }
                 Err(e) => errors.push(format!("Mic: {e}")),
+            }
+        }
+        if s.desktop_audio && s.discord_track {
+            match audio::start_ring(audio::Source::Discord, keep_secs) {
+                Ok((c, ring)) => {
+                    labels.push("Discord (own track)".into());
+                    tracks.push(AudioTrack { title: "Discord audio", bitrate: "160k", ring });
+                    caps.push(c);
+                }
+                Err(e) => errors.push(format!("Discord: {e}")),
             }
         }
 

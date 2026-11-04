@@ -6,6 +6,7 @@ import { api, ClipFile, codecLabel, errText, fmtSize, fmtTime, Health, PreviewAu
 import { AudioLanes, hasAudioEdits, isMutedAt } from "./AudioLanes";
 import { useThumb } from "./hooks";
 import { SharePanel, ShareRequest } from "./Share";
+import { HealReview } from "./HealReview";
 import { HealthNotice } from "./Health";
 import { Slider } from "./Slider";
 
@@ -313,6 +314,8 @@ export function Studio({
   const [waves, setWaves] = useState<Waveform[] | null>(null);
   const audioEdited = hasAudioEdits(audioEdits);
   const editsForSave = audioEdited ? audioEdits : undefined;
+  const [audioOnly, setAudioOnly] = useState("all");
+  const [healOpen, setHealOpen] = useState(false);
   // Keep every element's volume in step (also after it remounts for a new clip).
   const applyVolumes = useRef(() => {});
   applyVolumes.current = () => {
@@ -631,6 +634,7 @@ export function Studio({
   const name = path.split("\\").pop() ?? path;
   const busy = !!job;
   const wholeFile = a <= 0.01 && duration - b <= 0.05;
+  const trackTitles = tracks ? [tracks.firstTitle, ...tracks.extra.map((t) => t.title)].slice(0, info?.audioTracks ?? 1) : [];
 
   return (
     <div className="studio">
@@ -932,21 +936,73 @@ export function Studio({
               ))}
             </>
           )}
-          <HealthNotice path={path} health={health} onRescued={(p) => onRescued?.(p)} />
+          <HealthNotice
+            path={path}
+            health={health}
+            busy={busy}
+            onHeal={() => {
+              video.current?.pause();
+              setHealOpen(true);
+            }}
+            onRescued={(p) => onRescued?.(p)}
+          />
+          {healOpen && health && clips?.find((c) => c.path === path) && (
+            <HealReview
+              clips={clips.filter((c) => c.path === path)}
+              health={{ [path]: health }}
+              onClose={() => setHealOpen(false)}
+              onToast={(text, err) => setResult({ text, err })}
+              onHealed={() => {
+                onDone();
+                setReload((k) => k + 1);
+              }}
+            />
+          )}
           <div className="label">Share</div>
           <SharePanel path={path} settings={settings} progress={uploads?.[path]} links={links?.[path]} onShare={(r) => onShare?.(r)} />
           <div className="label">This file only</div>
           <div className="stack">
-            <button className="btn block" disabled={busy} onClick={() => run("Remuxing…", () => api.remuxMp4(path))}>
-              Remux to MP4 (no quality loss)
-            </button>
+            {!path.toLowerCase().endsWith(".mp4") && (
+              <button
+                className="btn block"
+                disabled={busy}
+                title="Same video and sound, just in an .mp4 file instead of .mkv. Instant and lossless, but the video stays AV1/HEVC, which some phones and older apps can't play."
+                onClick={() => run("Remuxing…", () => api.remuxMp4(path))}
+              >
+                Change to .mp4 (instant, lossless)
+              </button>
+            )}
             <button
               className="btn block"
               disabled={busy}
+              title="Re-encodes the video as H.264 and mixes the audio into one track, so it plays on every phone, browser, editor and Discord. Slower and a little bigger, with your audio changes."
               onClick={() => run("Exporting H.264…", () => api.exportH264(path, replace, editsForSave), replace)}
             >
-              Export as H.264 MP4
+              Export H.264 (plays everywhere)
             </button>
+            <div className="row">
+              <button
+                className="btn block"
+                style={{ flex: 1 }}
+                disabled={busy || !info?.audioTracks}
+                title="Just the sound of your trimmed part as an MP3, with your audio changes"
+                onClick={() => {
+                  const k = audioOnly === "all" ? null : Number(audioOnly);
+                  const label = k == null ? "audio" : (trackTitles[k] ?? `track ${k + 1}`).replace(/ audio$/i, "");
+                  run("Exporting audio…", () => api.exportAudio(path, a, b, k, label, editsForSave));
+                }}
+              >
+                Audio only (MP3)
+              </button>
+              <select className="select" aria-label="Which audio" value={audioOnly} onChange={(e) => setAudioOnly(e.target.value)}>
+                <option value="all">All tracks</option>
+                {trackTitles.map((t, k) => (
+                  <option key={k} value={String(k)}>
+                    {t.replace(/ audio$/i, "")}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div className="row">
               <button
                 className="btn block"
@@ -1003,9 +1059,11 @@ export function Studio({
               {result.text}
               {result.path && (
                 <div className="row" style={{ marginTop: 8 }}>
-                  <button className="btn small" onClick={() => onOpen(result.path!)}>
-                    Open it
-                  </button>
+                  {!/\.mp3$/i.test(result.path) && (
+                    <button className="btn small" onClick={() => onOpen(result.path!)}>
+                      Open it
+                    </button>
+                  )}
                   <button className="btn small" onClick={() => api.reveal(result.path!)}>
                     Show
                   </button>

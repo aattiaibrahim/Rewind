@@ -56,7 +56,7 @@ export function installDevMock() {
     clipsDir: "C:\\Users\\you\\Videos\\Hindsight", encoder: "av1", quality: 24, fps: 60, bufferSeconds: 120,
     bufferInRam: true, captureEngine: "native", monitorMode: "primary", fixedMonitor: "", drawCursor: true, hotkey: "Alt+F10",
     recordHotkey: "Alt+F9", bufferEnabled: true, launchOnStartup: false, autoUpdate: true, startMinimized: true,
-    keepOriginalAfterRemux: true, replaceOriginalOnEdit: false, externalFiles: [], desktopAudio: true,
+    keepOriginalAfterRemux: true, replaceOriginalOnEdit: false, externalFiles: [], desktopAudio: true, discordTrack: true,
     micEnabled: true, micMono: true, micDevice: "", micGainDb: 0, theme: "midnight", accent: "lime", reduceMotion: false,
     saveSound: true, nasDir: "", nasRemoveLocal: false, linkedFolders: [] as string[], benchmarkMode: false, uploadHost: "catbox", litterboxTime: "72h", autoUpload: false, postLinkToDiscord: false, streamableEmail: "", discordWebhookName: "", confirmUploads: true, healthCheck: true,
   };
@@ -108,8 +108,8 @@ export function installDevMock() {
     "plugin:opener|open_url": () => null,
     get_nas_state: () =>
       settings.nasDir
-        ? { enabled: true, reachable: true, pending: 1, copying: null, copied: 3, lastError: null, lastSync: Date.now() - 20_000 }
-        : { enabled: false, reachable: false, pending: 0, copying: null, copied: 0, lastError: null, lastSync: null },
+        ? { enabled: true, reachable: true, pending: 1, copying: null, copied: 3, lastError: null, lastSync: Date.now() - 20_000, paused: false }
+        : { enabled: false, reachable: false, pending: 0, copying: null, copied: 0, lastError: null, lastSync: null, paused: false },
     sync_nas_now: () => null,
     // Uploads (preview only): pretend to prepare and upload, with progress events, then give a fake link.
     upload_clip: async (a) => {
@@ -128,6 +128,8 @@ export function installDevMock() {
     clip_health: (a) => Object.fromEntries((a.paths as string[]).filter((p) => p.includes("Bayou")).map((p) => [p, { state: "damaged", damaged: [[0, 70]], best: [70, 180.2], duration: 180.2 }])),
     health_progress: () => ({ checked: 31, total: 49, damaged: 1, paused: false, running: true }),
     rescue_clip: (a) => (a.path as string).replace(/\.(\w+)$/, " (rescued).$1"),
+    heal_clip: async (a) => (await new Promise((r) => setTimeout(r, 900)), a.path as string),
+    export_audio: (a) => (a.path as string).replace(/\.(\w+)$/, " (audio).mp3"),
     copy_text: () => null,
     set_secret: (a) => { secrets[a.name as string] = !!a.value; return null; },
     check_sharing: () => [["catbox", [{ host: "catbox.moe", state: "ok" }, { host: "files.catbox.moe", state: "blocked" }]], ["litterbox", [{ host: "litter.catbox.moe", state: "ok" }]], ["discord", [{ host: "discord.com", state: "ok" }]], ["streamable", [{ host: "streamable.com", state: "ok" }]]],
