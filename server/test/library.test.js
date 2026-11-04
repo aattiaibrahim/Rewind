@@ -145,6 +145,25 @@ describe("scanLibrary", () => {
     assert.equal(loose.game, "Loose");
   });
 
+  test("folders that differ only by case, spaces or punctuation are one game", async () => {
+    const r = await mkdtemp(path.join(tmpdir(), "rewind-merge-"));
+    const add = async (rel) => {
+      await mkdir(path.dirname(path.join(r, rel)), { recursive: true });
+      await writeFile(path.join(r, rel), Buffer.alloc(10));
+    };
+    await add("Tom Clancys Rainbow Six Siege/Tom Clancys Rainbow Six Siege 2026-11-03 10-00-00 - PC1.mkv");
+    await add("Tom Clancy's Rainbow Six  Siege/a.mov");
+    await add("Tom Clancy's Rainbow Six  Siege/b.mov");
+    await add("VALORANT/VALORANT 2026-11-03 10-00-00 - PC1.mkv");
+    await add("Rust/MedalTVRust20230605210532.mp4");
+    const clips = await scanLibrary(r);
+    await rm(r, { recursive: true, force: true });
+    assert.deepEqual(gamesOf(clips), ["Rust", "Tom Clancy's Rainbow Six  Siege", "VALORANT"]);
+    const r6 = clips.find((c) => c.name.endsWith(".mkv") && c.folder.startsWith("Tom"));
+    assert.equal(r6.game, "Tom Clancy's Rainbow Six  Siege");
+    assert.equal(r6.folder, "Tom Clancys Rainbow Six Siege");
+  });
+
   test("missing root is an empty library", async () => {
     assert.deepEqual(await scanLibrary(path.join(root, "nope")), []);
   });

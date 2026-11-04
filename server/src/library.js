@@ -128,5 +128,35 @@ export async function scanLibrary(root) {
       await add(entry.name);
     }
   }
+  return mergeGameNames(clips);
+}
+
+/** Same rule as the desktop app: case, spaces and punctuation don't make a different game. */
+export function gameKey(name) {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+/**
+ * Folders that differ only by case, spacing or punctuation ("VALORANT" and "Valorant",
+ * "Tom Clancys Rainbow Six Siege" and "Tom Clancy's Rainbow Six  Siege") show as one game,
+ * named after the folder with the most clips. The clip's own folder is kept in `folder`.
+ */
+export function mergeGameNames(clips) {
+  const counts = new Map(); // key -> Map(name -> count)
+  for (const c of clips) {
+    const k = gameKey(c.game) || c.game;
+    if (!counts.has(k)) counts.set(k, new Map());
+    const m = counts.get(k);
+    m.set(c.game, (m.get(c.game) || 0) + 1);
+  }
+  const names = new Map();
+  for (const [k, m] of counts) {
+    const best = [...m].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0][0];
+    names.set(k, best);
+  }
+  for (const c of clips) {
+    c.folder = c.game;
+    c.game = names.get(gameKey(c.game) || c.game);
+  }
   return clips;
 }
