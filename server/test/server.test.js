@@ -11,6 +11,14 @@ import { createServer } from "../src/server.js";
 import { Library } from "../src/state.js";
 
 const FFMPEG = process.env.FFMPEG || "ffmpeg";
+const hasFfprobe = (() => {
+  try {
+    execFileSync(process.env.FFPROBE || "ffprobe", ["-version"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+})();
 const hasFfmpeg = (() => {
   try {
     execFileSync(FFMPEG, ["-version"], { stdio: "ignore" });
@@ -42,9 +50,10 @@ describe("server", () => {
       ], { stdio: "ignore" });
     }
     library = new Library(root, { rescanSeconds: 0 });
-    await library.start();
     const media = new Media({ cacheDir: cache });
     await media.init();
+    library.onChange = (clips) => media.scanMeta(clips, (c) => path.join(root, ...c.rel.split("/")));
+    await library.start();
     server = await createServer({ library, media });
     await new Promise((r) => server.listen(0, "127.0.0.1", r));
     base = `http://127.0.0.1:${server.address().port}`;
@@ -69,7 +78,15 @@ describe("server", () => {
     const health = await (await fetch(`${base}/healthz`)).json();
     assert.equal(health.ok, true);
     assert.equal(health.version, data.version);
-    const again = await fetch(`${base}/api/clips`, { headers: { "if-none-match": res.headers.get("etag") } });
+    // The tag also changes as clip info (durations, damage checks) comes in; once that's settled, 304.
+    let tag = res.headers.get("etag");
+    let again;
+    for (let i = 0; i < 40; i++) {
+      again = await fetch(`${base}/api/clips`, { headers: { "if-none-match": tag } });
+      if (again.status === 304) break;
+      tag = again.headers.get("etag");
+      await new Promise((r) => setTimeout(r, 250));
+    }
     assert.equal(again.status, 304);
   });
 
@@ -92,9 +109,31 @@ describe("server", () => {
     assert.notEqual((await fetch(`${base}/..%2F..%2Fetc%2Fpasswd`)).status, 200);
   });
 
+  test("storage: clips per game, total, and the folder's free space", async () => {
+    const s = await (await fetch(`${base}/api/storage`)).json();
+    assert.equal(s.clips.count, library.clips.length);
+    assert.equal(s.clips.bytes, library.clips.reduce((n, c) => n + c.size, 0));
+    assert.deepEqual(s.games.map((g) => g.game), ["Game"]);
+    assert.ok(s.disk && s.disk.total > 0 && s.disk.free >= 0 && s.disk.used <= s.disk.total, JSON.stringify(s.disk));
+    assert.equal(typeof s.cache.bytes, "number");
+  });
+
+  test("an unreadable clip is flagged damaged, with the list's tag changing", { skip: !hasFfprobe && "ffprobe not installed" }, async () => {
+    let c;
+    for (let i = 0; i < 40; i++) {
+      const data = await (await fetch(`${base}/api/clips`)).json();
+      c = data.clips.find((x) => x.name === "Game 2026-11-03 10-00-00 - PC1.mkv");
+      if (c.damaged !== undefined) break;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    assert.equal(c.damaged, true);
+  });
+
   test("serves the UI", async () => {
     const res = await fetch(`${base}/`);
-    assert.match(await res.text(), /Rewind Server/);
+    assert.match(await res.text(), /<title>Hindsight<\/title>/);
+    const font = await fetch(`${base}/fonts/geist-latin-wght-normal.woff2`);
+    assert.equal(font.headers.get("content-type"), "font/woff2");
   });
 
   test("thumbnail and phone version go to the cache, not the clips folder", { skip: !hasFfmpeg && "ffmpeg not installed" }, async () => {

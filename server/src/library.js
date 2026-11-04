@@ -61,6 +61,14 @@ export function localStamp(date) {
   return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}T${p(date.getHours())}:${p(date.getMinutes())}:${p(date.getSeconds())}`;
 }
 
+/** Which recorder made a clip, from its name: "" for Hindsight's own. */
+export function sourceOf(name, parsed = parseClipName(name)) {
+  if (parsed) return "";
+  if (/^medaltv/i.test(name)) return "Medal";
+  if (/\.dvr\.[^.]+$/i.test(name)) return "NVIDIA";
+  return "";
+}
+
 export function clipId(rel) {
   return createHash("sha1").update(rel).digest("base64url").slice(0, 16);
 }
@@ -83,6 +91,7 @@ export function makeClip(rel, info) {
     pc: parsed?.pc ?? null,
     recording: parsed?.recording ?? false,
     n: parsed?.n ?? 1,
+    source: sourceOf(name, parsed),
     takenAt,
     day: takenAt.slice(0, 10),
     ext: path.extname(name).slice(1).toLowerCase(),

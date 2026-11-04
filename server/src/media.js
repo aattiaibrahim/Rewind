@@ -2,7 +2,7 @@
 // Everything is written to the cache folder, never next to the clips.
 
 import { spawn } from "node:child_process";
-import { mkdir, readdir, rename, rm, stat, utimes } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const FFMPEG = process.env.FFMPEG || "ffmpeg";
@@ -58,6 +58,12 @@ export class Media {
     this.thumbQueue = limiter(thumbJobs);
     this.transcodeQueue = limiter(transcodeJobs);
     this.probes = new Map(); // key -> Promise<info>
+    // Per-clip facts for the list (duration, codec, damaged), kept in the cache across restarts.
+    this.metaFile = path.join(cacheDir, "meta.json");
+    this.metaByKey = {};
+    this.metaVersion = 0;
+    this.metaQueue = limiter(2);
+    this.metaPending = new Set();
     this.thumbs = new Map(); // key -> Promise<path>
     this.jobs = new Map(); // key -> { state, progress, error, promise }
   }
@@ -69,6 +75,80 @@ export class Media {
     for (const dir of [this.thumbDir, this.webDir]) {
       for (const f of await readdir(dir)) if (f.includes(".tmp")) await rm(path.join(dir, f), { force: true });
     }
+    await this.loadMeta();
+  }
+
+  async loadMeta() {
+    try {
+      this.metaByKey = JSON.parse(await readFile(this.metaFile, "utf8"));
+    } catch {
+      this.metaByKey = {};
+    }
+  }
+
+  saveMetaSoon() {
+    clearTimeout(this.metaTimer);
+    this.metaTimer = setTimeout(async () => {
+      const tmp = `${this.metaFile}.tmp`;
+      try {
+        await writeFile(tmp, JSON.stringify(this.metaByKey));
+        await rename(tmp, this.metaFile);
+      } catch (e) {
+        console.error("saving clip info failed:", e.message);
+      }
+    }, 2000);
+  }
+
+  /** What's known about a clip so far: { duration, codec, height, damaged } or null. */
+  meta(clip) {
+    return this.metaByKey[this.key(clip)] ?? null;
+  }
+
+  /**
+   * Read every clip once in the background (two at a time), so the list can show
+   * durations and flag clips that can't be read. Results stay in the cache.
+   */
+  scanMeta(clips, fileOf) {
+    const keep = new Set(clips.map((c) => this.key(c)));
+    let dropped = false;
+    for (const k of Object.keys(this.metaByKey)) {
+      if (!keep.has(k)) {
+        delete this.metaByKey[k];
+        dropped = true;
+      }
+    }
+    if (dropped) this.saveMetaSoon();
+    for (const clip of clips) {
+      const k = this.key(clip);
+      if (this.metaByKey[k] || this.metaPending.has(k)) continue;
+      this.metaPending.add(k);
+      this.metaQueue(async () => {
+        let m;
+        try {
+          const info = await this.probe(clip, fileOf(clip));
+          m = info.video
+            ? { duration: info.duration || null, codec: info.video.codec, height: info.video.height, damaged: false }
+            : { duration: info.duration || null, codec: null, height: null, damaged: true, why: "no video in the file" };
+        } catch (e) {
+          m = { duration: null, codec: null, height: null, damaged: true, why: String(e.message || e).split("\n").pop().slice(-200) };
+        }
+        this.metaByKey[k] = m;
+        this.metaVersion++;
+        this.saveMetaSoon();
+      }).finally(() => this.metaPending.delete(k));
+    }
+  }
+
+  /** Bytes used by thumbnails and phone versions. */
+  async cacheBytes() {
+    let total = 0;
+    for (const dir of [this.thumbDir, this.webDir]) {
+      for (const f of await readdir(dir).catch(() => [])) {
+        const s = await stat(path.join(dir, f)).catch(() => null);
+        if (s?.isFile()) total += s.size;
+      }
+    }
+    return total;
   }
 
   /** Cache key: changes when the clip is replaced. */

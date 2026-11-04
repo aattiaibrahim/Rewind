@@ -53,6 +53,7 @@ export class Library {
             this.clips = clips;
             this.byId = new Map(clips.map((c) => [c.id, c]));
             this.version++;
+            this.onChange?.(this.clips);
           }
           this.scannedAt = new Date().toISOString();
         } while (this.again);

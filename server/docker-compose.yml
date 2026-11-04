@@ -22,9 +22,11 @@ services:
       RESCAN_SECONDS: "60"
       MAX_CACHE_GB: "20"
       TRANSCODE_JOBS: "1"
+      # Cleanup may delete (to a 30-day trash) and shrink clips. Remove it for a read-only server.
+      ALLOW_CHANGES: "1"
     volumes:
-      # Clips: read-only. The server never writes here.
-      - ${CLIPS:-./sample-clips}:/clips:ro
+      # Clips. Add :ro (and drop ALLOW_CHANGES) and the server never writes here.
+      - ${CLIPS:-./sample-clips}:/clips
       # Thumbnails and phone versions.
       - rewind-cache:/cache
 

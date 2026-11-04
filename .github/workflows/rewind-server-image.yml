@@ -5,6 +5,7 @@ name: Rewind Server image
 on:
   push:
     branches: [main, hindsight]
+    tags: ["server-v*"]
     paths:
       - "server/**"
       - ".github/workflows/rewind-server-image.yml"
@@ -42,6 +43,7 @@ jobs:
           images: ghcr.io/${{ github.repository_owner }}/rewind-server
           tags: |
             type=raw,value=latest
+            type=match,pattern=server-v(.*),group=1
             type=sha,format=short
           labels: |
             org.opencontainers.image.title=Rewind Server

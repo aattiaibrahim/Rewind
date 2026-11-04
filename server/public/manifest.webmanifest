@@ -1,6 +1,6 @@
 {
-  "name": "Rewind Server",
-  "short_name": "Rewind",
+  "name": "Hindsight (NAS)",
+  "short_name": "Hindsight",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0e1014",

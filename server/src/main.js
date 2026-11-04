@@ -1,7 +1,9 @@
 // Rewind Server: serves a Rewind clip library over the local network.
 //
 // Environment:
-//   CLIPS_DIR      clips folder (read-only)            default /clips
+//   CLIPS_DIR      clips folder                        default /clips
+//   ALLOW_CHANGES  1 = cleanup may trash/shrink files  default off (read-only)
+//   TRASH_DAYS     days deleted clips stay in trash    default 30
 //   CACHE_DIR      thumbnails and phone copies         default /cache
 //   PORT           HTTP port                           default 8420
 //   RESCAN_SECONDS full rescan interval, 0 = off       default 60
@@ -9,7 +11,9 @@
 //   TRANSCODE_JOBS conversions at once                 default 1
 //   H264_ENCODER   ffmpeg encoder                      default libx264
 
+import path from "node:path";
 import { Library } from "./state.js";
+import { Cleanup } from "./cleanup.js";
 import { Media } from "./media.js";
 import { createServer, VERSION } from "./server.js";
 
@@ -26,8 +30,20 @@ const media = new Media({
 });
 
 await media.init();
+const cleanup = new Cleanup({
+  root: clipsDir,
+  cacheDir,
+  allow: env.ALLOW_CHANGES === "1" || env.ALLOW_CHANGES === "true",
+  trashDays: Number(env.TRASH_DAYS || 30),
+});
+await cleanup.init();
+console.log(cleanup.canChange ? `Cleanup can change files (trash kept ${cleanup.trashDays} days)` : "Read-only: cleanup only lists the biggest clips");
+// Trash older than TRASH_DAYS goes for good, checked every 6 hours.
+setInterval(() => cleanup.canChange && cleanup.purge().catch((e) => console.error("trash purge:", e.message)), 6 * 3600 * 1000).unref();
+const fileOf = (clip) => path.join(clipsDir, ...clip.rel.split("/"));
+library.onChange = (clips) => media.scanMeta(clips, fileOf);
 await library.start();
-const server = await createServer({ library, media });
+const server = await createServer({ library, media, cleanup });
 server.listen(port, () => {
   console.log(`Rewind Server ${VERSION}: ${library.clips.length} clips in ${clipsDir}, listening on :${port}`);
 });

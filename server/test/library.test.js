@@ -3,8 +3,8 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, describe, test } from "node:test";
-import { filterClips, gamesOf, groupClips } from "../public/group.js";
-import { isSkipped, makeClip, parseClipName, scanLibrary, stampFromName } from "../src/library.js";
+import { filterClips, gamesOf, groupByDay, groupClips } from "../public/group.js";
+import { isSkipped, makeClip, parseClipName, scanLibrary, sourceOf, stampFromName } from "../src/library.js";
 
 describe("parseClipName", () => {
   test("plain clip", () => {
@@ -206,5 +206,60 @@ describe("grouping and filtering", () => {
     assert.equal(filterClips(clips, { game: "Desktop" }).length, 1);
     assert.equal(filterClips(clips, { game: "VALORANT", search: "laptop" }).length, 1);
     assert.deepEqual(gamesOf(clips), ["Apex Legends", "Desktop", "VALORANT"]);
+  });
+
+  test("by day, like the desktop library: newest day first, every game together", () => {
+    const days = groupByDay(clips);
+    assert.deepEqual(days.map((d) => d.day), ["2026-11-03", "2026-11-02"]);
+    assert.deepEqual(days[0].clips.map((c) => c.takenAt.slice(11)), ["10:00:00", "10:00:00", "09:00:00", "08:00:00"]);
+    assert.equal(days[1].clips[0].game, "Apex Legends");
+  });
+});
+
+describe("sourceOf", () => {
+  test("names other recorders, nothing for Hindsight's own", () => {
+    assert.equal(sourceOf("MedalTVRust20230605210532.mp4"), "Medal");
+    assert.equal(sourceOf("Sea of Thieves 2024.07.27 - 21.19.42.02.DVR.mp4"), "NVIDIA");
+    assert.equal(sourceOf("VALORANT 2026-11-03 10-00-00 - PC1.mkv"), "");
+    assert.equal(sourceOf("Sequence 01.mp4"), "");
+  });
+});
+
+describe("filters, sorting and folders", async () => {
+  const { facet, filterClips: f, folders, sortBy } = await import("../public/group.js");
+  const mk = (rel, size, extra = {}) => ({ ...makeClip(rel, { size, mtime: new Date(0) }), ...extra });
+  const clips = [
+    mk("VALORANT/VALORANT 2026-11-03 10-00-00 - PC1.mkv", 300, { duration: 20 }),
+    mk("VALORANT/VALORANT Recording 2026-10-01 10-00-00 - LAPTOP.mkv", 900, { duration: 600 }),
+    mk("Rust/MedalTVRust20230605210532.mp4", 100, { duration: 60, damaged: true }),
+    mk("Rust/Rust 2026-11-02 10-00-00 - PC1.mkv", 500),
+  ];
+
+  test("PC, source, kind, dates, length, damaged", () => {
+    assert.equal(f(clips, { pcs: ["LAPTOP"] }).length, 1);
+    assert.equal(f(clips, { sources: ["Medal"] }).length, 1);
+    assert.equal(f(clips, { sources: [""] }).length, 3);
+    assert.equal(f(clips, { kind: "recording" }).length, 1);
+    assert.equal(f(clips, { kind: "clip" }).length, 3);
+    assert.equal(f(clips, { from: "2026-11-01" }).length, 2);
+    assert.equal(f(clips, { from: "2026-10-01", to: "2026-10-01" }).length, 1);
+    // Not measured yet (no duration) stays in.
+    assert.deepEqual(f(clips, { length: "short" }).map((c) => c.size).sort(), [300, 500]);
+    assert.equal(f(clips, { length: "long" })[0].size, 900);
+    assert.equal(f(clips, { damaged: true })[0].game, "Rust");
+  });
+
+  test("sorting", () => {
+    assert.deepEqual(sortBy(clips, "big").map((c) => c.size), [900, 500, 300, 100]);
+    assert.equal(sortBy(clips, "old")[0].source, "Medal");
+    assert.equal(sortBy(clips, "long")[0].duration, 600);
+    assert.equal(sortBy(clips)[0].size, 300);
+  });
+
+  test("folders and facets", () => {
+    const fs = folders(clips);
+    assert.deepEqual(fs.map((x) => [x.game, x.clips.length, x.bytes]), [["Rust", 2, 600], ["VALORANT", 2, 1200]]);
+    assert.equal(fs[1].newest.size, 300);
+    assert.deepEqual(facet(clips, "pc"), [["PC1", 2], ["", 1], ["LAPTOP", 1]]);
   });
 });

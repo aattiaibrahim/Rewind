@@ -1,7 +1,7 @@
 // HTTP API and static files. Read-only towards the clips folder.
 
 import { createReadStream } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, stat, statfs } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +10,10 @@ import { Media } from "./media.js";
 
 export const VERSION = (process.env.REWIND_SERVER_VERSION || "dev").slice(0, 7);
 const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "public");
+/** The release number (package.json), shown next to the commit. */
+export const RELEASE = JSON.parse(
+  await readFile(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf8"),
+).version;
 const TYPES = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -18,6 +22,8 @@ const TYPES = {
   ".json": "application/json",
   ".webmanifest": "application/manifest+json",
   ".png": "image/png",
+  ".woff2": "font/woff2",
+  ".txt": "text/plain; charset=utf-8",
 };
 
 function send(res, code, body, headers = {}) {
@@ -70,24 +76,90 @@ export async function sendFile(req, res, file, { type, download, cache } = {}) {
   stream.pipe(res);
 }
 
-export async function createServer({ library, media }) {
+/**
+ * Space used: clips per game and in total, the cache, and the clips dataset's
+ * size and free space as the NAS reports them (statfs of the mounted folder).
+ */
+export async function storage(library, media) {
+  const games = new Map();
+  let bytes = 0;
+  for (const c of library.clips) {
+    bytes += c.size;
+    const g = games.get(c.game) ?? { game: c.game, bytes: 0, count: 0 };
+    g.bytes += c.size;
+    g.count++;
+    games.set(c.game, g);
+  }
+  let disk = null;
+  try {
+    const s = await statfs(library.root);
+    const total = s.blocks * s.bsize;
+    const free = s.bavail * s.bsize;
+    disk = { total, free, used: total - free };
+  } catch {
+    // not available on this filesystem
+  }
+  return {
+    clips: { bytes, count: library.clips.length },
+    games: [...games.values()].sort((a, b) => b.bytes - a.bytes),
+    cache: { bytes: await media.cacheBytes() },
+    disk,
+  };
+}
+
+export async function createServer({ library, media, cleanup = null }) {
+  const withMeta = (c) => ({ ...c, ...(media.meta(c) ?? {}) });
+  const fail = (res, e) => send(res, e.status || 500, { error: String(e.message || e).slice(-500) });
+  const post = (req) => req.method === "POST";
+
   const route = async (req, res) => {
     const url = new URL(req.url, "http://x");
     const parts = url.pathname.split("/").filter(Boolean);
 
-    if (url.pathname === "/healthz") return send(res, 200, { ok: true, version: VERSION, clips: library.clips.length });
+    // ---- cleanup and trash ----
+    if (cleanup && url.pathname === "/api/cleanup") {
+      return send(res, 200, cleanup.list(library.clips.map(withMeta)), { "cache-control": "no-cache" });
+    }
+    if (cleanup && url.pathname === "/api/cleanup/check" && post(req)) {
+      await cleanup.check();
+      await library.rescan();
+      return send(res, 200, cleanup.list(library.clips.map(withMeta)));
+    }
+    if (cleanup && url.pathname === "/api/trash") return send(res, 200, cleanup.trashList(), { "cache-control": "no-cache" });
+    if (cleanup && url.pathname === "/api/trash/empty" && post(req)) {
+      try {
+        return send(res, 200, { removed: await cleanup.purge(true) });
+      } catch (e) {
+        return fail(res, e);
+      }
+    }
+    if (cleanup && parts[0] === "api" && parts[1] === "trash" && parts[3] === "restore" && post(req)) {
+      try {
+        await cleanup.restore(parts[2]);
+        await library.rescan();
+        return send(res, 200, { ok: true });
+      } catch (e) {
+        return fail(res, e);
+      }
+    }
+
+    if (url.pathname === "/healthz") return send(res, 200, { ok: true, version: VERSION, release: RELEASE, clips: library.clips.length });
 
     if (url.pathname === "/api/clips") {
-      const etag = `"v${library.version}"`;
+      // Changes when clips come or go, and as durations / damage checks come in.
+      const etag = `"v${library.version}-m${media.metaVersion}"`;
       if (req.headers["if-none-match"] === etag) {
         res.writeHead(304, { etag });
         return res.end();
       }
-      return send(res, 200, { clips: library.clips, games: gamesOf(library.clips), scannedAt: library.scannedAt, version: VERSION }, {
+      const clips = library.clips.map(withMeta);
+      return send(res, 200, { clips, games: gamesOf(library.clips), scannedAt: library.scannedAt, version: VERSION, release: RELEASE, canChange: !!cleanup?.canChange }, {
         etag,
         "cache-control": "no-cache",
       });
     }
+
+    if (url.pathname === "/api/storage") return send(res, 200, await storage(library, media), { "cache-control": "no-cache" });
 
     if (url.pathname === "/api/rescan" && req.method === "POST") {
       await library.rescan();
@@ -106,6 +178,8 @@ export async function createServer({ library, media }) {
           return sendFile(req, res, file, { type, download: url.searchParams.has("download") ? clip.name : null });
         }
         if (action === "thumb.jpg") {
+          // Known to be unreadable: don't start ffmpeg on it for every page view.
+          if (media.meta(clip)?.damaged) return send(res, 404, "no thumbnail: the clip can't be read");
           const out = await media.thumbnail(clip, file);
           return sendFile(req, res, out, { type: "image/jpeg", cache: "public, max-age=86400" });
         }
@@ -124,8 +198,26 @@ export async function createServer({ library, media }) {
             download: url.searchParams.has("download") ? `${base} (phone).mp4` : null,
           });
         }
+        if (cleanup && action === "keep" && post(req)) {
+          await cleanup.keep(clip);
+          return send(res, 200, { ok: true });
+        }
+        if (cleanup && action === "trash" && post(req)) {
+          const entry = await cleanup.toTrash(clip);
+          await library.rescan();
+          return send(res, 200, entry);
+        }
+        if (cleanup && action === "shrink" && post(req)) {
+          cleanup.needChange();
+          // Make (or wait for) the H.264 copy first; the page polls this until it's done.
+          const st = await media.webStatus(clip);
+          if (st.state !== "ready") return send(res, 200, st.state === "none" || st.state === "failed" ? await media.prepareWeb(clip, file) : st);
+          const out = await cleanup.shrink(clip, media.webPath(clip));
+          await library.rescan();
+          return send(res, 200, { state: "done", ...out });
+        }
       } catch (e) {
-        return send(res, 500, { error: String(e.message || e).slice(-500) });
+        return fail(res, e);
       }
       return send(res, 404, { error: "unknown action" });
     }
