@@ -1,0 +1,31 @@
+name: Feature request
+description: An idea for Hindsight (the app or the NAS server).
+title: "[Feature] "
+labels: ["feature request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Got an idea? Tell us what you'd like Hindsight to do, and why it'd help you.
+        Search the existing feature requests first: if yours is there, a 👍 on it helps it get picked.
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like?
+      description: The feature, in your own words.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why?
+      description: What it would help with, or how you work around it today.
+  - type: dropdown
+    id: where
+    attributes:
+      label: Which part?
+      options:
+        - Desktop app
+        - NAS server (web page)
+        - Both
+        - Website or docs

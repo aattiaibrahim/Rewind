@@ -17,7 +17,7 @@ Set-Location $root
 $conf = Get-Content "src-tauri\tauri.conf.json" -Raw | ConvertFrom-Json
 $version = $conf.version
 $tag = "v$version"
-$repo = "aattiaibrahim/Rewind"
+$repo = "aattiaibrahim/hindsight"
 if (-not (Test-Path $KeyPath)) { throw "Signing key not found at $KeyPath" }
 $ErrorActionPreference = "Continue"
 gh release view $tag --repo $repo *> $null

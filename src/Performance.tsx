@@ -9,7 +9,7 @@ function shareUrl(r: BenchReport, version: string | undefined) {
   const q = new URLSearchParams({ template: "benchmark.yml", title: `[Benchmark] ${r.game || "Desktop"}` });
   if (version) q.set("version", version);
   if (r.game) q.set("game", r.game);
-  return `https://github.com/aattiaibrahim/Rewind/issues/new?${q}`;
+  return `https://github.com/aattiaibrahim/hindsight/issues/new?${q}`;
 }
 
 const OTHERS: { app: BenchApp; label: string; how: string }[] = [

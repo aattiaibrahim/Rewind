@@ -486,7 +486,7 @@ export function SettingsView({
             <button
               className="btn small"
               onClick={() =>
-                openUrl("https://github.com/aattiaibrahim/Rewind/releases/latest/download/Hindsight.streamDeckPlugin").catch((e) =>
+                openUrl("https://github.com/aattiaibrahim/hindsight/releases/latest/download/Hindsight.streamDeckPlugin").catch((e) =>
                   onError(errText(e)),
                 )
               }

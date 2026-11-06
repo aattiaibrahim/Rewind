@@ -50,7 +50,7 @@
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhFNzA0MjU5MzM1OEYxQTUKUldTbDhWZ3pXVUp3amhpZ1hTdVQvMU83TU9QMXNKYW5KNlc4UmtkbjJFR0pmSmg5c0dvZyt2amoK",
-      "endpoints": ["https://github.com/aattiaibrahim/Rewind/releases/latest/download/latest.json"],
+      "endpoints": ["https://github.com/aattiaibrahim/hindsight/releases/latest/download/latest.json", "https://github.com/aattiaibrahim/Rewind/releases/latest/download/latest.json"],
       "windows": { "installMode": "passive" }
     }
   },

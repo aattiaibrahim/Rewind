@@ -2,7 +2,7 @@
   <img src="src/logo.svg" width="84" alt="" />
 </p>
 
-<h1 align="center">Hindsight</h1>
+<h1 align="center">Hindsight <sup><code>BETA</code></sup></h1>
 
 <p align="center">
   <b>The lightweight game clipper for Windows.</b><br />
@@ -10,7 +10,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/aattiaibrahim/Rewind/releases/latest"><b>⬇ Download for Windows</b></a>
+  <a href="https://github.com/aattiaibrahim/hindsight/releases/latest"><b>⬇ Download for Windows</b></a>
+  &nbsp;·&nbsp;
+  <a href="https://aattiaibrahim.github.io/hindsight/">Website</a>
   &nbsp;·&nbsp;
   <a href="benchmarks/README.md">Benchmarks</a>
   &nbsp;·&nbsp;
@@ -51,7 +53,7 @@
 </table>
 ## Features
 
-- **Replay buffer on NVENC**: AV1, HEVC or H.264, 15 s to 20 min, constant-quality mode.
+- **Replay buffer on NVENC**: AV1, HEVC or H.264, 15 s to 20 min, constant-quality mode. **Auto** (the default) asks the driver what your GPU can encode and uses the best: AV1 on an RTX 40/50, else HEVC, else H.264. A saved choice your GPU can't do falls back the same way.
 - **Buffer in RAM by default**: no constant SSD writes. A disk mode remains for very long buffers.
 - **Tray icon shows a red dot** while capturing, like OBS.
 - **Save clip hotkey** (default `Alt+F10`). Clips from a detected game go to `Videos\Hindsight\<Game>\`; everything else goes to `Videos\Hindsight\Desktop\`.
@@ -63,14 +65,21 @@
 - **Tray app**: left-click opens a quick flyout (save 30 s / 60 s / full, monitor mode, last clips); right-click shows a menu. Closing the window keeps it running in the tray.
 - **Launch with Windows** (starts in the tray), single instance.
 - **Library**: clips grouped by day and game, with search, thumbnails, codec and length.
+  - Each game shows its own logo (its program's icon, found from the game you played, Steam, Epic, Battle.net and Riot installs). Games saved under different spellings, or folders named after a program file ("SpeciesUnknown-Win64-Shipping"), are offered a merge or a tidy name.
+  - **On this day**: clips from this date in earlier years ("1 year ago today") at the top, played straight through in a slideshow.
+  - Only the clips near the screen load, newest requests first, and thumbnails and lengths are kept on the app's own folder, so big libraries and clips on a hard drive open quickly. **Prepare thumbnails ahead of time** makes them all in the background while you're not gaming.
+  - A NAS icon on each clip: a check when it's safely on the NAS, a minus when it isn't copied yet, an arrow when it's only on the NAS.
 - **NAS library** (Settings → Library & NAS):
   - Clips save to this PC first, so saving stays instant and works offline. They then copy in the background to a network folder in the same `<Game>\` layout. Each copy is read back from the NAS and checked byte for byte (SHA-256) against the original before it counts.
   - Several PCs can share one NAS: file names include the PC's name, and clips from other PCs show up in the library.
   - Copying waits until your game is closed (in front or tabbed out of) and stops between files if one starts, so it never costs frames.
   - Optionally, the local copy goes to the Recycle Bin once its NAS copy is checked identical.
   - Progress shows in the sidebar and in Settings: clips and GB left, percent, speed and time left.
+  - Edits stay in step: a clip you trim, heal or export in place replaces its NAS copy (verified the same way); the old NAS version is kept in a hidden `.hindsight-replaced` folder for 30 days. Clips that are only on the NAS are never replaced, since a network folder has no Recycle Bin.
+  - **Hindsight Server** runs on the NAS (TrueNAS or any Docker host): the library in any browser at home, with share links, montages and "On this day". See [server/README.md](server/README.md).
   - Other recorders' clips (Medal, NVIDIA, OBS) aren't copied until you move them into Hindsight's folders; the setting says so and has a button for it.
-- **Clips from other recorders**: Medal, OBS and NVIDIA folders are found from their own settings and shown in the library in place, grouped by game. Nothing is moved or copied. Any other folder can be added too.
+- **Clips from other recorders**: Medal, OBS, NVIDIA, Ascent, AMD ReLive, Xbox Game Bar, Outplayed, Insights Capture, SteelSeries Moments and Streamlabs folders are found (from their own settings where they keep them) and shown in the library in place, grouped by game. Nothing is moved or copied. Any other folder can be added too.
+- **Duplicates** (Cleanup): the same clip saved in two places (a copy instead of a move, Medal's Clips and Imported, Ascent's Clips and Downloads) is found by size and a fingerprint of its start and end, confirmed by reading it whole. Pick the copy to keep; the others go to the Recycle Bin.
 - **Move into Hindsight**: tidies a linked folder into Hindsight's layout (`<Game>\<Game> <date time>`), merging game names across spellings.
   - Same-drive moves are instant renames. Other drives copy, check the size, and only then remove the original.
   - Every move is logged as it happens, so **Undo** puts everything back, even after a crash.
@@ -87,7 +96,9 @@
 - **Mic volume** (Settings → Recording → Audio): makes the microphone louder or quieter for everything you record, ±20 dB, applied straight away without restarting the buffer.
 - **Damaged section**: every clip the health check finds broken, in one place, with the same date timeline as the library. A badge on the sidebar shows how many there are.
 - **Studio**: preview, drag in/out handles, one frame-exact **Save trim** that re-encodes only the moment before the first keyframe (under a second) and copies the rest untouched, so it takes a few seconds and keeps full quality.
-- **Per-file tools**: remux to MP4 (only for the file you pick), export H.264 MP4, compress to 10/25/50/100 MB. Originals are never changed.
+- **Per-file tools**: change to .mp4 (instant, lossless), export H.264 (plays everywhere), audio only (MP3), compress to 10/25/50/100 MB. Originals are never changed.
+- **Montage** (the Montage page): pick a length (30 s to 10 min), which clips (random, a date range, edited or unedited ones), a game, and how much of each clip (the end, where a replay's action usually is, the middle or the start). Then edit it on a Premiere-style timeline: a preview that plays the whole montage with your song, drag clips to reorder, drag their edges to trim, a music track with the song's waveform, and volumes for the clips and the song. It's saved as an H.264 MP4 in `Videos\Hindsight\Montages`.
+- **Beta tools** (Settings → About): **Run diagnostics** saves a text file in Downloads with your PC, GPU and driver, Hindsight's settings, status and recent messages (your Windows user name, NAS name, email and webhook are left out) to attach to a bug report. **Report a problem with this clip** in the editor adds that clip's details. A thank-you list for the early users and beta testers.
 
 - **Audio**: desktop sound (track 1), the microphone (mono by default, track 2) and Discord on its own track (track 3, left out of desktop sound, Windows 10 2004 or later), all on by default. Synced to video within about 10 ms. Exports and compresses mix the tracks into one.
 - **Replace original** option: trims, exports and compresses overwrite the edited file, and the old one goes to the Recycle Bin.
@@ -95,7 +106,11 @@
 
 ## Not yet
 
-- Per-game profiles, more per-app audio tracks, the in-game overlay, a multi-track editor (text, merge), and HDR tone-mapping.
+- Per-game profiles, more per-app audio tracks, the in-game overlay, text and transitions in montages, and HDR tone-mapping.
+
+## Feedback
+
+Hindsight is in beta. Found a bug? Open a [bug report](https://github.com/aattiaibrahim/hindsight/issues/new?template=bug_report.yml) with the diagnostics file. Have an idea? Open a [feature request](https://github.com/aattiaibrahim/hindsight/issues/new?template=feature_request.yml), or 👍 [one that's already there](https://github.com/aattiaibrahim/hindsight/issues?q=is%3Aissue+label%3A%22feature+request%22).
 
 ## How it works (native engine, default)
 
@@ -119,7 +134,7 @@ A supervisor thread (`src-tauri/src/engine.rs`) checks the monitor layout every 
 
 ## Stream Deck and other tools
 
-- **Stream Deck plugin**: download `Hindsight.streamDeckPlugin` from the [latest release](https://github.com/aattiaibrahim/Rewind/releases/latest) and double-click it. It has four actions:
+- **Stream Deck plugin**: download `Hindsight.streamDeckPlugin` from the [latest release](https://github.com/aattiaibrahim/hindsight/releases/latest) and double-click it. It has four actions:
   - **Save Clip**: full buffer or a set length per key.
   - **Record**: turns red and shows the timer.
   - **Replay Buffer**: on/off.

@@ -1,0 +1,47 @@
+name: Bug report
+description: Something in Hindsight (the app or the NAS server) isn't working right.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing Hindsight! The quickest way to a fix is a diagnostics file:
+        **Settings → About → Run diagnostics** (or, for one clip, **Report a problem with this clip** in the editor).
+        It saves a text file in Downloads with your PC's details, Hindsight's settings and recent messages.
+        Your Windows user name, NAS name, email and webhook are left out. Drag the file into the box below.
+  - type: input
+    id: version
+    attributes:
+      label: Hindsight version
+      description: Next to the logo in the app, or Settings → About.
+      placeholder: "0.1.26"
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where did it happen?
+      options:
+        - Desktop app
+        - NAS server (web page)
+        - Both
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics file
+      description: Drag the "Hindsight diagnostics ….txt" file here.
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots or a clip
+      description: Optional. Drag them here (clips under 10 MB, or a share link).
