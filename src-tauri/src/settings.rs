@@ -59,6 +59,12 @@ pub struct Settings {
     pub nas_remove_local: bool,
     /// Other recorders' folders (Medal, OBS, NVIDIA, any folder) shown in the library in place
     pub linked_folders: Vec<String>,
+    /// The folder spelling picked when merging a game's folders (game key → name); new clips use it
+    pub folder_names: std::collections::BTreeMap<String, String>,
+    /// Games whose folder spellings the user chose to keep separate (game keys)
+    pub similar_dismissed: Vec<String>,
+    /// Cleanup: clips the user chose to keep (path → size then), hidden until the next cleanup check
+    pub cleanup_kept: std::collections::BTreeMap<String, u64>,
     /// Show the Performance page (benchmark against other recorders)
     pub benchmark_mode: bool,
     /// Where Upload sends clips: "catbox" | "litterbox" | "discord" | "streamable"
@@ -114,6 +120,9 @@ impl Default for Settings {
             nas_dir: String::new(),
             nas_remove_local: false,
             linked_folders: Vec::new(),
+            folder_names: std::collections::BTreeMap::new(),
+            similar_dismissed: Vec::new(),
+            cleanup_kept: std::collections::BTreeMap::new(),
             benchmark_mode: false,
             upload_host: "catbox".into(),
             litterbox_time: "72h".into(),
@@ -167,6 +176,9 @@ impl Settings {
         self.streamable_email = self.streamable_email.trim().to_string();
         self.linked_folders.retain(|f| !f.trim().is_empty());
         self.linked_folders.dedup();
+        self.folder_names.retain(|k, v| !k.is_empty() && !v.trim().is_empty());
+        self.similar_dismissed.sort();
+        self.similar_dismissed.dedup();
         if !["midnight", "graphite", "oled"].contains(&self.theme.as_str()) {
             self.theme = d.theme.clone();
         }

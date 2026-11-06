@@ -24,6 +24,12 @@ export type Settings = {
   nasDir: string;
   nasRemoveLocal: boolean;
   linkedFolders: string[];
+  /** Game key → the folder spelling picked when merging */
+  folderNames: Record<string, string>;
+  /** Games kept under separate spellings (keys) */
+  similarDismissed: string[];
+  /** Cleanup: path → size when kept; hidden until the next cleanup check */
+  cleanupKept: Record<string, number>;
   benchmarkMode: boolean;
   uploadHost: UploadHost;
   litterboxTime: "1h" | "12h" | "24h" | "72h";
@@ -234,7 +240,11 @@ export type MovePlan = {
   folders: [string, number][];
   examples: [string, string][];
   otherDrive: boolean;
+  /** Copying: the originals stay where they are */
+  copy: boolean;
 };
+/** A folder with clips found on one of the drives (an external HDD too). */
+export type FoundFolder = { path: string; label: string; drive: string; clips: number; bytes: number; shown: boolean };
 export type MoveOutcome = { moved: number; failed: [string, string][] };
 export type LastMove = { label: string; count: number; when: number };
 
@@ -350,6 +360,23 @@ export const api = {
   moveIntoRewind: (folders: string[]) => invoke<MoveOutcome>("move_into_rewind", { folders }),
   lastMove: () => invoke<LastMove | null>("last_move"),
   undoLastMove: () => invoke<MoveOutcome>("undo_last_move"),
+  similarGameFolders: () => invoke<SimilarFolders[]>("similar_game_folders"),
+  mergeGameFolders: (key: string, target: string) => invoke<MoveOutcome>("merge_game_folders", { key, target }),
+  /** Stop asking about one game, or (no key) ask about every game again. */
+  keepFoldersSeparate: (key: string | null) => invoke<void>("keep_folders_separate", { key }),
+  findClipFolders: () => invoke<FoundFolder[]>("find_clip_folders"),
+  /** Cleanup: compress to ~40%, replacing the original (Recycle Bin), keeping its date. */
+  shrinkClip: (path: string) => invoke<string>("shrink_clip", { path }),
+  planImport: (path: string, copy: boolean) => invoke<MovePlan>("plan_import", { path, copy }),
+  importFolder: (path: string, copy: boolean) => invoke<MoveOutcome>("import_folder", { path, copy }),
+};
+
+/** One game saved under several folder spellings, on this PC and/or the NAS. */
+export type SimilarFolders = {
+  key: string;
+  /** Most clips first */
+  names: { name: string; here: number; nas: number }[];
+  suggested: string;
 };
 
 export const VIDEO_EXTENSIONS = ["mkv", "mp4", "mov", "webm", "m4v", "avi", "ts", "flv"];

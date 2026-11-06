@@ -1,12 +1,20 @@
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useState } from "react";
-import { api, ClipFolder, errText, fmtSize, LastMove, MovePlan, NasState, Settings } from "./api";
+import { api, ClipFolder, errText, FoundFolder, fmtSize, LastMove, MovePlan, NasState, Settings } from "./api";
 import { ConfirmDialog } from "./ConfirmUpdate";
 import { NasProgress, useNasState } from "./NasProgress";
 import { HealthSetting } from "./Health";
 
-type MoveJob = { folders: string[]; plan: MovePlan | null; running: boolean; done: number; total: number };
+type MoveJob = {
+  folders: string[];
+  plan: MovePlan | null;
+  running: boolean;
+  done: number;
+  total: number;
+  /** A folder found on a drive, copied or moved in (not one of the linked folders) */
+  importOf?: { path: string; copy: boolean };
+};
 
 function outcomeText(verb: string, o: { moved: number; failed: [string, string][] }) {
   const base = `${verb} ${o.moved} clip${o.moved === 1 ? "" : "s"}.`;
@@ -96,10 +104,44 @@ export function LibrarySettings({
       setNote(errText(e));
     }
   };
+  // Clips on other drives (an external HDD, an old Medal folder): look, then show, copy or move.
+  const [drives, setDrives] = useState<FoundFolder[] | null>(null);
+  const [looking, setLooking] = useState(false);
+  const lookOnDrives = async () => {
+    setLooking(true);
+    setNote(null);
+    try {
+      setDrives(await api.findClipFolders());
+    } catch (e) {
+      setNote(errText(e));
+    } finally {
+      setLooking(false);
+    }
+  };
+  const askImport = async (path: string, copy: boolean) => {
+    setNote(null);
+    setJob({ folders: [], plan: null, running: false, done: 0, total: 0, importOf: { path, copy } });
+    try {
+      const plan = await api.planImport(path, copy);
+      if (!plan.count) {
+        setJob(null);
+        setNote("Nothing to bring in: no finished clips in that folder.");
+      } else setJob({ folders: [], plan, running: false, done: 0, total: plan.count, importOf: { path, copy } });
+    } catch (e) {
+      setJob(null);
+      setNote(errText(e));
+    }
+  };
+
   const doMove = async () => {
     if (!job?.plan) return;
     setJob({ ...job, running: true });
     try {
+      if (job.importOf) {
+        setNote(outcomeText(job.importOf.copy ? "Copied" : "Moved", await api.importFolder(job.importOf.path, job.importOf.copy)));
+        api.findClipFolders().then(setDrives).catch(() => {});
+        return;
+      }
       setNote(outcomeText("Moved", await api.moveIntoRewind(job.folders)));
     } catch (e) {
       setNote(errText(e));
@@ -236,6 +278,59 @@ export function LibrarySettings({
           </span>
         </div>
       ))}
+      <div className="setting">
+        <span>
+          Clips on your drives
+          <small>
+            Looks through every drive, an external HDD too, for folders with clips, like an old Medal folder or a
+            "Recordings" folder. Shows how many clips and how much space each has before anything is copied or moved.
+          </small>
+        </span>
+        <button className="btn small" disabled={looking || !!job} onClick={lookOnDrives}>
+          {looking ? "Looking…" : drives ? "Look again" : "Look for clips…"}
+        </button>
+      </div>
+      {drives && !drives.length && (
+        <div className="setting sub">
+          <span>
+            <small>No clip folders found on your drives. Use Add folder… above to pick one yourself.</small>
+          </span>
+        </div>
+      )}
+      {drives?.map((f) => (
+        <div className="setting sub" key={f.path}>
+          <span>
+            {f.label} <span className="muted">on {f.drive}</span>
+            <small style={{ wordBreak: "break-all" }}>
+              {f.path} · {f.clips} clip{f.clips === 1 ? "" : "s"} · {fmtSize(f.bytes)}
+            </small>
+          </span>
+          <span className="row" style={{ flexWrap: "nowrap", flexShrink: 0 }}>
+            {!f.shown && !linked(f.path) && (
+              <button className="btn small" onClick={() => toggleLinked(f.path, true)} title="Show them in your library where they are. Nothing is copied.">
+                Show
+              </button>
+            )}
+            <button className="btn small" disabled={!!job} onClick={() => askImport(f.path, true)} title="Copy them into Hindsight's game folders; the originals stay on the drive">
+              Copy in…
+            </button>
+            <button className="btn small" disabled={!!job} onClick={() => askImport(f.path, false)} title="Move them into Hindsight's game folders">
+              Move in…
+            </button>
+          </span>
+        </div>
+      ))}
+      {s.similarDismissed.length > 0 && (
+        <div className="setting sub">
+          <span>
+            {s.similarDismissed.length} game{s.similarDismissed.length === 1 ? "" : "s"} kept under separate folder names
+            <small>You chose Keep separate. Ask again to see the merge option for {s.similarDismissed.length === 1 ? "it" : "them"}.</small>
+          </span>
+          <button className="btn small" onClick={() => api.keepFoldersSeparate(null).catch((e) => setNote(errText(e)))}>
+            Ask again
+          </button>
+        </div>
+      )}
       {last && (
         <div className="setting sub">
           <span>
@@ -256,8 +351,12 @@ export function LibrarySettings({
       )}
       {job?.plan && (
         <ConfirmDialog
-          title={`Move ${job.plan.count} ${job.plan.label} clip${job.plan.count === 1 ? "" : "s"} into Hindsight?`}
-          confirmLabel={job.running ? `Moving ${Math.min(job.done + 1, job.total)} of ${job.total}…` : `Move ${fmtSize(job.plan.bytes)}`}
+          title={`${job.plan.copy ? "Copy" : "Move"} ${job.plan.count} ${job.plan.label} clip${job.plan.count === 1 ? "" : "s"} (${fmtSize(job.plan.bytes)}) into Hindsight?`}
+          confirmLabel={
+            job.running
+              ? `${job.plan.copy ? "Copying" : "Moving"} ${Math.min(job.done + 1, job.total)} of ${job.total}…`
+              : `${job.plan.copy ? "Copy" : "Move"} ${fmtSize(job.plan.bytes)}`
+          }
           busy={job.running}
           onConfirm={doMove}
           onCancel={closeMove}
@@ -268,13 +367,22 @@ export function LibrarySettings({
               {job.plan.folders.length > 4 ? ` and ${job.plan.folders.length - 4} more folders` : ""}, renamed like Hindsight's
               clips, e.g. “{job.plan.examples[0]?.[0]}” → “{job.plan.examples[0]?.[1]}”.
             </li>
-            <li>
-              {job.plan.otherDrive
-                ? "It's on another drive, so each clip is copied, checked, and only then removed from the old folder. This can take a while."
-                : "Same drive, so it's instant: nothing is copied."}
-            </li>
-            <li>{job.plan.label} won't find these clips in its own app anymore.</li>
-            <li>You can undo it afterwards: everything goes back where it was.</li>
+            {job.plan.copy ? (
+              <>
+                <li>The originals stay where they are; Hindsight gets its own copy, checked by size. This needs {fmtSize(job.plan.bytes)} free on this PC.</li>
+                <li>You can undo it afterwards: the copies are removed, the originals were never touched.</li>
+              </>
+            ) : (
+              <>
+                <li>
+                  {job.plan.otherDrive
+                    ? "It's on another drive, so each clip is copied, checked, and only then removed from the old folder. This can take a while."
+                    : "Same drive, so it's instant: nothing is copied."}
+                </li>
+                <li>{job.plan.label} won't find these clips in its own app anymore.</li>
+                <li>You can undo it afterwards: everything goes back where it was.</li>
+              </>
+            )}
           </ul>
         </ConfirmDialog>
       )}

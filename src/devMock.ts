@@ -58,8 +58,14 @@ export function installDevMock() {
     recordHotkey: "Alt+F9", bufferEnabled: true, launchOnStartup: false, autoUpdate: true, startMinimized: true,
     keepOriginalAfterRemux: true, replaceOriginalOnEdit: false, externalFiles: [], desktopAudio: true, discordTrack: true,
     micEnabled: true, micMono: true, micDevice: "", micGainDb: 0, theme: "midnight", accent: "lime", reduceMotion: false,
-    saveSound: true, nasDir: "", nasRemoveLocal: false, linkedFolders: [] as string[], benchmarkMode: false, uploadHost: "catbox", litterboxTime: "72h", autoUpload: false, postLinkToDiscord: false, streamableEmail: "", discordWebhookName: "", confirmUploads: true, healthCheck: true,
+    saveSound: true, nasDir: "\\\\nas\\clips", nasRemoveLocal: false, linkedFolders: [] as string[], benchmarkMode: false, uploadHost: "catbox", litterboxTime: "72h", autoUpload: false, postLinkToDiscord: false, streamableEmail: "", discordWebhookName: "", confirmUploads: true, healthCheck: true,
+    folderNames: {} as Record<string, string>, similarDismissed: [] as string[], cleanupKept: {} as Record<string, number>,
   };
+  // Same game under two folder names (preview of the merge prompt).
+  let similar = [
+    { key: "tomclancysrainbowsixsiege", suggested: "Tom Clancy's Rainbow Six  Siege", names: [{ name: "Tom Clancy's Rainbow Six  Siege", here: 0, nas: 29 }, { name: "Tom Clancys Rainbow Six Siege", here: 27, nas: 0 }] },
+    { key: "valorant", suggested: "VALORANT", names: [{ name: "VALORANT", here: 91, nas: 0 }, { name: "Valorant", here: 0, nas: 6 }] },
+  ];
   const status = {
     enabled: true, running: true, monitor: "Display 1 · 1920×1080", width: 1920, height: 1080, encoder: "av1",
     fps: 60, bufferedSeconds: 120, bufferSeconds: 120, restarts: 0, lastError: null,
@@ -141,6 +147,35 @@ export function installDevMock() {
     }),
     move_into_rewind: () => ({ moved: 42, failed: [] }),
     last_move: () => null,
+    find_clip_folders: async () => {
+      await new Promise((r) => setTimeout(r, 900));
+      return [
+        { path: "E:\\Old PC\\Medal", label: "Medal", drive: "E:", clips: 214, bytes: 61.4e9, shown: false },
+        { path: "E:\\recording", label: "recording", drive: "E:", clips: 37, bytes: 18.9e9, shown: false },
+        { path: "D:\\Videos\\Captures", label: "Captures", drive: "D:", clips: 12, bytes: 2.1e9, shown: true },
+      ];
+    },
+    plan_import: (a) => ({
+      label: (a.path as string).split("\\").pop(), count: 37, bytes: 18.9e9, otherDrive: true, copy: !!a.copy,
+      folders: [["VALORANT", 20], ["recording", 17]],
+      examples: [["2024-01-01 10-00-00.mkv", "recording\\recording 2024-01-01 10-00-00.mkv"]],
+    }),
+    import_folder: async () => (await new Promise((r) => setTimeout(r, 900)), { moved: 37, failed: [] }),
+    shrink_clip: async (a) => (await new Promise((r) => setTimeout(r, 900)), (a.path as string).replace(/\.\w+$/, ".mp4")),
+    similar_game_folders: () => similar.filter((g) => !settings.similarDismissed.includes(g.key)),
+    merge_game_folders: async (a) => {
+      await new Promise((r) => setTimeout(r, 700));
+      similar = similar.filter((g) => g.key !== a.key);
+      settings.folderNames[a.key as string] = a.target as string;
+      (listeners.get("clips-changed") ?? []).forEach((id) => callbacks.get(id)?.({ event: "clips-changed", id: 0, payload: null }));
+      return { moved: 27, failed: [] };
+    },
+    keep_folders_separate: (a) => {
+      if (a.key) settings.similarDismissed.push(a.key as string);
+      else settings.similarDismissed = [];
+      (listeners.get("settings-changed") ?? []).forEach((id) => callbacks.get(id)?.({ event: "settings-changed", id: 0, payload: settings }));
+      return null;
+    },
     undo_last_move: () => ({ moved: 42, failed: [] }),
     recorder_clip_folders: () => [
       { label: "Medal", path: "C:\\Medal", exists: true },

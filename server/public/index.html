@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0e1014">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Hindsight</title>
+  <link rel="icon" href="logo.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="logo.svg">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="preload" href="fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="appbar">
+      <div class="brand" id="brand">
+        <img src="logo.svg" alt="" width="26" height="26">
+        <span class="word">HINDSIGHT</span>
+        <span class="nas-tag">NAS</span>
+      </div>
+      <nav class="tabs" aria-label="Views">
+        <button class="tab on" data-view="clips">Clips</button>
+        <button class="tab" data-view="cleanup">Cleanup</button>
+        <button class="tab" data-view="trash">Trash <small id="trash-count"></small></button>
+      </nav>
+      <button class="btn storage-btn" id="storage-btn" title="Space used on the NAS">
+        <span class="meter" aria-hidden="true"><i id="storage-fill"></i></span>
+        <span id="storage-text">Storage</span>
+      </button>
+    </header>
+
+    <div class="lib">
+      <main class="page lib-page" id="scroller">
+        <section class="view" id="view-clips">
+          <div class="summary" id="summary" hidden></div>
+          <div class="toolbar">
+            <h1 id="clips-title">Clips</h1>
+            <label class="search">
+              <span class="muted">Search</span>
+              <input id="search" type="search" placeholder="clips, games…" autocomplete="off" aria-label="Search clips">
+            </label>
+            <div class="seg" role="group" aria-label="View">
+              <button data-mode="gallery" class="on" title="Gallery: thumbnails by day">Gallery</button>
+              <button data-mode="folders" title="Folders: one per game">Folders</button>
+              <button data-mode="list" title="List: one row per clip">List</button>
+            </div>
+            <button class="btn" id="filters-btn" aria-expanded="false" aria-controls="filters">Filters <span class="count" id="filters-count" hidden></span></button>
+            <label class="select-wrap" title="Sort">
+              <select id="sort" aria-label="Sort">
+                <option value="new">Newest first</option>
+                <option value="old">Oldest first</option>
+                <option value="big">Biggest first</option>
+                <option value="long">Longest first</option>
+              </select>
+            </label>
+          </div>
+          <div class="filters" id="filters" hidden></div>
+          <div class="chips" id="chips"></div>
+          <div id="list" aria-live="polite"></div>
+        </section>
+
+        <section class="view" id="view-cleanup" hidden>
+          <div class="toolbar">
+            <h1>Cleanup</h1>
+            <button class="btn primary" id="check" title="List every clip again, including the ones you kept">Run cleanup check</button>
+          </div>
+          <p class="lead" id="cleanup-lead"></p>
+          <p class="notice" id="cleanup-readonly" hidden>
+            This server is read-only, so it can only list clips. To delete or shrink from here, set
+            <code>ALLOW_CHANGES=1</code> and mount the clips folder read-write (see the README).
+          </p>
+          <div class="rows" id="cleanup-list"></div>
+        </section>
+
+        <section class="view" id="view-trash" hidden>
+          <div class="toolbar">
+            <h1>Trash</h1>
+            <button class="btn danger" id="empty-trash" hidden>Empty trash</button>
+          </div>
+          <p class="lead" id="trash-lead"></p>
+          <div class="rows" id="trash-list"></div>
+        </section>
+      </main>
+      <div class="timeline-rail empty-rail" id="rail" role="scrollbar" aria-label="Jump to a date" aria-orientation="vertical"></div>
+    </div>
+  </div>
+
+  <dialog id="player" class="modal player" aria-labelledby="player-title">
+    <div class="player-head">
+      <div>
+        <h2 id="player-title"></h2>
+        <p id="player-meta" class="meta"></p>
+      </div>
+      <button id="close" class="round" aria-label="Close">&#x2715;</button>
+    </div>
+    <div class="stage">
+      <video id="video" controls playsinline preload="metadata"></video>
+      <div id="status" class="status" hidden>
+        <p id="status-text"></p>
+        <div class="bar"><div id="status-bar"></div></div>
+      </div>
+    </div>
+    <div class="actions">
+      <a id="dl-original" class="btn primary" href="#" download>Download original</a>
+      <a id="dl-web" class="btn" href="#" download hidden>Download phone version</a>
+      <button id="convert" class="btn" hidden>Make phone version</button>
+      <button id="try-original" class="btn" hidden>Play original</button>
+    </div>
+    <p id="note" class="meta note" hidden></p>
+  </dialog>
+
+  <dialog id="storage" class="modal storage" aria-labelledby="storage-title">
+    <div class="player-head">
+      <div>
+        <h2 id="storage-title">Storage</h2>
+        <p class="meta" id="storage-sub"></p>
+      </div>
+      <button id="storage-close" class="round" aria-label="Close">&#x2715;</button>
+    </div>
+    <div id="storage-body"></div>
+    <div class="actions">
+      <button class="btn" id="storage-cleanup">Free up space…</button>
+    </div>
+  </dialog>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

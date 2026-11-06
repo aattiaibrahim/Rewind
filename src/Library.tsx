@@ -9,7 +9,75 @@ import { DeletePreview } from "./DeletePreview";
 import { HealReview } from "./HealReview";
 
 /** Where each list (all clips, damaged clips) was scrolled to, kept while you're in Studio (the page itself unmounts). */
-const memories: Record<string, { scroll: number; folder: string; query: string }> = {};
+const memories: Record<string, { scroll: number; folder: string; query: string; filters?: Filters }> = {};
+
+type ViewMode = "gallery" | "folders" | "list";
+type Sort = "new" | "old" | "big";
+/** where: "" any, "pc" on this PC, "nas" on the NAS; sources: "Hindsight", "Medal"…; from/to: YYYY-MM-DD; minMb: 0 = any */
+type Filters = { where: "" | "pc" | "nas"; sources: string[]; from: string; to: string; minMb: number };
+const NO_FILTERS: Filters = { where: "", sources: [], from: "", to: "", minMb: 0 };
+const TITLES: Record<string, string> = { clips: "Clips", local: "Local clips", synced: "Synced clips", damaged: "Damaged clips" };
+
+const remembered = <T extends string>(k: string, d: T): T => {
+  try {
+    return (localStorage.getItem(`rewind.${k}`) as T) || d;
+  } catch {
+    return d;
+  }
+};
+const remember = (k: string, v: string) => {
+  try {
+    localStorage.setItem(`rewind.${k}`, v);
+  } catch {
+    /* only a convenience */
+  }
+};
+const sourceOf = (c: ClipFile) => (c.location === "linked" ? c.source : c.location === "nas" ? "Other PCs" : "Hindsight");
+const ymd = (ms: number) => {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
+/** A game's folder in Folders view: its newest clip as the cover, with count and size. */
+function FolderTile({ name, items, onOpen }: { name: string; items: ClipFile[]; onOpen: () => void }) {
+  const cover = items[0];
+  const thumb = useThumb(cover.path, cover.modified);
+  const bytes = items.reduce((n, c) => n + c.size, 0);
+  return (
+    <button className="folder-tile" onClick={onOpen} title={`Open ${name}`}>
+      <div className="folder-cover">
+        <div className="folder-back" />
+        <div className="thumb">{thumb && <img src={thumb} alt="" loading="lazy" />}</div>
+      </div>
+      <div className="card-title">{name}</div>
+      <div className="card-meta">
+        {items.length} clip{items.length === 1 ? "" : "s"} · {fmtSize(bytes)} · newest {dayLabel(cover.modified)}
+      </div>
+    </button>
+  );
+}
+
+/** One clip in List view. */
+function ClipRow({ clip, selected, onClick, damage }: { clip: ClipFile; selected: boolean; onClick: (e: React.MouseEvent) => void; damage?: Health }) {
+  const thumb = useThumb(clip.path, clip.modified);
+  const time = new Date(clip.modified).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  return (
+    <button className={`clip-row ${selected ? "selected" : ""}`} onClick={onClick} title={clip.path} data-path={clip.path}>
+      <div className="clip-row-thumb">{thumb && <img src={thumb} alt="" loading="lazy" />}</div>
+      <div className="clip-row-main">
+        <div className="card-title">{clip.name}</div>
+        <div className="card-meta">
+          {clip.folder} · {time}
+          {damage && damage.state !== "ok" && <span className="src-tag bad"> ⚠ Damaged</span>}
+          {clip.location === "linked" && <span className="src-tag">{clip.source}</span>}
+          {clip.location === "nas" && <span className="src-tag">NAS</span>}
+          {clip.onNas && <span className="src-tag ok">✓ NAS</span>}
+        </div>
+      </div>
+      <div className="clip-row-size">{fmtSize(clip.size)}</div>
+    </button>
+  );
+}
 
 function dayLabel(ms: number) {
   const d = new Date(ms);
@@ -186,8 +254,8 @@ export function Library({
   health,
   mode = "clips",
 }: {
-  /** "damaged": the Damaged section (the clips given are only the damaged ones). */
-  mode?: "clips" | "damaged";
+  /** "damaged": the Damaged section (only the damaged clips); "local" / "synced": this PC's or the NAS's. */
+  mode?: "clips" | "damaged" | "local" | "synced";
   health?: Record<string, Health>;
   onShare?: (r: ShareRequest) => void;
   /** The clip last opened in Studio: scrolled back to and highlighted */
@@ -217,6 +285,31 @@ export function Library({
   };
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const anchor = useRef<string | null>(null);
+  // Gallery / Folders / List, the sort, and filters (view and sort remembered for every list).
+  const [viewMode, setViewModeState] = useState<ViewMode>(() => remembered<ViewMode>("viewMode", "gallery"));
+  const [sort, setSortState] = useState<Sort>(() => remembered<Sort>("sort", "new"));
+  const [filters, setFiltersState] = useState<Filters>(memory.filters ?? NO_FILTERS);
+  const [showFilters, setShowFilters] = useState(false);
+  const setViewMode = (v: ViewMode) => {
+    remember("viewMode", v);
+    setViewModeState(v);
+    if (v === "folders") setFolder("All");
+  };
+  const setSort = (v: Sort) => {
+    remember("sort", v);
+    setSortState(v);
+  };
+  const setFilters = (p: Partial<Filters>) => {
+    const next = { ...filters, ...p };
+    memory.filters = next;
+    setFiltersState(next);
+  };
+  const activeFilters = (filters.where ? 1 : 0) + filters.sources.length + (filters.from || filters.to ? 1 : 0) + (filters.minMb ? 1 : 0);
+  const sources = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const c of clips ?? []) m.set(sourceOf(c), (m.get(sourceOf(c)) ?? 0) + 1);
+    return [...m].sort((a, b) => b[1] - a[1]);
+  }, [clips]);
 
   // One chip per game, even when recorders spell it differently ("VALORANT" / "Valorant").
   // Hindsight's own folder name wins as the label.
@@ -230,12 +323,29 @@ export function Library({
     return ["All", ...names.sort((a, b) => (a === "Imported" ? 1 : b === "Imported" ? -1 : a.localeCompare(b)))];
   }, [clips]);
 
-  const groups = useMemo(() => {
+  /** Search and filters (not the game chip: Folders view groups by game itself). */
+  const matching = useMemo(() => {
     const q = query.trim().toLowerCase();
+    const list = (clips ?? []).filter((c) => {
+      if (q && !`${c.name} ${c.folder} ${c.source}`.toLowerCase().includes(q)) return false;
+      if (filters.where === "pc" && c.location === "nas") return false;
+      if (filters.where === "nas" && !(c.onNas || c.location === "nas")) return false;
+      if (filters.sources.length && !filters.sources.includes(sourceOf(c))) return false;
+      const day = ymd(c.modified);
+      if (filters.from && day < filters.from) return false;
+      if (filters.to && day > filters.to) return false;
+      if (filters.minMb && c.size < filters.minMb * 1_048_576) return false;
+      return true;
+    });
+    if (sort === "old") list.reverse();
+    if (sort === "big") list.sort((a, b) => b.size - a.size);
+    return list;
+  }, [clips, query, filters, sort]);
+
+  const groups = useMemo(() => {
     const want = gameKey(folder);
-    const list = (clips ?? []).filter(
-      (c) => (folder === "All" || gameKey(c.folder) === want) && (!q || `${c.name} ${c.folder} ${c.source}`.toLowerCase().includes(q)),
-    );
+    const list = matching.filter((c) => folder === "All" || gameKey(c.folder) === want);
+    if (sort === "big") return list.length ? [{ day: "Biggest first", ts: 0, items: list }] : [];
     const out: { day: string; ts: number; items: ClipFile[] }[] = [];
     for (const c of list) {
       const day = dayLabel(c.modified);
@@ -243,7 +353,21 @@ export function Library({
       out[out.length - 1].items.push(c);
     }
     return out;
-  }, [clips, folder, query]);
+  }, [matching, folder, sort]);
+
+  /** Folders view: one per game (same game, any spelling), biggest collections first. */
+  const gameFolders = useMemo(() => {
+    const by = new Map<string, { name: string; items: ClipFile[] }>();
+    for (const c of matching) {
+      const k = gameKey(c.folder);
+      if (!by.has(k)) by.set(k, { name: c.folder, items: [] });
+      const f = by.get(k)!;
+      if (c.location === "local") f.name = c.folder;
+      f.items.push(c);
+    }
+    return [...by.values()].sort((a, b) => b.items.length - a.items.length || a.name.localeCompare(b.name));
+  }, [matching]);
+  const atFolderRoot = viewMode === "folders" && folder === "All";
 
   const visible = useMemo(() => groups.flatMap((g) => g.items.map((c) => c.path)), [groups]);
 
@@ -282,7 +406,11 @@ export function Library({
   const onScroll = () => {
     if (scroller.current) memory.scroll = scroller.current.scrollTop;
   };
-  const days = useMemo(() => groups.map((g) => ({ key: g.day, ts: g.ts, count: g.items.length })), [groups]);
+  // The date timeline only makes sense for the gallery in date order.
+  const days = useMemo(
+    () => (viewMode === "list" || atFolderRoot || sort === "big" ? [] : groups.map((g) => ({ key: g.day, ts: g.ts, count: g.items.length }))),
+    [groups, viewMode, atFolderRoot, sort],
+  );
 
   // Drop selections that disappeared (deleted, filtered out).
   useEffect(() => {
@@ -394,14 +522,29 @@ export function Library({
       )}
     <div className={`page lib-page ${selecting ? "selecting" : ""}`} ref={scroller} onScroll={onScroll}>
       <div className="toolbar">
-        <h1 style={{ flex: 1 }}>{damagedMode ? "Damaged clips" : "Clips"}</h1>
+        <h1 style={{ flex: 1 }}>{viewMode === "folders" && folder !== "All" ? folder : TITLES[mode] ?? "Clips"}</h1>
         <label className="search">
           <span className="muted" style={{ fontSize: 12 }}>
             Search
           </span>
           <input placeholder="clips, games…" value={query} onChange={(e) => setQuery(e.target.value)} />
         </label>
-        {!damagedMode && (
+        <div className="seg" role="group" aria-label="View">
+          {(["gallery", "folders", "list"] as ViewMode[]).map((v) => (
+            <button key={v} className={viewMode === v ? "on" : ""} onClick={() => setViewMode(v)}>
+              {v === "gallery" ? "Gallery" : v === "folders" ? "Folders" : "List"}
+            </button>
+          ))}
+        </div>
+        <button className={`btn ${showFilters ? "on" : ""}`} onClick={() => setShowFilters((s) => !s)} aria-expanded={showFilters}>
+          Filters{activeFilters > 0 && <span className="count">{activeFilters}</span>}
+        </button>
+        <select className="select" value={sort} onChange={(e) => setSort(e.target.value as Sort)} aria-label="Sort">
+          <option value="new">Newest first</option>
+          <option value="old">Oldest first</option>
+          <option value="big">Biggest first</option>
+        </select>
+        {mode === "clips" && (
           <button className="btn" onClick={openAny}>
             Open any video…
           </button>
@@ -413,6 +556,59 @@ export function Library({
         )}
       </div>
       {healing && clips && health && <HealReview clips={clips} health={health} onClose={() => setHealing(false)} onToast={onToast} />}
+      {showFilters && (
+        <div className="lib-filters">
+          {mode === "clips" && (
+            <div className="fgroup">
+              <span className="label">Where</span>
+              {(
+                [
+                  ["", "Anywhere"],
+                  ["pc", "This PC"],
+                  ["nas", "NAS"],
+                ] as [Filters["where"], string][]
+              ).map(([v, l]) => (
+                <button key={v} className={`chip small ${filters.where === v ? "on" : ""}`} onClick={() => setFilters({ where: v })}>
+                  {l}
+                </button>
+              ))}
+            </div>
+          )}
+          {sources.length > 1 && (
+            <div className="fgroup">
+              <span className="label">Made with</span>
+              {sources.map(([s, n]) => (
+                <button
+                  key={s}
+                  className={`chip small ${filters.sources.includes(s) ? "on" : ""}`}
+                  onClick={() => setFilters({ sources: filters.sources.includes(s) ? filters.sources.filter((x) => x !== s) : [...filters.sources, s] })}
+                >
+                  {s} <small className="muted">{n}</small>
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="fgroup">
+            <span className="label">Date</span>
+            <input type="date" className="text-input date" value={filters.from} onChange={(e) => setFilters({ from: e.target.value })} aria-label="From" />
+            <span className="muted">to</span>
+            <input type="date" className="text-input date" value={filters.to} onChange={(e) => setFilters({ to: e.target.value })} aria-label="To" />
+          </div>
+          <div className="fgroup">
+            <span className="label">Size</span>
+            {[0, 100, 500, 1024].map((mb) => (
+              <button key={mb} className={`chip small ${filters.minMb === mb ? "on" : ""}`} onClick={() => setFilters({ minMb: mb })}>
+                {mb === 0 ? "Any" : mb >= 1024 ? "Over 1 GB" : `Over ${mb} MB`}
+              </button>
+            ))}
+            {activeFilters > 0 && (
+              <button className="btn small" style={{ marginLeft: "auto" }} onClick={() => setFilters(NO_FILTERS)}>
+                Clear filters
+              </button>
+            )}
+          </div>
+        </div>
+      )}
       {damagedMode && <DamagedStatus count={clips?.length ?? 0} />}
 
       {selecting ? (
@@ -435,7 +631,7 @@ export function Library({
           </button>
         </div>
       ) : (
-        folders.length > 1 && (
+        folders.length > 1 && !atFolderRoot && (
           <div className="chips">
             {folders.map((f) => (
               <button key={f} className={`chip ${f === folder ? "on" : ""}`} onClick={() => setFolder(f)}>
@@ -465,9 +661,26 @@ export function Library({
             Open any video…
           </button>
         </div>
-      ) : groups.length === 0 ? (
+      ) : (atFolderRoot ? gameFolders.length === 0 : groups.length === 0) ? (
         <div className="empty">
           <strong>Nothing matches</strong>
+          {activeFilters > 0 && (
+            <button className="btn" onClick={() => setFilters(NO_FILTERS)}>
+              Clear filters
+            </button>
+          )}
+        </div>
+      ) : atFolderRoot ? (
+        <div className="folder-grid">
+          {gameFolders.map((f) => (
+            <FolderTile key={f.name} name={f.name} items={f.items} onOpen={() => setFolder(f.name)} />
+          ))}
+        </div>
+      ) : viewMode === "list" ? (
+        <div className="clip-rows">
+          {groups.flatMap((g) => g.items).map((c) => (
+            <ClipRow key={c.path} clip={c} selected={selected.has(c.path)} onClick={clickCard(c.path)} damage={health?.[c.path]} />
+          ))}
         </div>
       ) : (
         groups.map((g) => {

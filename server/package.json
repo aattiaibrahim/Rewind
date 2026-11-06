@@ -1,0 +1,13 @@
+{
+  "name": "rewind-server",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Serves a Rewind clip library from a NAS over the local network",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node src/main.js",
+    "test": "node --test",
+    "samples": "node scripts/make-samples.js sample-clips"
+  }
+}
