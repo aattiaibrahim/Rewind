@@ -128,6 +128,9 @@ export function installDevMock() {
     sync_nas_now: () => null,
     run_diagnostics: () => "C:\\Users\\you\\Downloads\\Hindsight diagnostics 2026-11-06 12-00-00.txt",
     find_duplicates: () => [],
+    edited_clips: () => [],
+    render_montage: async () => (await new Promise((r) => setTimeout(r, 1200)), "C:\\Users\\you\\Videos\\Hindsight\\Montages\\Montage 2026-11-06 12-00-00.mp4"),
+    cancel_montage: () => null,
     game_icon: () => null,
     gpu_encoders: () => ({ gpu: "NVIDIA GeForce RTX 3070", supported: ["hevc", "h264"], auto: "hevc" }),
     // Uploads (preview only): pretend to prepare and upload, with progress events, then give a fake link.

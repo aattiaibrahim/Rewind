@@ -2,6 +2,7 @@ mod app_audio;
 mod prepare;
 mod game_icons;
 mod duplicates;
+mod montage;
 #[macro_use]
 mod diag;
 mod audio;
@@ -861,12 +862,14 @@ async fn edit(
     }
     let out = blocking(move || f(&path)).await?;
     if !replace {
+        remember_edited(&app, &out);
         return Ok(out);
     }
     let o = original.clone();
     let final_path = blocking(move || library::replace_original(&o, &out, expected_secs)).await?;
     // Keep the NAS copy in step with the edit.
     nas::edited(&settings_of(&app), std::path::Path::new(&original), std::path::Path::new(&final_path));
+    remember_edited(&app, &final_path);
     // Keep an imported file in the list even if its extension changed.
     let mut s = settings_of(&app);
     if let Some(p) = s.external_files.iter_mut().find(|p| **p == original) {
@@ -910,6 +913,52 @@ async fn export_h264(app: AppHandle, path: String, replace: bool, audio: Option<
     let secs = duration_of(&path);
     let audio = audio.unwrap_or_default();
     edit(app, path, replace, secs, move |p| library::export_h264(p, &audio)).await
+}
+
+/// Clips changed in the app (trimmed, healed, exported in place), for the
+/// montage's "edited clips" choice. Kept in app data as a list of paths.
+fn remember_edited(app: &AppHandle, path: &str) {
+    if let Ok(file) = data_file(app, "edited.json") {
+        let mut list: Vec<String> = std::fs::read_to_string(&file).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+        if !list.iter().any(|p| p == path) {
+            list.push(path.to_string());
+            let _ = std::fs::write(&file, serde_json::to_string(&list).unwrap_or_default());
+        }
+    }
+}
+
+#[tauri::command]
+fn edited_clips(app: AppHandle) -> Vec<String> {
+    data_file(&app, "edited.json")
+        .ok()
+        .and_then(|f| std::fs::read_to_string(f).ok())
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+/// Render a montage into <clips>/Montages; "montage-progress" events carry 0..1.
+#[tauri::command]
+async fn render_montage(app: AppHandle, montage: montage::Montage) -> Result<String, String> {
+    let s = settings_of(&app);
+    let out = montage::out_path(std::path::Path::new(&s.clips_dir));
+    let a = app.clone();
+    let path = blocking(move || {
+        let mut last = -1.0;
+        montage::render(&montage, &out, |p| {
+            if p - last >= 0.005 || p >= 1.0 {
+                last = p;
+                let _ = a.emit("montage-progress", p);
+            }
+        })
+    })
+    .await?;
+    let _ = app.emit("clips-changed", ());
+    Ok(path)
+}
+
+#[tauri::command]
+fn cancel_montage() {
+    montage::cancel();
 }
 
 /// Make a diagnostics report (optionally about one clip), save it in
@@ -1430,6 +1479,9 @@ pub fn run() {
             game_icon,
             find_duplicates,
             run_diagnostics,
+            render_montage,
+            cancel_montage,
+            edited_clips,
             compress_clip,
             reveal_file,
             delete_clips,

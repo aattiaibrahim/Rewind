@@ -1,6 +1,14 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 
 export type Encoder = "auto" | "av1" | "hevc" | "h264";
+/** A montage to render: clip pieces in order, an optional song. */
+export type MontagePlan = {
+  pieces: { path: string; start: number; end: number }[];
+  music: { path: string; offset: number; volumeDb: number } | null;
+  clipVolumeDb: number;
+  height: number;
+  fps: number;
+};
 /** What this PC's NVIDIA GPU can encode. */
 export type GpuEncoders = { gpu: string; supported: Exclude<Encoder, "auto">[]; auto: Exclude<Encoder, "auto"> };
 export type MonitorMode = "primary" | "cursor" | "fixed";
@@ -340,6 +348,10 @@ export const api = {
   findDuplicates: () => invoke<string[][]>("find_duplicates"),
   /** Save a diagnostics report in Downloads (about one clip, if given); returns its path. */
   runDiagnostics: (clip?: string) => invoke<string>("run_diagnostics", { clip: clip ?? null }),
+  renderMontage: (montage: MontagePlan) => invoke<string>("render_montage", { montage }),
+  cancelMontage: () => invoke<void>("cancel_montage"),
+  /** Clips changed in the app (trimmed, healed, exported) */
+  editedClips: () => invoke<string[]>("edited_clips"),
   gameIcon: (name: string) => {
     if (!iconCache.has(name)) iconCache.set(name, invoke<string | null>("game_icon", { name }).then((p) => (p ? convertFileSrc(p) : null)).catch(() => null));
     return iconCache.get(name)!;

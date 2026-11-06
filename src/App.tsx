@@ -19,8 +19,9 @@ import logo from "./logo.svg";
 import { SettingsView } from "./SettingsView";
 import { Studio } from "./Studio";
 import { SlidingPill } from "./SlidingPill";
+import { MontageView } from "./Montage";
 
-type View = "clips" | "local" | "synced" | "damaged" | "cleanup" | "studio" | "performance" | "settings";
+type View = "clips" | "local" | "synced" | "damaged" | "cleanup" | "montage" | "studio" | "performance" | "settings";
 /** The clip lists (Studio goes back to whichever you came from). */
 type ListView = "clips" | "local" | "synced" | "damaged";
 const isList = (v: View): v is ListView => v === "clips" || v === "local" || v === "synced" || v === "damaged";
@@ -223,6 +224,7 @@ export default function App() {
       : []),
     ["damaged", "Damaged"],
     ["cleanup", "Cleanup"],
+    ["montage", "Montage"],
     ...(settings?.benchmarkMode ? ([["performance", "Performance"]] as [View, string][]) : []),
     ["settings", "Settings"],
   ];
@@ -368,6 +370,7 @@ export default function App() {
             onChanged={refresh}
           />
         )}
+        {view === "montage" && <MontageView clips={clips} onOpen={openInStudio} />}
         {view === "damaged" && (
           <Library
             clips={damagedClips}
