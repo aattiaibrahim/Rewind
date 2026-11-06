@@ -1,6 +1,7 @@
 mod app_audio;
 mod prepare;
 mod game_icons;
+mod duplicates;
 mod audio;
 mod audio_edit;
 mod bench;
@@ -909,6 +910,20 @@ async fn export_h264(app: AppHandle, path: String, replace: bool, audio: Option<
     edit(app, path, replace, secs, move |p| library::export_h264(p, &audio)).await
 }
 
+/// Sets of library paths that hold the very same clip (checked byte for byte).
+#[tauri::command]
+async fn find_duplicates(app: AppHandle) -> Result<Vec<Vec<String>>, String> {
+    let s = settings_of(&app);
+    blocking(move || {
+        let linked = linked_roots(&s);
+        let nas = nas::listing(&s.nas_dir);
+        let all = library::scan_all(PathBuf::from(&s.clips_dir).as_path(), &s.external_files, &nas, &linked, &s.nas_dir);
+        let list: Vec<(String, u64)> = all.into_iter().map(|c| (c.path, c.size)).collect();
+        Ok(duplicates::find(&list))
+    })
+    .await
+}
+
 /// A game's logo (its program's icon) as a file path, or None for a letter tile.
 #[tauri::command]
 async fn game_icon(name: String) -> Result<Option<String>, String> {
@@ -1361,6 +1376,7 @@ pub fn run() {
             export_audio,
             gpu_encoders,
             game_icon,
+            find_duplicates,
             compress_clip,
             reveal_file,
             delete_clips,

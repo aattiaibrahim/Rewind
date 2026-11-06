@@ -7,6 +7,7 @@ import { Timeline } from "./Timeline";
 import { DamagedStatus, damagedText } from "./Health";
 import { DeletePreview } from "./DeletePreview";
 import { GameIcon } from "./GameIcon";
+import { OnThisDay } from "./OnThisDay";
 import { HealReview } from "./HealReview";
 import { NasBadge, nasStatus, useNasState } from "./NasProgress";
 import { SlidingPill } from "./SlidingPill";
@@ -636,6 +637,9 @@ export function Library({
         </div>
       )}
       {damagedMode && <DamagedStatus count={clips?.length ?? 0} />}
+      {mode === "clips" && viewMode === "gallery" && !selecting && !query && folder === "All" && activeFilters === 0 && clips && (
+        <OnThisDay clips={clips} onOpenClip={onOpen} />
+      )}
 
       {selecting ? (
         <div className="select-bar" role="toolbar" aria-label="Selected clips">

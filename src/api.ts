@@ -336,6 +336,8 @@ export const api = {
   compress: (path: string, targetMb: number, replace = false, audio?: TrackEdit[]) =>
     invoke<string>("compress_clip", { path, targetMb, replace, audio: audio ?? null }),
   gpuEncoders: () => invoke<GpuEncoders>("gpu_encoders"),
+  /** Sets of paths holding the very same clip */
+  findDuplicates: () => invoke<string[][]>("find_duplicates"),
   gameIcon: (name: string) => {
     if (!iconCache.has(name)) iconCache.set(name, invoke<string | null>("game_icon", { name }).then((p) => (p ? convertFileSrc(p) : null)).catch(() => null));
     return iconCache.get(name)!;

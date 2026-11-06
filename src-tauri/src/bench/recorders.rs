@@ -256,7 +256,35 @@ fn reg_string(path: &str, name: &str) -> Option<String> {
     }
 }
 
-/// Medal, OBS and NVIDIA's clip folders, from their own settings.
+/// Other recorders and where they keep clips, so their clips can show in the
+/// library and be moved into Hindsight. Read from each app's own settings
+/// where it has them, else its default folder. Only folders that exist are
+/// offered. To support another recorder, add it to `CATALOG` (or, if it keeps
+/// its folder in a settings file, next to Medal / OBS / NVIDIA below).
+///
+/// (label, folder under the Videos folder; the first that exists wins)
+const CATALOG: &[(&str, &[&str])] = &[
+    // Ascent keeps clips in Clips; Downloads holds copies (shown as duplicates in Cleanup).
+    ("Ascent", &[r"Ascent\Clips", "Ascent"]),
+    ("AMD ReLive", &["Radeon ReLive", "AMD"]),
+    ("Xbox Game Bar", &["Captures"]),
+    ("Outplayed", &[r"Overwolf\Outplayed"]),
+    ("Insights Capture", &[r"Overwolf\Insights Capture"]),
+    ("Overwolf", &["Overwolf"]),
+    ("SteelSeries Moments", &[r"SteelSeries\Moments", "SteelSeries Moments"]),
+    ("Streamlabs", &["Streamlabs", "Streamlabs OBS"]),
+    ("Plays", &["Plays"]),
+    ("Clipchamp", &["Clipchamp"]),
+];
+
+/// The user's Videos folder (it can be moved, e.g. to another drive).
+fn videos_dir() -> Option<PathBuf> {
+    reg_string(r"Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders", "My Video")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("USERPROFILE").map(|h| PathBuf::from(h).join("Videos")))
+}
+
+/// Recorders' clip folders, from their own settings or their default folder.
 pub fn clip_folders() -> Vec<ClipFolder> {
     let mut out = Vec::new();
     let mut push = |label: &str, path: Option<String>| {
@@ -281,7 +309,32 @@ pub fn clip_folders() -> Vec<ClipFolder> {
     });
     push("OBS", obs);
     push("NVIDIA", reg_string(r"Software\NVIDIA Corporation\Global\ShadowPlay\NVSPCAPS", "DefaultPathW"));
+    // Xbox Game Bar's folder can be moved: Windows keeps it as a known folder.
+    push("Xbox Game Bar", reg_string(r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders", "{EDC0FE71-98D8-4F4A-B920-C8DC133CB165}").map(|p| {
+        let profile = std::env::var("USERPROFILE").unwrap_or_default();
+        p.replace("%USERPROFILE%", &profile)
+    }));
+    if let Some(videos) = videos_dir() {
+        for (label, subs) in CATALOG {
+            if let Some(dir) = subs.iter().map(|s| videos.join(s)).find(|d| d.is_dir()) {
+                push(label, Some(dir.to_string_lossy().into_owned()));
+            }
+        }
+    }
+    out.retain(|f| f.exists || ["Medal", "OBS", "NVIDIA"].contains(&f.label.as_str()));
     out
+}
+
+#[cfg(test)]
+mod catalog_tests {
+    /// What this PC has: cargo test live_recorder_folders -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn live_recorder_folders() {
+        for f in super::clip_folders() {
+            println!("{}: {} (exists: {})", f.label, f.path, f.exists);
+        }
+    }
 }
 
 pub fn read(app: App) -> RecorderSettings {

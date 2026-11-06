@@ -117,7 +117,10 @@ pub fn start(
                     .collect();
                 if todo.is_empty() {
                     flush();
-                    std::thread::sleep(Duration::from_secs(60));
+                    // Everything's ready: look for duplicates too, so Cleanup opens instantly.
+                    let sized: Vec<(String, u64)> = clips().into_iter().filter_map(|p| fs::metadata(&p).ok().map(|m| (p, m.len()))).collect();
+                    let _ = crate::duplicates::find(&sized);
+                    std::thread::sleep(Duration::from_secs(300));
                     continue;
                 }
                 for p in todo {

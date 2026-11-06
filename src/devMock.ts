@@ -38,6 +38,15 @@ export function installDevMock() {
     { path: "C:\\Users\\you\\nas\\VALORANT\\VALORANT 2026-11-02 - OTHER-PC.mkv", name: "VALORANT 2026-11-02 - OTHER-PC", folder: "VALORANT", size: 52 << 20, modified: now - 0.5 * day, external: false, location: "nas", onNas: false, source: "NAS" },
     { path: "C:\\Users\\you\\Medal\\Clips\\Valorant\\Medal clip.mp4", name: "Medal clip", folder: "Valorant", size: 30 << 20, modified: now - 0.6 * day, external: true, location: "linked", onNas: false, source: "Medal" },
   );
+  // Clips from this date one and two years back, for "On this day".
+  for (const [years, g, name] of [[1, "VALORANT", "Ace on Ascent"], [1, "VALORANT", "Operator flick"], [2, "Counter-Strike 2", "1v3 clutch"]] as const) {
+    const d = new Date(now);
+    d.setFullYear(d.getFullYear() - years);
+    clips.push({
+      path: `C:\\Users\\you\\Videos\\Hindsight\\${g}\\${name}.mkv`, name, folder: g, size: 60 << 20, modified: d.getTime() - 3600_000,
+      external: false, location: "local", onNas: true, source: "",
+    });
+  }
   // A few months of older clips, so the date timeline has something to show.
   const games = ["VALORANT", "Counter-Strike 2", "Overwatch 2", "Rainbow Six Siege", "Marvel Rivals", "Hunt Showdown", "Payday The Heist"];
   for (let i = 0; i < 40; i++) {
