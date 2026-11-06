@@ -41,6 +41,8 @@ export type Settings = {
   discordWebhookName: string;
   confirmUploads: boolean;
   healthCheck: boolean;
+  /** Make every clip's thumbnail ahead of time, while no game is running */
+  prepareThumbnails: boolean;
   startMinimized: boolean;
   keepOriginalAfterRemux: boolean;
   replaceOriginalOnEdit: boolean;
@@ -270,7 +272,8 @@ export type Monitor = {
   primary: boolean;
 };
 
-// Thumbnails and probes spawn ffmpeg, so only run a few at a time.
+// Thumbnails and probes spawn ffmpeg, so only run a few at a time. Newest
+// first: the clips just scrolled into view matter more than ones scrolled past.
 const MAX_JOBS = 3;
 let active = 0;
 const waiting: (() => void)[] = [];
@@ -281,7 +284,7 @@ async function limited<T>(job: () => Promise<T>): Promise<T> {
     return await job();
   } finally {
     active--;
-    waiting.shift()?.();
+    waiting.pop()?.();
   }
 }
 

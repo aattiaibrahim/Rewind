@@ -227,6 +227,17 @@ export function LibrarySettings({
         </div>
       )}
 
+      <label className="setting">
+        <span>
+          Prepare thumbnails ahead of time
+          <small>
+            Makes every clip's thumbnail and length in the background, so the library opens instantly even with clips on a
+            slow hard drive. They're kept on this PC's app folder. Runs only while no game is running.
+          </small>
+        </span>
+        <Toggle label="Prepare thumbnails ahead of time" checked={s.prepareThumbnails} onChange={(v) => set({ prepareThumbnails: v })} />
+      </label>
+
       <HealthSetting on={s.healthCheck} set={(v) => set({ healthCheck: v })} Toggle={Toggle} />
       <div className="setting">
         <span>

@@ -82,6 +82,8 @@ pub struct Settings {
     pub confirm_uploads: bool,
     /// Check clips for damage in the background (only while no game is in front)
     pub health_check: bool,
+    /// Make every clip's thumbnail and details ahead of time (only while no game is running)
+    pub prepare_thumbnails: bool,
 }
 
 impl Default for Settings {
@@ -132,6 +134,7 @@ impl Default for Settings {
             discord_webhook_name: String::new(),
             confirm_uploads: true,
             health_check: true,
+            prepare_thumbnails: true,
         }
     }
 }

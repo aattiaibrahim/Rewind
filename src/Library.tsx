@@ -1,12 +1,14 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, ClipFile, codecLabel, errText, fmtDuration, fmtSize, Health, Probe, Upload, UploadProgress, VIDEO_EXTENSIONS } from "./api";
-import { useThumb } from "./hooks";
+import { useNearView, useThumb } from "./hooks";
 import { liveLink, progressText, ShareRequest, timeLeft } from "./Share";
 import { Timeline } from "./Timeline";
 import { DamagedStatus, damagedText } from "./Health";
 import { DeletePreview } from "./DeletePreview";
 import { HealReview } from "./HealReview";
+import { NasBadge, nasStatus, useNasState } from "./NasProgress";
+import { SlidingPill } from "./SlidingPill";
 
 /** Where each list (all clips, damaged clips) was scrolled to, kept while you're in Studio (the page itself unmounts). */
 const memories: Record<string, { scroll: number; folder: string; query: string; filters?: Filters }> = {};
@@ -58,11 +60,24 @@ function FolderTile({ name, items, onOpen }: { name: string; items: ClipFile[]; 
 }
 
 /** One clip in List view. */
-function ClipRow({ clip, selected, onClick, damage }: { clip: ClipFile; selected: boolean; onClick: (e: React.MouseEvent) => void; damage?: Health }) {
-  const thumb = useThumb(clip.path, clip.modified);
+function ClipRow({
+  clip,
+  selected,
+  onClick,
+  damage,
+  nasOn,
+}: {
+  clip: ClipFile;
+  selected: boolean;
+  onClick: (e: React.MouseEvent) => void;
+  damage?: Health;
+  nasOn: boolean;
+}) {
+  const [rowRef, near] = useNearView<HTMLButtonElement>();
+  const thumb = useThumb(near ? clip.path : "", clip.modified);
   const time = new Date(clip.modified).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
   return (
-    <button className={`clip-row ${selected ? "selected" : ""}`} onClick={onClick} title={clip.path} data-path={clip.path}>
+    <button ref={rowRef} className={`clip-row ${selected ? "selected" : ""}`} onClick={onClick} title={clip.path} data-path={clip.path}>
       <div className="clip-row-thumb">{thumb && <img src={thumb} alt="" loading="lazy" />}</div>
       <div className="clip-row-main">
         <div className="card-title">{clip.name}</div>
@@ -70,8 +85,7 @@ function ClipRow({ clip, selected, onClick, damage }: { clip: ClipFile; selected
           {clip.folder} · {time}
           {damage && damage.state !== "ok" && <span className="src-tag bad"> ⚠ Damaged</span>}
           {clip.location === "linked" && <span className="src-tag">{clip.source}</span>}
-          {clip.location === "nas" && <span className="src-tag">NAS</span>}
-          {clip.onNas && <span className="src-tag ok">✓ NAS</span>}
+          <NasBadge status={nasStatus(clip, nasOn)} />
         </div>
       </div>
       <div className="clip-row-size">{fmtSize(clip.size)}</div>
@@ -113,7 +127,10 @@ function ClipCard({
   damage,
   returned,
   deleteCount = 1,
+  nasOn,
 }: {
+  /** NAS syncing is on (clips not copied yet get a "waiting" mark) */
+  nasOn: boolean;
   /** How many clips its Delete removes (all selected ones when it's part of a selection) */
   deleteCount?: number;
   upload?: UploadProgress;
@@ -130,16 +147,25 @@ function ClipCard({
   onDelete: () => void;
   onToast: (t: string, err?: boolean) => void;
 }) {
-  const thumb = useThumb(clip.path, clip.modified);
+  // Only clips near the screen ask the drive for anything: with hundreds of
+  // clips (or a slow hard drive) the ones you're looking at come first.
+  const [cardRef, near] = useNearView<HTMLButtonElement>();
+  const thumb = useThumb(near ? clip.path : "", clip.modified);
   const [info, setInfo] = useState<Probe | null>(null);
   useEffect(() => {
-    api.probe(clip.path, String(clip.modified)).then(setInfo).catch(() => {});
-  }, [clip.path, clip.modified]);
+    if (near) api.probe(clip.path, String(clip.modified)).then(setInfo).catch(() => {});
+  }, [near, clip.path, clip.modified]);
 
   const time = new Date(clip.modified).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 
   return (
-    <button className={`card ${selected ? "selected" : ""} ${returned ? "returned" : ""}`} onClick={onClick} title={clip.path} data-path={clip.path}>
+    <button
+      ref={cardRef}
+      className={`card ${selected ? "selected" : ""} ${returned ? "returned" : ""}`}
+      onClick={onClick}
+      title={clip.path}
+      data-path={clip.path}
+    >
       <div className="thumb">
         {thumb && <img src={thumb} alt="" loading="lazy" />}
         <span
@@ -213,16 +239,7 @@ function ClipCard({
             </span>
           )}
           {clip.location === "linked" && <span className="src-tag">{clip.source}</span>}
-          {clip.location === "nas" && (
-            <span className="src-tag" title="Only on the NAS (for example from another PC)">
-              NAS
-            </span>
-          )}
-          {clip.onNas && (
-            <span className="src-tag ok" title="Also safely copied to the NAS">
-              ✓ NAS
-            </span>
-          )}
+          <NasBadge status={nasStatus(clip, nasOn)} />
         </div>
         <div className="card-over">
           <div className="card-title">{clip.name}</div>
@@ -272,6 +289,8 @@ export function Library({
 }) {
   const memory = (memories[mode] ??= { scroll: 0, folder: "All", query: "" });
   const damagedMode = mode === "damaged";
+  const nas = useNasState();
+  const nasOn = !!nas?.enabled;
   // Filter and search survive a trip to Studio too.
   const [folder, setFolderState] = useState(memory.folder);
   const [query, setQueryState] = useState(memory.query);
@@ -530,6 +549,7 @@ export function Library({
           <input placeholder="clips, games…" value={query} onChange={(e) => setQuery(e.target.value)} />
         </label>
         <div className="seg" role="group" aria-label="View">
+          <SlidingPill />
           {(["gallery", "folders", "list"] as ViewMode[]).map((v) => (
             <button key={v} className={viewMode === v ? "on" : ""} onClick={() => setViewMode(v)}>
               {v === "gallery" ? "Gallery" : v === "folders" ? "Folders" : "List"}
@@ -561,6 +581,7 @@ export function Library({
           {mode === "clips" && (
             <div className="fgroup">
               <span className="label">Where</span>
+              <SlidingPill />
               {(
                 [
                   ["", "Anywhere"],
@@ -596,6 +617,7 @@ export function Library({
           </div>
           <div className="fgroup">
             <span className="label">Size</span>
+            <SlidingPill />
             {[0, 100, 500, 1024].map((mb) => (
               <button key={mb} className={`chip small ${filters.minMb === mb ? "on" : ""}`} onClick={() => setFilters({ minMb: mb })}>
                 {mb === 0 ? "Any" : mb >= 1024 ? "Over 1 GB" : `Over ${mb} MB`}
@@ -633,6 +655,7 @@ export function Library({
       ) : (
         folders.length > 1 && !atFolderRoot && (
           <div className="chips">
+            <SlidingPill />
             {folders.map((f) => (
               <button key={f} className={`chip ${f === folder ? "on" : ""}`} onClick={() => setFolder(f)}>
                 {f}
@@ -679,14 +702,21 @@ export function Library({
       ) : viewMode === "list" ? (
         <div className="clip-rows">
           {groups.flatMap((g) => g.items).map((c) => (
-            <ClipRow key={c.path} clip={c} selected={selected.has(c.path)} onClick={clickCard(c.path)} damage={health?.[c.path]} />
+            <ClipRow key={c.path} clip={c} selected={selected.has(c.path)} onClick={clickCard(c.path)} damage={health?.[c.path]} nasOn={nasOn} />
           ))}
         </div>
       ) : (
         groups.map((g) => {
           const allInDay = g.items.every((c) => selected.has(c.path));
           return (
-            <section key={g.day} data-day={g.day} className="day">
+            <section
+              key={g.day}
+              data-day={g.day}
+              className="day"
+              // Off-screen days skip layout and painting; this guess (about 4 cards a
+              // row) holds their place until they've been drawn once.
+              style={{ containIntrinsicSize: `auto ${40 + Math.ceil(g.items.length / 4) * 215}px` }}
+            >
               <div className="day-head">
                 <h3>{g.day}</h3>
                 <span className="muted">
@@ -710,6 +740,7 @@ export function Library({
               <div className="grid">
                 {g.items.map((c) => (
                   <ClipCard
+                    nasOn={nasOn}
                     key={c.path}
                     clip={c}
                     selected={selected.has(c.path)}

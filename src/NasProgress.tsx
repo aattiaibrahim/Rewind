@@ -1,6 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
-import { api, fmtSize, NasState } from "./api";
+import { api, ClipFile, fmtSize, NasState } from "./api";
 
 /** The NAS copier's state, live. */
 export function useNasState() {
@@ -74,5 +74,39 @@ export function NasProgress({ n, compact = false }: { n: NasState | null; compac
         </div>
       )}
     </div>
+  );
+}
+
+/** Where a clip stands with the NAS, for its badge. */
+export function nasStatus(clip: ClipFile, nasOn: boolean): "synced" | "waiting" | "nas-only" | null {
+  if (clip.location === "nas") return "nas-only";
+  if (clip.onNas) return "synced";
+  // Other recorders' folders aren't copied, so they get no badge.
+  if (nasOn && clip.location === "local") return "waiting";
+  return null;
+}
+
+const NAS_TIP = {
+  synced: "Safely copied to the NAS",
+  waiting: "Not on the NAS yet: it copies once you're out of game",
+  "nas-only": "Only on the NAS (not on this PC)",
+} as const;
+
+/** A small NAS icon with a status mark, like iCloud's cloud icons. */
+export function NasBadge({ status }: { status: ReturnType<typeof nasStatus> }) {
+  if (!status) return null;
+  return (
+    <span className={`nas-badge ${status}`} title={NAS_TIP[status]} aria-label={NAS_TIP[status]} role="img">
+      <svg viewBox="0 0 20 16" width="20" height="16" aria-hidden="true">
+        {/* the NAS: a box with two drive bays and a light */}
+        <rect x="1" y="2" width="13" height="12" rx="2.2" fill="currentColor" opacity="0.92" />
+        <rect x="3.2" y="4.4" width="8.6" height="2.4" rx="0.8" fill="var(--nas-bg)" />
+        <rect x="3.2" y="8.6" width="8.6" height="2.4" rx="0.8" fill="var(--nas-bg)" />
+        <circle cx="15.2" cy="11.2" r="4.3" fill="var(--nas-mark)" stroke="var(--nas-bg)" strokeWidth="1.4" />
+        {status === "synced" && <path d="M13.3 11.3l1.3 1.3 2.4-2.6" fill="none" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />}
+        {status === "waiting" && <path d="M13.3 11.2h3.8" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" />}
+        {status === "nas-only" && <path d="M15.2 9.3v3.5M13.7 11.5l1.5 1.5 1.5-1.5" fill="none" stroke="#fff" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />}
+      </svg>
+    </span>
   );
 }

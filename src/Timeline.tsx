@@ -13,8 +13,19 @@ type Mark = { key: string; ts: number; y: number; month?: string; year?: string 
  */
 export function Timeline({ scroller, days }: { scroller: RefObject<HTMLDivElement | null>; days: TimelineDay[] }) {
   const rail = useRef<HTMLDivElement>(null);
+  const viewBox = useRef<HTMLDivElement>(null);
   const [marks, setMarks] = useState<Mark[]>([]);
-  const [view, setView] = useState({ top: 0, height: 0 });
+  // The "you are here" box moves on every scroll: set straight on the element,
+  // once per frame, never through React (re-rendering every tick was the stutter).
+  const placeView = useCallback(() => {
+    const sc = scroller.current;
+    const v = viewBox.current;
+    const h = rail.current?.clientHeight ?? 0;
+    if (!sc || !v) return;
+    const total = Math.max(1, sc.scrollHeight);
+    v.style.transform = `translateY(${(sc.scrollTop / total) * h}px)`;
+    v.style.height = `${Math.max(3, (sc.clientHeight / total) * h)}px`;
+  }, [scroller]);
   const [hover, setHover] = useState<{ y: number; label: string } | null>(null);
   const dragging = useRef(false);
 
@@ -54,29 +65,41 @@ export function Timeline({ scroller, days }: { scroller: RefObject<HTMLDivElemen
       out.push(m);
     }
     setMarks(out);
-    setView({ top: (sc.scrollTop / total) * h, height: (sc.clientHeight / total) * h });
-  }, [scroller, days]);
+    placeView();
+  }, [scroller, days, placeView]);
 
   useLayoutEffect(measure, [measure]);
   useEffect(() => {
     const sc = scroller.current;
     if (!sc) return;
+    let frame = 0;
     const onScroll = () => {
-      const total = Math.max(1, sc.scrollHeight);
-      const h = rail.current?.clientHeight ?? 0;
-      setView({ top: (sc.scrollTop / total) * h, height: (sc.clientHeight / total) * h });
+      if (!frame)
+        frame = requestAnimationFrame(() => {
+          frame = 0;
+          placeView();
+        });
     };
     sc.addEventListener("scroll", onScroll, { passive: true });
-    // Thumbnails loading, the window resizing: re-measure.
-    const ro = new ResizeObserver(() => measure());
+    // Thumbnails loading, the window resizing: re-measure, at most once a frame.
+    let measuring = 0;
+    const ro = new ResizeObserver(() => {
+      if (!measuring)
+        measuring = requestAnimationFrame(() => {
+          measuring = 0;
+          measure();
+        });
+    });
     ro.observe(sc);
     if (sc.firstElementChild) ro.observe(sc.firstElementChild);
     Array.from(sc.children).forEach((c) => ro.observe(c));
     return () => {
       sc.removeEventListener("scroll", onScroll);
       ro.disconnect();
+      cancelAnimationFrame(frame);
+      cancelAnimationFrame(measuring);
     };
-  }, [scroller, measure]);
+  }, [scroller, measure, placeView]);
 
   const dayAt = (y: number) => {
     let best = marks[0];
@@ -127,9 +150,8 @@ export function Timeline({ scroller, days }: { scroller: RefObject<HTMLDivElemen
       role="scrollbar"
       aria-label="Jump to a date"
       aria-orientation="vertical"
-      aria-valuenow={Math.round(view.top)}
     >
-      <div className="tl-view" style={{ top: view.top, height: Math.max(3, view.height) }} />
+      <div className="tl-view" ref={viewBox} />
       {marks.map((m) => (
         <span key={m.key} className={`tl-day ${m.month || m.year ? "month" : ""} ${m.year ? "year" : ""}`} style={{ top: m.y }}>
           {(m.month || m.year) && (

@@ -1,5 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ClipFile, Settings, Status, UpdateState } from "./api";
 
 export function useUpdate() {
@@ -66,6 +66,34 @@ export function useClips() {
     };
   }, [refresh]);
   return [clips, refresh] as const;
+}
+
+/**
+ * Has this element come near the screen yet? Stays true once it has, so a
+ * card loads its thumbnail once and keeps it. `root` is the scrolling box
+ * (found by selector) and `margin` how far ahead to start.
+ */
+export function useNearView<T extends Element>(rootSelector = ".lib-page", margin = "900px 0px") {
+  const ref = useRef<T>(null);
+  const [near, setNear] = useState(false);
+  useEffect(() => {
+    if (near) return;
+    const el = ref.current;
+    if (!el) return;
+    if (typeof IntersectionObserver === "undefined") return setNear(true);
+    const io = new IntersectionObserver(
+      (es) => {
+        if (es.some((e) => e.isIntersecting)) {
+          setNear(true);
+          io.disconnect();
+        }
+      },
+      { root: document.querySelector(rootSelector), rootMargin: margin },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [near, rootSelector, margin]);
+  return [ref, near] as const;
 }
 
 export function useThumb(path: string, key: string | number = "") {

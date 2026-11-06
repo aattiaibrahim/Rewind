@@ -413,11 +413,18 @@ const timeline = (() => {
     position();
   }
 
+  // Once per frame however many scroll events arrive, moved with a transform.
+  let queued = false;
   function position() {
-    const total = Math.max(1, scroller.scrollHeight);
-    const h = rail.clientHeight;
-    view.style.top = `${(scroller.scrollTop / total) * h}px`;
-    view.style.height = `${Math.max(3, (scroller.clientHeight / total) * h)}px`;
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => {
+      queued = false;
+      const total = Math.max(1, scroller.scrollHeight);
+      const h = rail.clientHeight;
+      view.style.transform = `translateY(${(scroller.scrollTop / total) * h}px)`;
+      view.style.height = `${Math.max(3, (scroller.clientHeight / total) * h)}px`;
+    });
   }
 
   const dayAt = (y) => {

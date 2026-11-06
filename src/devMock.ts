@@ -58,7 +58,7 @@ export function installDevMock() {
     recordHotkey: "Alt+F9", bufferEnabled: true, launchOnStartup: false, autoUpdate: true, startMinimized: true,
     keepOriginalAfterRemux: true, replaceOriginalOnEdit: false, externalFiles: [], desktopAudio: true, discordTrack: true,
     micEnabled: true, micMono: true, micDevice: "", micGainDb: 0, theme: "midnight", accent: "lime", reduceMotion: false,
-    saveSound: true, nasDir: "\\\\nas\\clips", nasRemoveLocal: false, linkedFolders: [] as string[], benchmarkMode: false, uploadHost: "catbox", litterboxTime: "72h", autoUpload: false, postLinkToDiscord: false, streamableEmail: "", discordWebhookName: "", confirmUploads: true, healthCheck: true,
+    saveSound: true, nasDir: "\\\\nas\\clips", nasRemoveLocal: false, linkedFolders: [] as string[], benchmarkMode: false, uploadHost: "catbox", litterboxTime: "72h", autoUpload: false, postLinkToDiscord: false, streamableEmail: "", discordWebhookName: "", confirmUploads: true, healthCheck: true, prepareThumbnails: true,
     folderNames: {} as Record<string, string>, similarDismissed: [] as string[], cleanupKept: {} as Record<string, number>,
   };
   // Same game under two folder names (preview of the merge prompt).

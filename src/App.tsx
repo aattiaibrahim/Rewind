@@ -18,6 +18,7 @@ import { Performance } from "./Performance";
 import logo from "./logo.svg";
 import { SettingsView } from "./SettingsView";
 import { Studio } from "./Studio";
+import { SlidingPill } from "./SlidingPill";
 
 type View = "clips" | "local" | "synced" | "damaged" | "cleanup" | "studio" | "performance" | "settings";
 /** The clip lists (Studio goes back to whichever you came from). */
@@ -271,6 +272,7 @@ export default function App() {
   return (
     <div className="shell">
       <nav className="nav">
+        <SlidingPill selector=".nav-item.on" />
         <div className="brand">
           <img src={logo} alt="" width={26} height={26} />
           HINDSIGHT

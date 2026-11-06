@@ -213,7 +213,9 @@ h1 { margin: 0; font-family: var(--display); font-size: 28px; font-weight: 600; 
 .tl-view {
   position: absolute; right: 7px; width: 7px; border-radius: 999px; pointer-events: none;
   background: color-mix(in srgb, var(--accent) 35%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
-  transition: top 0.08s linear;
+  /* Moved with transform, once per frame, straight from the scroll position: no
+     transition, so it tracks the wheel exactly instead of trailing it in steps. */
+  top: 0; will-change: transform;
 }
 .tl-bubble {
   position: absolute; right: 22px; transform: translateY(-50%); pointer-events: none; z-index: 5;

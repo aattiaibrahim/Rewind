@@ -1,4 +1,5 @@
 mod app_audio;
+mod prepare;
 mod audio;
 mod audio_edit;
 mod bench;
@@ -809,7 +810,7 @@ async fn recorder_clip_folders() -> Result<Vec<bench::recorders::ClipFolder>, St
 
 #[tauri::command]
 async fn probe_file(path: String) -> Result<library::Probe, String> {
-    blocking(move || library::probe(&path)).await
+    blocking(move || prepare::probe(&path)).await
 }
 
 #[tauri::command]
@@ -1168,6 +1169,28 @@ pub fn run() {
                 games::observe();
                 thread::sleep(Duration::from_secs(2));
             });
+            // Clip details and thumbnails, ready before you scroll to them.
+            if let Ok(file) = data_file(&handle, "probes.json") {
+                prepare::init(file);
+                let thumbs = handle.state::<AppState>().thumbs_dir.clone();
+                let (p1, p2, p3) = (handle.clone(), handle.clone(), handle.clone());
+                prepare::start(
+                    thumbs,
+                    move || {
+                        let s = settings_of(&p1);
+                        let linked = linked_roots(&s);
+                        library::scan_all(PathBuf::from(&s.clips_dir).as_path(), &s.external_files, &[], &linked, &s.nas_dir)
+                            .into_iter()
+                            .map(|c| c.path)
+                            .collect()
+                    },
+                    move || settings_of(&p2).prepare_thumbnails,
+                    move || {
+                        let st = p3.state::<AppState>();
+                        games::game_running() || st.engine.is_recording() || engine::saves_in_progress() > 0 || bench::run::is_running()
+                    },
+                );
+            }
             // Clip health check: one clip at a time, only while the PC is free.
             if let Ok(cache) = data_file(&handle, "health.json") {
                 let (h1, h2, h3, h4) = (handle.clone(), handle.clone(), handle.clone(), handle.clone());

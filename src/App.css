@@ -641,7 +641,7 @@ input.switch:checked:active::after { transform: translateX(12px); }
 /* The date timeline replaces the scrollbar (wheel and keys still scroll). */
 .lib-page::-webkit-scrollbar { width: 0; height: 0; }
 .lib .grid { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 6px; }
-.day { display: flex; flex-direction: column; gap: 10px; }
+.day { display: flex; flex-direction: column; gap: 10px; content-visibility: auto; }
 .day-head { display: flex; align-items: baseline; gap: 10px; }
 .day-head h3 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; color: var(--text); }
 .day-head .muted { font-size: 12px; }
@@ -696,7 +696,9 @@ input.switch:checked:active::after { transform: translateX(12px); }
 .tl-view {
   position: absolute; right: 7px; width: 7px; border-radius: 999px; pointer-events: none;
   background: color-mix(in srgb, var(--accent) 35%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
-  transition: top 0.08s linear;
+  /* Moved with transform, once per frame, straight from the scroll position: no
+     transition, so it tracks the wheel exactly instead of trailing it in steps. */
+  top: 0; will-change: transform;
 }
 .tl-bubble {
   position: absolute; right: 22px; transform: translateY(-50%); pointer-events: none; z-index: 5;
@@ -898,3 +900,27 @@ input.switch:checked:active::after { transform: translateX(12px); }
 .clean-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .clean-main { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .clean-size { font-size: 15px; font-weight: 600; color: var(--text); }
+
+/* NAS status icon on clips (like iCloud's): check = on the NAS, minus = not yet, arrow = only there */
+.nas-badge { display: inline-flex; align-items: center; color: #e8ecf2; --nas-bg: #1b1f27; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6)); }
+.nas-badge.synced { --nas-mark: #2fbf71; }
+.nas-badge.waiting { --nas-mark: #7d8594; }
+.nas-badge.nas-only { --nas-mark: #4c8dff; }
+.clip-row .nas-badge { margin-left: 6px; vertical-align: middle; filter: none; color: var(--text-2); --nas-bg: var(--panel); }
+
+/* Sliding selection: one highlight glides to the chosen option */
+.has-pill { position: relative; }
+.has-pill > :not(.slide-pill) { position: relative; z-index: 1; }
+.slide-pill {
+  position: absolute; left: 0; top: 0; z-index: 0; pointer-events: none; opacity: 0;
+  transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1), width 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+    height 0.32s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s;
+}
+:root[data-motion="reduce"] .slide-pill { transition: none; }
+/* The pill now draws the selected background; the option itself stays clear. */
+.has-pill > .on { background: transparent !important; box-shadow: none !important; border-color: transparent !important; }
+.chips > .slide-pill, .fgroup > .slide-pill, .row > .slide-pill { background: var(--text); }
+.tabs > .slide-pill, .seg > .slide-pill { background: var(--surface-raised); box-shadow: inset 0 1px 0 var(--hi-strong), var(--elev-1); }
+.nav > .slide-pill { background: var(--raised); }
+/* Options keep their colours; only the moving background is shared. */
+.chips > .chip, .fgroup > .chip, .row > .chip { transition: color 0.2s, border-color 0.2s; }

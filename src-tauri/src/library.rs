@@ -37,7 +37,7 @@ pub struct LinkedRoot {
     pub label: String,
 }
 
-#[derive(Serialize, Default)]
+#[derive(Serialize, serde::Deserialize, Default, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Probe {
     pub duration: f64,
@@ -289,13 +289,22 @@ pub fn first_track_title(path: &str) -> String {
         .unwrap_or_else(|| "Game".into())
 }
 
-pub fn thumbnail(path: &str, cache: &Path) -> Result<String, String> {
+fn thumbnail_path(path: &str, cache: &Path) -> Result<PathBuf, String> {
     let meta = fs::metadata(path).map_err(|e| e.to_string())?;
     let mut h = DefaultHasher::new();
     path.hash(&mut h);
     meta.len().hash(&mut h);
     meta.modified().ok().hash(&mut h);
-    let out = cache.join(format!("{:016x}.jpg", h.finish()));
+    Ok(cache.join(format!("{:016x}.jpg", h.finish())))
+}
+
+/// Is this clip's thumbnail already made?
+pub fn thumbnail_exists(path: &str, cache: &Path) -> bool {
+    thumbnail_path(path, cache).is_ok_and(|p| p.exists())
+}
+
+pub fn thumbnail(path: &str, cache: &Path) -> Result<String, String> {
+    let out = thumbnail_path(path, cache)?;
     if out.exists() {
         return Ok(out.to_string_lossy().into_owned());
     }

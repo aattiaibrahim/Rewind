@@ -7,6 +7,7 @@ import { LibrarySettings } from "./LibrarySettings";
 import { SharingSettings } from "./Share";
 import { Slider } from "./Slider";
 import { useUpdate } from "./hooks";
+import { SlidingPill } from "./SlidingPill";
 
 function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
   return (
@@ -191,6 +192,7 @@ export function SettingsView({
     <div className="page">
       <h1>Settings</h1>
       <div className="tabs" role="tablist" aria-label="Settings sections">
+        <SlidingPill />
         {TABS.map(([id, label]) => (
           <button key={id} role="tab" aria-selected={tab === id} className={`tab ${tab === id ? "on" : ""}`} onClick={() => pickTab(id)}>
             {label}
@@ -383,6 +385,7 @@ export function SettingsView({
               <small>Higher means sharper but bigger files. Fine-tune with the slider (CQ {s.quality}).</small>
             </span>
             <div className="row" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
+              <SlidingPill />
               {QUALITY_PRESETS.map(([label, cq]) => (
                 <button
                   key={label}
