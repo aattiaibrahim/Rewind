@@ -10,8 +10,10 @@ import { BufferCard } from "./BufferCard";
 import { Cleanup } from "./Cleanup";
 import { ConfirmDelete } from "./ConfirmDelete";
 import { ConfirmUpdate, updateInterrupts } from "./ConfirmUpdate";
-import { MergeDialog, SimilarBanner, spellings, useNewSimilar, useSimilarFolders } from "./FolderMerge";
-import type { MoveOutcome, SimilarFolders } from "./api";
+import { MergeDialog, spellings, useSimilarFolders } from "./FolderMerge";
+import { Notice, Notifications } from "./Notifications";
+import { useNasState } from "./NasProgress";
+import type { MoveOutcome } from "./api";
 import { useAppearance, useClips, useSettings, useStatus, useUpdate } from "./hooks";
 import { Library } from "./Library";
 import { Performance } from "./Performance";
@@ -43,7 +45,7 @@ export default function App() {
   const [shareReq, setShareReq] = useState<ShareRequest | null>(null);
   const upd = useUpdate();
   const [installing, setInstalling] = useState(false);
-  const [dismissed, setDismissed] = useState<string | null>(null);
+  // Hiding an update notice is remembered by the notification center.
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -57,19 +59,7 @@ export default function App() {
   // Same game under different folder names (this PC vs the NAS): a notice once,
   // a banner until it's dealt with, and the merge dialog.
   const [similar] = useSimilarFolders();
-  const [similarLater, setSimilarLater] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
-  const notifySimilar = useCallback(
-    (games: SimilarFolders[]) =>
-      toast(
-        games.length === 1 ? "Same game, different folder names" : `${games.length} games have different folder names`,
-        false,
-        spellings(games[0]),
-        { label: "Review", run: () => setMergeOpen(true) },
-      ),
-    [toast],
-  );
-  useNewSimilar(similar, notifySimilar);
   const onMerged = useCallback(
     (target: string, out: MoveOutcome) => {
       if (out.failed.length) {
@@ -96,7 +86,7 @@ export default function App() {
   );
 
   const showBanner =
-    upd && (upd.stage === "ready" || upd.stage === "available") && upd.version && dismissed !== upd.version;
+    upd && (upd.stage === "ready" || upd.stage === "available") && upd.version;
   const [askUpdate, setAskUpdate] = useState(false);
   const interrupts = updateInterrupts(status);
   const installNow = async () => {
@@ -203,6 +193,55 @@ export default function App() {
     () => (clips ? clips.filter((c) => health[c.path] && health[c.path].state !== "ok") : null),
     [clips, health],
   );
+
+  // Duplicates on this PC (worked out ahead of time, so this is quick).
+  const [dupes, setDupes] = useState(0);
+  useEffect(() => {
+    if (!clips) return;
+    const t = setTimeout(() => api.findDuplicates().then((s) => setDupes(s.length)).catch(() => {}), 4000);
+    return () => clearTimeout(t);
+  }, [clips]);
+  const nasNow = useNasState();
+  // Everything that used to be a banner or a pop-up, in the notification center.
+  const notices: Notice[] = [];
+  if (showBanner && upd?.version)
+    notices.push({
+      id: `update:${upd.version}`,
+      title: `Hindsight ${upd.version} is ${upd.stage === "ready" ? "ready" : "available"}`,
+      detail: status?.recording ? "Restarting stops and saves your recording." : "It also installs by itself the next time Hindsight closes.",
+      tone: "good",
+      actions: [{ label: "Restart to update", run: () => requestInstall(), primary: true }],
+    });
+  if (similar.length)
+    notices.push({
+      id: `similar:${similar.map((s) => s.key).join(",")}`,
+      title: similar.length === 1 ? "One game is saved under different folder names" : `${similar.length} games are saved under different folder names`,
+      detail: spellings(similar[0]) + (similar.length > 1 ? ", and more" : ""),
+      actions: [{ label: "Review", run: () => setMergeOpen(true), primary: true }],
+    });
+  if (damagedClips?.length)
+    notices.push({
+      id: `damaged:${damagedClips.length}`,
+      title: `${damagedClips.length} damaged clip${damagedClips.length === 1 ? "" : "s"}`,
+      detail: "They won't play properly all the way through. You can try to repair them or keep their good part.",
+      tone: "warn",
+      actions: [{ label: "Open Damaged", run: () => setView("damaged"), primary: true }],
+    });
+  if (dupes)
+    notices.push({
+      id: `dupes:${dupes}`,
+      title: `${dupes} clip${dupes === 1 ? " is" : "s are"} saved twice on this PC`,
+      detail: "Checked byte for byte. Copies on the NAS never count.",
+      actions: [{ label: "Open Cleanup", run: () => setView("cleanup"), primary: true }],
+    });
+  if (nasNow?.enabled && !nasNow.reachable)
+    notices.push({
+      id: `nas:${nasNow.lastError ?? ""}`,
+      title: "Can't reach the NAS",
+      detail: "Clips keep saving on this PC and copy over once it's back.",
+      tone: "warn",
+      actions: [{ label: "NAS settings", run: () => setView("settings") }],
+    });
   // With a NAS: the clips on this PC, and the ones on the NAS (synced from here, or from other PCs).
   const syncing = !!settings?.nasDir;
   const localClips = useMemo(() => (clips ? clips.filter((c) => c.location !== "nas") : null), [clips]);
@@ -297,36 +336,11 @@ export default function App() {
             )}
           </button>
         ))}
+        <Notifications notices={notices} />
         <div className="nav-spacer" />
         <BufferCard status={status} hotkey={settings?.hotkey ?? "Alt+F10"} recordHotkey={settings?.recordHotkey ?? "Alt+F9"} />
       </nav>
       <main className="main">
-        {showBanner && (
-          <div className="update-banner" role="status">
-            <span>
-              <strong>Hindsight {upd!.version}</strong>{" "}
-              {upd!.stage === "ready" ? "is downloaded and ready." : "is available."}{" "}
-              {status?.recording ? (
-                <span className="muted">Restarting stops and saves your recording.</span>
-              ) : (
-                upd!.stage === "ready" && (
-                  <span className="muted">It also installs by itself the next time Hindsight closes.</span>
-                )
-              )}
-            </span>
-            <span className="row">
-              <button className="btn small" onClick={() => setDismissed(upd!.version)}>
-                Later
-              </button>
-              <button className="btn small primary" disabled={installing} onClick={requestInstall}>
-                {installing ? "Updating…" : "Restart to update"}
-              </button>
-            </span>
-          </div>
-        )}
-        {similar.length > 0 && !similarLater && (
-          <SimilarBanner list={similar} onReview={() => setMergeOpen(true)} onLater={() => setSimilarLater(true)} />
-        )}
         {view === "clips" && (
           <Library
             clips={clips}

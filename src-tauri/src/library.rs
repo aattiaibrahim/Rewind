@@ -686,12 +686,60 @@ fn map_mixed_audio(args: &mut Vec<OsString>, audio_tracks: u32, audio: &AudioEdi
     }
 }
 
-/// Send a file to the Recycle Bin (tests delete outright instead).
-fn discard(p: &Path) -> Result<(), String> {
+/// Can this file really go to the Recycle Bin? Windows quietly deletes for good
+/// when the drive's bin is set to "Don't move files to the Recycle Bin", or the
+/// file is bigger than the bin's maximum size. Either way it would be gone, so
+/// Hindsight refuses instead. Unknown settings (no entry) count as fine.
+pub fn recycle_check(path: &Path) -> Result<(), String> {
+    use windows::Win32::Storage::FileSystem::{GetVolumeNameForVolumeMountPointW, GetVolumePathNameW};
+    use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
+    use windows::core::{HSTRING, PCWSTR};
+    let size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    unsafe {
+        let mut root = [0u16; 260];
+        if GetVolumePathNameW(&HSTRING::from(path.as_os_str()), &mut root).is_err() {
+            return Ok(());
+        }
+        let mut vol = [0u16; 64];
+        if GetVolumeNameForVolumeMountPointW(PCWSTR(root.as_ptr()), &mut vol).is_err() {
+            return Ok(());
+        }
+        let vol = String::from_utf16_lossy(&vol);
+        let Some(guid) = vol.find('{').and_then(|a| vol[a..].find('}').map(|b| vol[a..a + b + 1].to_string())) else { return Ok(()) };
+        let key = HSTRING::from(format!(r"Software\Microsoft\Windows\CurrentVersion\Explorer\BitBucket\Volume\{guid}"));
+        let dword = |name: &str| {
+            let (mut v, mut len) = (0u32, 4u32);
+            RegGetValueW(HKEY_CURRENT_USER, &key, &HSTRING::from(name), RRF_RT_REG_DWORD, None, Some((&mut v as *mut u32).cast()), Some(&mut len))
+                .ok()
+                .ok()
+                .map(|_| v)
+        };
+        if dword("NukeOnDelete") == Some(1) {
+            return Err("This drive's Recycle Bin is set to delete files straight away, so it would be gone for good. Nothing was deleted.".into());
+        }
+        if let Some(mb) = dword("MaxCapacity")
+            && mb > 0
+            && size > mb as u64 * 1_048_576
+        {
+            return Err(format!(
+                "It's bigger than this drive's Recycle Bin ({:.1} GB max), so Windows would delete it for good. Nothing was deleted.",
+                mb as f64 / 1024.0
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Send a file to the Recycle Bin (tests delete outright), but only if it can
+/// really land there.
+pub(crate) fn discard(p: &Path) -> Result<(), String> {
     #[cfg(test)]
     return fs::remove_file(p).map_err(|e| e.to_string());
     #[cfg(not(test))]
-    trash::delete(p).map_err(|e| e.to_string())
+    {
+        recycle_check(p)?;
+        trash::delete(p).map_err(|e| e.to_string())
+    }
 }
 
 /// Safety check before touching an original: the new file must be a real,
@@ -754,7 +802,7 @@ pub fn delete_clips(paths: &[String], clips_dir: &Path, external: &[String], lin
             res.deleted.push(p.clone()); // already gone: treat as done
             continue;
         }
-        match deletable(path, clips_dir, external, linked, nas_dir) {
+        match deletable(path, clips_dir, external, linked, nas_dir).and_then(|_| if cfg!(test) { Ok(()) } else { recycle_check(path) }) {
             Ok(()) => ok.push(path.to_path_buf()),
             Err(e) => res.failed.push((p.clone(), e)),
         }

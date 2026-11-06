@@ -429,6 +429,15 @@ async fn undo_last_move(app: AppHandle) -> Result<consolidate::Outcome, String> 
 
 /// Cleanup's Shrink: compress to about 40% of the size, replace the original (it goes to the
 /// Recycle Bin), and keep the clip's date so it stays where it was in the library.
+/// Cleanup: remove this PC's copy of a clip that's safely (byte-identical) on the NAS.
+#[tauri::command]
+async fn free_local_copy(app: AppHandle, path: String) -> Result<(), String> {
+    let s = settings_of(&app);
+    blocking(move || nas::free_local(&s, std::path::Path::new(&path))).await?;
+    let _ = app.emit("clips-changed", ());
+    Ok(())
+}
+
 #[tauri::command]
 async fn shrink_clip(app: AppHandle, path: String) -> Result<String, String> {
     let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
@@ -1017,9 +1026,14 @@ async fn find_duplicates(app: AppHandle) -> Result<Vec<Vec<String>>, String> {
     let s = settings_of(&app);
     blocking(move || {
         let linked = linked_roots(&s);
-        let nas = nas::listing(&s.nas_dir);
-        let all = library::scan_all(PathBuf::from(&s.clips_dir).as_path(), &s.external_files, &nas, &linked, &s.nas_dir);
-        let list: Vec<(String, u64)> = all.into_iter().map(|c| (c.path, c.size)).collect();
+        // Only files on this PC. A clip and its NAS copy are the same clip on purpose,
+        // and nothing on the NAS is ever offered for removal as a "duplicate".
+        let all = library::scan_all(PathBuf::from(&s.clips_dir).as_path(), &s.external_files, &[], &linked, &s.nas_dir);
+        let list: Vec<(String, u64)> = all
+            .into_iter()
+            .filter(|c| c.location != "nas" && !c.path.starts_with(r"\\") && !health::on_network(&c.path))
+            .map(|c| (c.path, c.size))
+            .collect();
         Ok(duplicates::find(&list))
     })
     .await
@@ -1479,6 +1493,7 @@ pub fn run() {
             game_icon,
             find_duplicates,
             run_diagnostics,
+            free_local_copy,
             render_montage,
             cancel_montage,
             edited_clips,

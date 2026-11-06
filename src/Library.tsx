@@ -718,14 +718,7 @@ export function Library({
         groups.map((g) => {
           const allInDay = g.items.every((c) => selected.has(c.path));
           return (
-            <section
-              key={g.day}
-              data-day={g.day}
-              className="day"
-              // Off-screen days skip layout and painting; this guess (about 4 cards a
-              // row) holds their place until they've been drawn once.
-              style={{ containIntrinsicSize: `auto ${40 + Math.ceil(g.items.length / 4) * 215}px` }}
-            >
+            <section key={g.day} data-day={g.day} className="day">
               <div className="day-head">
                 <h3>{g.day}</h3>
                 <span className="muted">

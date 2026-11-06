@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, ClipFile, errText, fmtSize, Settings } from "./api";
+import { ConfirmDialog } from "./ConfirmUpdate";
 import { useThumb } from "./hooks";
 
 const LIMIT = 40;
@@ -14,13 +15,17 @@ function Row({
   onKeep,
   onShrink,
   onDelete,
+  onFree,
 }: {
   clip: ClipFile;
   onOpen: () => void;
   onKeep: () => Promise<void>;
   onShrink: () => Promise<void>;
   onDelete: () => Promise<boolean>;
+  /** Remove this PC's copy (only for clips that are also on the NAS) */
+  onFree: () => Promise<void>;
 }) {
+  const [ask, setAsk] = useState<"shrink" | "free" | null>(null);
   const thumb = useThumb(clip.path, clip.modified);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -56,14 +61,21 @@ function Row({
         <button className="btn small" disabled={!!busy} onClick={run("Keeping…", onKeep)} title="Hide it until the next cleanup check">
           Keep
         </button>
-        <button
-          className="btn small"
-          disabled={!!busy || nasOnly}
-          onClick={run("Shrinking… this can take a minute", onShrink)}
-          title={nasOnly ? "It's only on the NAS: use Cleanup in the NAS app" : "Re-encode it to about 40% of the size; the original goes to the Recycle Bin"}
-        >
-          Shrink
-        </button>
+        {clip.onNas ? (
+          // Already safe on the NAS: free the space here instead of lowering its quality everywhere.
+          <button className="btn small" disabled={!!busy} onClick={() => setAsk("free")} title="It's on the NAS: remove only this PC's copy (checked identical first)">
+            Remove from this PC
+          </button>
+        ) : (
+          <button
+            className="btn small"
+            disabled={!!busy || nasOnly}
+            onClick={() => setAsk("shrink")}
+            title={nasOnly ? "It's only on the NAS: use Cleanup in the NAS app" : "Re-encode it smaller (lower quality); asks first"}
+          >
+            Shrink
+          </button>
+        )}
         <button
           className="btn small danger"
           disabled={!!busy || nasOnly}
@@ -73,6 +85,38 @@ function Row({
           Delete
         </button>
       </div>
+      {ask === "shrink" && (
+        <ConfirmDialog
+          title={`Shrink ${clip.name}?`}
+          confirmLabel="Shrink it"
+          onCancel={() => setAsk(null)}
+          onConfirm={() => {
+            setAsk(null);
+            run("Shrinking… this can take a minute", onShrink)();
+          }}
+        >
+          <ul className="modal-list wrap">
+            <li>It's re-encoded to about 40% of its size ({fmtSize(clip.size * 0.4)}), so it will look a little worse. This can't be undone on the new file.</li>
+            <li>The original goes to the Recycle Bin, so you can still get it back from there.</li>
+          </ul>
+        </ConfirmDialog>
+      )}
+      {ask === "free" && (
+        <ConfirmDialog
+          title={`Remove ${clip.name} from this PC?`}
+          confirmLabel="Remove from this PC"
+          onCancel={() => setAsk(null)}
+          onConfirm={() => {
+            setAsk(null);
+            run("Checking the NAS copy…", onFree)();
+          }}
+        >
+          <ul className="modal-list wrap">
+            <li>Hindsight first reads the NAS copy and checks it's identical, byte for byte. If it isn't, nothing is removed.</li>
+            <li>This PC's copy goes to the Recycle Bin. The NAS copy is never touched, and you can still watch it in the library.</li>
+          </ul>
+        </ConfirmDialog>
+      )}
     </div>
   );
 }
@@ -197,8 +241,9 @@ export function Cleanup({
         {biggest.length
           ? `These ${biggest.length} biggest ones take ${fmtSize(shown)}. `
           : "Nothing left to look at: every big clip has been kept or cleaned up. "}
-        Delete sends a clip to the Recycle Bin, Shrink re-encodes it to about 40% of the size, and Keep hides it until your
-        next cleanup check.
+        Delete sends a clip to the Recycle Bin (never for clips that are only on the NAS), Shrink re-encodes it to about 40%
+        of the size after asking, Remove from this PC frees a clip that's safely on the NAS, and Keep hides it until your next
+        cleanup check. Nothing is deleted if it couldn't really go to the Recycle Bin.
         {keptCount > 0 && ` ${keptCount} kept since the last check.`}
       </p>
       <Duplicates clips={all} onDelete={onDelete} onChanged={onChanged} />
@@ -214,6 +259,11 @@ export function Cleanup({
               const before = c.size;
               await api.shrinkClip(c.path);
               onToast(`Shrank ${c.name} (it was ${fmtSize(before)})`);
+              onChanged();
+            }}
+            onFree={async () => {
+              await api.freeLocalCopy(c.path);
+              onToast(`Removed ${c.name} from this PC`, false);
               onChanged();
             }}
             onDelete={async () => {

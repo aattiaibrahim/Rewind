@@ -399,12 +399,33 @@ fn same_contents(local: &Path, nas: &Path) -> Result<bool, String> {
     Ok(sha256_uncached(nas)? == a)
 }
 
-/// Freed-up local copies go to the Recycle Bin (tests delete outright).
+/// Freed-up local copies go to the Recycle Bin (tests delete outright), only
+/// when they can really land there (see `library::recycle_check`).
 fn recycle(p: &Path) -> Result<(), String> {
     #[cfg(test)]
     return fs::remove_file(p).map_err(|e| e.to_string());
     #[cfg(not(test))]
-    trash::delete(p).map_err(|e| e.to_string())
+    {
+        crate::library::recycle_check(p)?;
+        trash::delete(p).map_err(|e| e.to_string())
+    }
+}
+
+/// Cleanup's "Remove from this PC" for a clip that's on the NAS: only after
+/// reading both and finding them identical. The NAS copy is never touched.
+pub fn free_local(s: &crate::settings::Settings, path: &Path) -> Result<(), String> {
+    if s.nas_dir.is_empty() {
+        return Err("The NAS isn't set up.".into());
+    }
+    let rel = rel_of(Path::new(&s.clips_dir), path).ok_or("Only clips in Hindsight's own folders are copied to the NAS.")?;
+    let dest = Path::new(&s.nas_dir).join(rel.replace('/', "\\"));
+    if !dest.is_file() {
+        return Err("There's no copy of it on the NAS (yet), so it was kept.".into());
+    }
+    if !same_contents(path, &dest)? {
+        return Err("The NAS copy isn't identical to this one, so this one was kept.".into());
+    }
+    recycle(path)
 }
 
 /// One sync pass: copy every settled clip that isn't on the NAS yet.
@@ -774,6 +795,25 @@ mod tests {
         fs::create_dir_all(p.parent().unwrap()).unwrap();
         fs::write(&p, vec![7u8; bytes]).unwrap();
         p
+    }
+
+    #[test]
+    fn remove_from_this_pc_only_with_an_identical_nas_copy() {
+        let (local, nas) = (tmp("f-local"), tmp("f-nas"));
+        let a = clip(&local, "Game/a.mkv", 3000);
+        let b = clip(&local, "Game/b.mkv", 3000);
+        let c = clip(&local, "Game/c.mkv", 3000);
+        fs::create_dir_all(nas.join("Game")).unwrap();
+        fs::copy(&a, nas.join("Game/a.mkv")).unwrap();
+        fs::write(nas.join("Game/b.mkv"), vec![9u8; 3000]).unwrap(); // same size, different bytes
+        let s = crate::settings::Settings { clips_dir: local.to_string_lossy().into(), nas_dir: nas.to_string_lossy().into(), ..Default::default() };
+        free_local(&s, &a).unwrap();
+        assert!(!a.exists() && nas.join("Game/a.mkv").exists(), "removed here, the NAS copy untouched");
+        assert!(free_local(&s, &b).unwrap_err().contains("isn't identical") && b.exists());
+        assert!(free_local(&s, &c).unwrap_err().contains("no copy") && c.exists());
+        // This PC's Recycle Bin takes an ordinary file.
+        assert!(crate::library::recycle_check(&b).is_ok());
+        let _ = (fs::remove_dir_all(&local), fs::remove_dir_all(&nas));
     }
 
     #[test]

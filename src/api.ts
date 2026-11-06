@@ -347,6 +347,8 @@ export const api = {
   /** Sets of paths holding the very same clip */
   findDuplicates: () => invoke<string[][]>("find_duplicates"),
   /** Save a diagnostics report in Downloads (about one clip, if given); returns its path. */
+  /** Remove this PC's copy of a clip that's identical on the NAS (the NAS copy stays). */
+  freeLocalCopy: (path: string) => invoke<void>("free_local_copy", { path }),
   runDiagnostics: (clip?: string) => invoke<string>("run_diagnostics", { clip: clip ?? null }),
   renderMontage: (montage: MontagePlan) => invoke<string>("render_montage", { montage }),
   cancelMontage: () => invoke<void>("cancel_montage"),

@@ -113,7 +113,9 @@ export function Timeline({ scroller, days }: { scroller: RefObject<HTMLDivElemen
       day: "numeric",
       year: new Date(ts).getFullYear() === new Date().getFullYear() ? undefined : "numeric",
     });
-  const jump = (clientY: number) => {
+  // A click snaps to the start of the day under the pointer (like Immich); a drag
+  // follows the pointer smoothly instead of hopping from day to day.
+  const jump = (clientY: number, snap = true) => {
     const sc = scroller.current;
     const r = rail.current;
     if (!sc || !r) return;
@@ -121,15 +123,16 @@ export function Timeline({ scroller, days }: { scroller: RefObject<HTMLDivElemen
     const y = Math.max(0, Math.min(rect.height, clientY - rect.top));
     const d = dayAt(y);
     // Snap to the start of the day under the pointer, like Immich.
-    const el = d && sc.querySelector<HTMLElement>(`[data-day="${CSS.escape(d.key)}"]`);
-    sc.scrollTop = el ? el.offsetTop - 8 : (y / rect.height) * sc.scrollHeight;
+    const el = snap && d && sc.querySelector<HTMLElement>(`[data-day="${CSS.escape(d.key)}"]`);
+    // Dragging keeps the pointer in the middle of the "you are here" box.
+    sc.scrollTop = el ? el.offsetTop - 8 : (y / rect.height) * sc.scrollHeight - sc.clientHeight / 2;
   };
   const move = (e: React.PointerEvent) => {
     const rect = rail.current!.getBoundingClientRect();
     const y = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
     const d = dayAt(y);
     setHover(d ? { y, label: label(d.ts) } : null);
-    if (dragging.current) jump(e.clientY);
+    if (dragging.current) jump(e.clientY, false);
   };
 
   if (days.length < 2) return <div className="timeline-rail empty-rail" ref={rail} />;

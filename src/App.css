@@ -103,8 +103,9 @@ h1 { margin: 0; font-family: var(--display); font-size: 28px; font-weight: 600; 
   width: 220px; flex-shrink: 0; border-right: 1px solid var(--line); padding: 16px 12px;
   display: flex; flex-direction: column; gap: 4px;
 }
-.brand { font-family: var(--display); font-weight: 700; font-size: 15px; letter-spacing: 0.5px; padding: 4px 12px 16px; display: flex; align-items: center; gap: 10px; }
-.brand-version { font-family: var(--sans, inherit); font-variant-numeric: tabular-nums; font-weight: 500; font-size: 11px; letter-spacing: 0; color: var(--muted); margin-left: auto; }
+.brand { font-family: var(--display); font-weight: 700; font-size: 15px; letter-spacing: 0.5px; padding: 4px 12px 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; }
+/* The version sits under the name, so it never runs out of the sidebar. */
+.brand-version { font-family: var(--sans, inherit); font-variant-numeric: tabular-nums; font-weight: 500; font-size: 11px; letter-spacing: 0; color: var(--muted); flex-basis: 100%; padding-left: 36px; }
 .version-line { font-size: 14px; }
 .update-notes { margin: 0; font-size: 12px; line-height: 1.5; color: var(--text-2); background: var(--card); border: 1px solid var(--border-soft); border-radius: 8px; padding: 10px 12px; }
 .nav-item {
@@ -641,7 +642,7 @@ input.switch:checked:active::after { transform: translateX(12px); }
 /* The date timeline replaces the scrollbar (wheel and keys still scroll). */
 .lib-page::-webkit-scrollbar { width: 0; height: 0; }
 .lib .grid { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 6px; }
-.day { display: flex; flex-direction: column; gap: 10px; content-visibility: auto; }
+.day { display: flex; flex-direction: column; gap: 10px; }
 .day-head { display: flex; align-items: baseline; gap: 10px; }
 .day-head h3 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; color: var(--text); }
 .day-head .muted { font-size: 12px; }
@@ -1038,3 +1039,25 @@ input.switch:checked:active::after { transform: translateX(12px); }
 .me-add-song { align-self: center; }
 .me-playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: #ff4d4d; pointer-events: none; box-shadow: 0 0 6px rgba(255, 77, 77, 0.6); }
 .me-playhead::before { content: ""; position: absolute; top: 0; left: -5px; border: 6px solid transparent; border-top-color: #ff4d4d; }
+
+/* Notification center */
+.notif-btn { display: flex; align-items: center; gap: 9px; }
+.notif-btn.open { color: var(--text); }
+.notif-count { margin-left: auto; }
+.notif-backdrop { position: fixed; inset: 0; z-index: 60; }
+.notif-panel {
+  position: fixed; width: min(400px, calc(100vw - 260px)); max-height: calc(100vh - 32px); overflow: auto;
+  display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 14px;
+  background: var(--surface-raised, var(--raised)); border: 1px solid var(--line); box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
+  animation: notif-in 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes notif-in { from { opacity: 0; transform: translateX(-8px); } }
+:root[data-motion="reduce"] .notif-panel { animation: none; }
+.notif-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 4px; }
+.notif-empty { margin: 8px 4px 10px; }
+.notif { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--text) 4%, transparent); border-left: 3px solid var(--accent); }
+.notif.warn { border-left-color: #f0a35e; }
+.notif.good { border-left-color: #4fd18b; }
+.notif small { color: var(--text-2); line-height: 1.45; }
+.notif-actions { margin-top: 4px; gap: 6px; }
+.notif-hide { opacity: 0.75; }

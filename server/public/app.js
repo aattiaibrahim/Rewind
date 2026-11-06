@@ -488,13 +488,14 @@ const timeline = (() => {
     return best;
   };
 
-  function jump(clientY) {
+  // A tap snaps to the start of the day under the pointer (like Immich); a drag
+  // follows the pointer smoothly, keeping it in the middle of the "you are here" box.
+  function jump(clientY, snap = true) {
     const rect = rail.getBoundingClientRect();
     const y = Math.max(0, Math.min(rect.height, clientY - rect.top));
     const d = dayAt(y);
-    // Snap to the start of the day under the pointer, like Immich.
-    const sec = d && list.querySelector(`[data-day="${CSS.escape(d.key)}"]`);
-    scroller.scrollTop = sec ? sec.offsetTop - 8 : (y / rect.height) * scroller.scrollHeight;
+    const sec = snap && d && list.querySelector(`[data-day="${CSS.escape(d.key)}"]`);
+    scroller.scrollTop = sec ? sec.offsetTop - 8 : (y / rect.height) * scroller.scrollHeight - scroller.clientHeight / 2;
   }
 
   function hover(clientY) {
@@ -510,7 +511,7 @@ const timeline = (() => {
   rail.addEventListener("pointermove", (e) => {
     if (rail.classList.contains("empty-rail")) return;
     hover(e.clientY);
-    if (dragging) jump(e.clientY);
+    if (dragging) jump(e.clientY, false);
   });
   rail.addEventListener("pointerleave", () => !dragging && rail.classList.remove("active"));
   rail.addEventListener("pointerdown", (e) => {
