@@ -1,4 +1,4 @@
-// Rewind Server: serves a Rewind clip library over the local network.
+// Hindsight Server: serves a Hindsight clip library over the local network.
 //
 // Environment:
 //   CLIPS_DIR      clips folder                        default /clips
@@ -16,6 +16,8 @@ import { Library } from "./state.js";
 import { Cleanup } from "./cleanup.js";
 import { Media } from "./media.js";
 import { createServer, VERSION } from "./server.js";
+import { Montages } from "./montage.js";
+import { Shares } from "./share.js";
 
 const env = process.env;
 const clipsDir = env.CLIPS_DIR || "/clips";
@@ -43,9 +45,11 @@ setInterval(() => cleanup.canChange && cleanup.purge().catch((e) => console.erro
 const fileOf = (clip) => path.join(clipsDir, ...clip.rel.split("/"));
 library.onChange = (clips) => media.scanMeta(clips, fileOf);
 await library.start();
-const server = await createServer({ library, media, cleanup });
+const shares = new Shares(cacheDir);
+const montages = new Montages(cacheDir, { encoder: env.H264_ENCODER || "libx264" });
+const server = await createServer({ library, media, cleanup, shares, montages });
 server.listen(port, () => {
-  console.log(`Rewind Server ${VERSION}: ${library.clips.length} clips in ${clipsDir}, listening on :${port}`);
+  console.log(`Hindsight Server ${VERSION}: ${library.clips.length} clips in ${clipsDir}, listening on :${port}`);
 });
 
 const stop = () => {

@@ -1,3 +1,4 @@
+import { montage } from "./montage.js";
 import { facet, filterClips, folders, gamesOf, groupByDay, sortBy } from "./group.js";
 
 const $ = (id) => document.getElementById(id);
@@ -21,7 +22,7 @@ const remember = (k, v) => {
     /* only a convenience */
   }
 };
-let view = "clips"; // clips | cleanup | trash
+let view = "clips"; // clips | montage | cleanup | trash
 let mode = remembered("mode", "gallery"); // gallery | folders | list
 let order = remembered("sort", "new");
 let game = "";
@@ -274,12 +275,13 @@ function render() {
     return timeline.set([]);
   }
   const days = groupByDay(found);
+  const memories = !search.value && !game && !activeFilters() && order === "new" ? onThisDay(clips) : [];
   if (order === "old") {
     days.reverse();
     days.forEach((d) => d.clips.reverse());
   }
   list.replaceChildren(
-    ...[crumbs].filter(Boolean),
+    ...[crumbs, memories.length ? memoryStrip(memories) : null].filter(Boolean),
     ...days.map(({ day, clips: items }) =>
       el(
         "section",
@@ -290,6 +292,59 @@ function render() {
     ),
   );
   timeline.set(days.map((d) => ({ key: d.day, ts: dayTs(d.day) })));
+}
+
+// ---- On this day: clips from this date in earlier years ----
+
+function onThisDay(all, now = new Date()) {
+  const out = [];
+  const byYear = new Map();
+  // A clip's date is its day (from the file name), like the rest of the page.
+  const at = (c) => dayTs(c.day);
+  for (const c of all) {
+    const back = now.getFullYear() - new Date(at(c)).getFullYear();
+    if (back >= 1 && back <= 20 && !c.damaged) byYear.set(back, [...(byYear.get(back) ?? []), c]);
+  }
+  for (const back of [...byYear.keys()].sort((a, b) => a - b)) {
+    const list = byYear.get(back);
+    const same = list.filter((c) => {
+      const d = new Date(at(c));
+      return d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+    });
+    const then = new Date(now);
+    then.setFullYear(now.getFullYear() - back);
+    const week = list.filter((c) => Math.abs(at(c) - then.getTime()) <= 3.5 * 86400000);
+    const ago = `${back} year${back === 1 ? "" : "s"} ago`;
+    if (same.length) out.push({ label: `${ago} today`, clips: same.sort((a, b) => a.mtime - b.mtime) });
+    else if (week.length) out.push({ label: `This week, ${ago}`, clips: week.sort((a, b) => a.mtime - b.mtime) });
+  }
+  return out;
+}
+
+function memoryStrip(memories) {
+  return el(
+    "section",
+    { class: "memories" },
+    el("div", { class: "day-head" }, el("h3", { text: "On this day" })),
+    el(
+      "div",
+      { class: "memories-row" },
+      ...memories.map((m) =>
+        el(
+          "button",
+          { class: "memory-card", onclick: () => openClip(m.clips[0], m.clips) },
+          thumbImg(m.clips[0]),
+          el("span", { class: "memory-shade" }),
+          el(
+            "span",
+            { class: "memory-text" },
+            el("strong", { text: m.label }),
+            el("small", { text: `${dayLabel(m.clips[0].day)} · ${m.clips.length} clip${m.clips.length === 1 ? "" : "s"}` }),
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 function thumbImg(c) {
@@ -506,7 +561,75 @@ function playSrc(src) {
   video.play().catch(() => {});
 }
 
-async function openClip(c) {
+let queue = null; // clips the player steps through (a memory), or null
+
+function step(c) {
+  const at = queue ? queue.findIndex((x) => x.id === c.id) : -1;
+  $("prev-clip").hidden = $("next-clip").hidden = !queue || queue.length < 2;
+  $("prev-clip").disabled = at <= 0;
+  $("next-clip").disabled = at < 0 || at >= queue.length - 1;
+  $("prev-clip").onclick = () => openClip(queue[at - 1], queue);
+  $("next-clip").onclick = () => openClip(queue[at + 1], queue);
+  video.onended = () => queue && at >= 0 && at < queue.length - 1 && openClip(queue[at + 1], queue);
+}
+
+async function share(c) {
+  const host = $("share-host").value;
+  const out = $("share-out");
+  $("share").disabled = true;
+  try {
+    // The link is to the phone version: make it first if needed.
+    let st = await (await fetch(api(c.id, "web"))).json();
+    if (st.state !== "ready") {
+      if (st.state === "none" || st.state === "failed") st = await (await fetch(api(c.id, "web"), { method: "POST" })).json();
+      while (st.state === "queued" || st.state === "working") {
+        $("share").textContent = `Preparing… ${Math.round((st.progress || 0) * 100)}%`;
+        await new Promise((r) => setTimeout(r, 1500));
+        st = await (await fetch(api(c.id, "web"))).json();
+      }
+      if (st.state !== "ready") throw new Error(st.error || "Couldn't make the phone version.");
+    }
+    $("share").textContent = "Uploading…";
+    const res = await fetch(`${api(c.id, "share")}?host=${host}`, { method: "POST" });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "Upload failed.");
+    out.hidden = false;
+    $("share-url").value = j.url;
+    $("share-url").select();
+  } catch (e) {
+    out.hidden = false;
+    $("share-url").value = `Couldn't share: ${e.message}`;
+  } finally {
+    $("share").disabled = false;
+    $("share").textContent = "Share link";
+  }
+}
+
+$("share-copy").addEventListener("click", () => {
+  const i = $("share-url");
+  i.select();
+  // Clipboard API needs https; the NAS page is usually plain http, so fall back.
+  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(i.value).catch(() => document.execCommand("copy"));
+  else document.execCommand("copy");
+  $("share-copy").textContent = "Copied";
+  setTimeout(() => ($("share-copy").textContent = "Copy"), 1500);
+});
+
+async function openClip(c, inQueue = null) {
+  queue = inQueue;
+  step(c);
+  $("share-out").hidden = true;
+  $("share").onclick = () => share(c);
+  // Links already made for this clip (that haven't expired).
+  fetch(api(c.id, "links"))
+    .then((r) => r.json())
+    .then((links) => {
+      if (Array.isArray(links) && links.length) {
+        $("share-out").hidden = false;
+        $("share-url").value = links[0].url;
+      }
+    })
+    .catch(() => {});
   const my = ++session;
   history.replaceState(null, "", `${location.pathname}${location.search}#clip=${c.id}`);
   $("player-title").textContent = `${c.game} · ${dayLabel(c.day)}, ${timeOf(c)}`;
@@ -873,10 +996,13 @@ $("empty-trash").addEventListener("click", async () => {
 
 // ---- views, filters, refresh ----
 
+const montageView = montage($("montage-root"), () => clips);
+
 function showView(v) {
   view = v;
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("on", t.dataset.view === v));
-  for (const name of ["clips", "cleanup", "trash"]) $(`view-${name}`).hidden = name !== v;
+  for (const name of ["clips", "montage", "cleanup", "trash"]) $(`view-${name}`).hidden = name !== v;
+  if (v === "montage") montageView.draw();
   scroller.scrollTop = 0;
   if (v === "clips") render();
   else timeline.set([]);
@@ -936,7 +1062,33 @@ if (activeFilters()) $("filters").hidden = false;
 await load();
 loadStorage();
 loadTrashCount();
-if (["cleanup", "trash"].includes(params.get("view"))) showView(params.get("view"));
+if (["montage", "cleanup", "trash"].includes(params.get("view"))) showView(params.get("view"));
+
+// One highlight slides to the selected tab / view button instead of each fading.
+function slidingPill(box, selector = ".on") {
+  const pill = el("span", { class: "slide-pill", "aria-hidden": "true" });
+  box.prepend(pill);
+  box.classList.add("has-pill");
+  let first = true;
+  const place = () => {
+    const on = box.querySelector(`:scope > ${selector}`);
+    if (!on) return (pill.style.opacity = "0");
+    if (first) pill.style.transition = "none";
+    pill.style.opacity = "1";
+    pill.style.transform = `translate(${on.offsetLeft}px, ${on.offsetTop}px)`;
+    pill.style.width = `${on.offsetWidth}px`;
+    pill.style.height = `${on.offsetHeight}px`;
+    if (first) {
+      void pill.offsetWidth;
+      pill.style.transition = "";
+      first = false;
+    }
+  };
+  place();
+  new MutationObserver(() => requestAnimationFrame(place)).observe(box, { subtree: true, attributes: true, attributeFilter: ["class"] });
+  new ResizeObserver(() => requestAnimationFrame(place)).observe(box);
+}
+document.querySelectorAll(".tabs, .seg").forEach((b) => slidingPill(b));
 const deep = /#clip=([\w-]+)/.exec(location.hash);
 if (deep) {
   const c = clips.find((x) => x.id === deep[1]);

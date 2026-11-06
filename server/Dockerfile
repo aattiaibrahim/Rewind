@@ -1,4 +1,4 @@
-# Rewind Server: Node (no npm dependencies) + ffmpeg on Alpine.
+# Hindsight Server: Node (no npm dependencies) + ffmpeg on Alpine.
 FROM node:22-alpine
 
 # ffmpeg: thumbnails, probing and the H.264 phone version (libx264, AV1/HEVC decoders).

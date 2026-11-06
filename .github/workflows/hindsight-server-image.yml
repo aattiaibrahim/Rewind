@@ -1,6 +1,7 @@
-# Builds the Rewind Server image (server/) and publishes it to GitHub's container registry:
-#   ghcr.io/aattiaibrahim/rewind-server:latest
-name: Rewind Server image
+# Builds the Hindsight Server image (server/) and publishes it to GitHub's container registry:
+#   ghcr.io/aattiaibrahim/hindsight-server:latest
+# The old name (rewind-server) gets the same image too, so installs made before the rename keep updating.
+name: Hindsight Server image
 
 on:
   push:
@@ -8,7 +9,7 @@ on:
     tags: ["server-v*"]
     paths:
       - "server/**"
-      - ".github/workflows/rewind-server-image.yml"
+      - ".github/workflows/hindsight-server-image.yml"
   workflow_dispatch:
 
 permissions:
@@ -40,14 +41,16 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/rewind-server
+          images: |
+            ghcr.io/${{ github.repository_owner }}/hindsight-server
+            ghcr.io/${{ github.repository_owner }}/rewind-server
           tags: |
             type=raw,value=latest
             type=match,pattern=server-v(.*),group=1
             type=sha,format=short
           labels: |
-            org.opencontainers.image.title=Rewind Server
-            org.opencontainers.image.description=Browse and watch Rewind clips from a NAS
+            org.opencontainers.image.title=Hindsight Server
+            org.opencontainers.image.description=Browse, watch, share and make montages of Hindsight clips on a NAS
 
       - uses: docker/build-push-action@v6
         with:

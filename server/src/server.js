@@ -1,7 +1,9 @@
 // HTTP API and static files. Read-only towards the clips folder.
 
 import { createReadStream } from "node:fs";
-import { readFile, stat, statfs } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import { mkdir, readFile, rename, rm, stat, statfs } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -107,7 +109,17 @@ export async function storage(library, media) {
   };
 }
 
-export async function createServer({ library, media, cleanup = null }) {
+/** A request's JSON body (up to 1 MB). */
+async function jsonBody(req) {
+  let text = "";
+  for await (const chunk of req) {
+    text += chunk;
+    if (text.length > 1 << 20) throw Object.assign(new Error("too big"), { status: 413 });
+  }
+  return text ? JSON.parse(text) : {};
+}
+
+export async function createServer({ library, media, cleanup = null, shares = null, montages = null }) {
   const withMeta = (c) => ({ ...c, ...(media.meta(c) ?? {}) });
   const fail = (res, e) => send(res, e.status || 500, { error: String(e.message || e).slice(-500) });
   const post = (req) => req.method === "POST";
@@ -138,6 +150,63 @@ export async function createServer({ library, media, cleanup = null }) {
         await cleanup.restore(parts[2]);
         await library.rescan();
         return send(res, 200, { ok: true });
+      } catch (e) {
+        return fail(res, e);
+      }
+    }
+
+    // ---- montages ----
+    // A song for a montage, sent as the raw request body (x-filename names it). Up to 60 MB.
+    if (montages && url.pathname === "/api/songs" && post(req)) {
+      const ext = (/\.(mp3|m4a|aac|wav|flac|ogg|opus)$/i.exec(req.headers["x-filename"] || "")?.[1] || "").toLowerCase();
+      if (!ext) return send(res, 400, { error: "Pick an MP3, M4A, WAV, FLAC, OGG or Opus file." });
+      const id = `${randomUUID()}.${ext}`;
+      const file = montages.songPath(id);
+      await mkdir(path.dirname(file), { recursive: true });
+      let bytes = 0;
+      const out = createWriteStream(`${file}.part`);
+      try {
+        for await (const chunk of req) {
+          bytes += chunk.length;
+          if (bytes > 60 * 1024 * 1024) throw Object.assign(new Error("The song is too big (60 MB at most)."), { status: 413 });
+          if (!out.write(chunk)) await new Promise((r) => out.once("drain", r));
+        }
+        await new Promise((r, j) => out.end((e) => (e ? j(e) : r())));
+        await rename(`${file}.part`, file);
+        const info = await media.probe({ id, size: bytes, mtime: Date.now() }, file).catch(() => null);
+        return send(res, 200, { id, duration: info?.duration ?? 0 });
+      } catch (e) {
+        out.destroy();
+        await rm(`${file}.part`, { force: true });
+        return fail(res, e);
+      }
+    }
+    if (montages && url.pathname === "/api/montage" && post(req)) {
+      try {
+        const body = await jsonBody(req);
+        const pieces = [];
+        for (const p of body.pieces ?? []) {
+          const clip = library.byId.get(p.id);
+          if (!clip) return send(res, 400, { error: "A clip in the montage isn't on the NAS any more." });
+          const file = path.join(library.root, ...clip.rel.split("/"));
+          const info = await media.probe(clip, file);
+          const end = Math.min(Number(p.end), info.duration || Number(p.end));
+          pieces.push({ file, start: Math.max(0, Number(p.start) || 0), end, audioTracks: info.audio.length });
+        }
+        const music = body.song ? { file: montages.songPath(body.song), offset: Number(body.songOffset) || 0, volumeDb: Number(body.songDb) || 0 } : null;
+        const id = await montages.start({ pieces, music, clipVolumeDb: Number(body.clipDb) || 0, height: Number(body.height) || 1080, fps: Number(body.fps) || 30 });
+        return send(res, 200, montages.status(id));
+      } catch (e) {
+        return fail(res, e);
+      }
+    }
+    if (montages && parts[0] === "api" && parts[1] === "montage" && parts[2]) {
+      try {
+        if (parts[3] === "file") {
+          const stamp = new Date().toISOString().slice(0, 16).replace("T", " ").replace(":", "-");
+          return sendFile(req, res, montages.file(parts[2]), { type: "video/mp4", download: `Montage ${stamp}.mp4` });
+        }
+        return send(res, 200, montages.status(parts[2]), { "cache-control": "no-cache" });
       } catch (e) {
         return fail(res, e);
       }
@@ -189,6 +258,13 @@ export async function createServer({ library, media, cleanup = null }) {
         }
         if (action === "web" && req.method === "POST") return send(res, 200, await media.prepareWeb(clip, file));
         if (action === "web") return send(res, 200, await media.webStatus(clip));
+        // Share: the phone version uploaded to Catbox / Litterbox. Make the phone version first.
+        if (shares && action === "share" && post(req)) {
+          const st = await media.webStatus(clip);
+          if (st.state !== "ready") return send(res, 409, { error: "Make the phone version first.", web: st });
+          return send(res, 200, await shares.share(clip.id, media.webPath(clip), clip.name, url.searchParams.get("host") || "catbox"));
+        }
+        if (shares && action === "links") return send(res, 200, await shares.list(clip.id), { "cache-control": "no-cache" });
         if (action === "web.mp4") {
           const out = media.webPath(clip);
           if (req.headers.range === "bytes=0-" || !req.headers.range) media.touch(out);

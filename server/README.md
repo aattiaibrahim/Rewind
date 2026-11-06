@@ -1,10 +1,13 @@
-# Rewind Server (Hindsight on the NAS)
+# Hindsight Server (Hindsight on the NAS)
+
+Renamed from Rewind Server. The image is now `ghcr.io/aattiaibrahim/hindsight-server`; the old
+`rewind-server` image gets every release too, so an install made under the old name keeps updating.
 
 A small web app that runs on your NAS and lets you browse, watch and tidy your Hindsight clips from
 any browser on the local network, including on your phone.
 
 Capture still happens on the gaming PC. The desktop app saves each clip locally, then copies it
-to the NAS folder. Rewind Server reads that folder:
+to the NAS folder. Hindsight Server reads that folder:
 
 ```
 <clips dataset>/
@@ -37,6 +40,20 @@ to the NAS folder. Rewind Server reads that folder:
   original first. If that fails (for example on an iPhone), the server makes an H.264 MP4 copy
   once, stores it in the cache and plays that. The copy mixes the desktop and mic tracks.
 - **Downloads:** the original file, and the phone version once it exists.
+- **Share:** in the player, **Share link** uploads the phone version to Catbox (kept, up to 200 MB)
+  or Litterbox (72 hours, up to 1 GB) and shows a link that plays inside Discord and on phones.
+  Links you've made are shown again the next time you open the clip. Nothing is uploaded unless
+  you press Share.
+- **On this day:** clips from this date in earlier years ("1 year ago today") at the top of the
+  library; tap one to watch them through with Previous / Next.
+
+**Montage**
+- Pick a length (30 s to 10 min), which clips (random, a date range, edited or unedited ones), a
+  game, and how much of each clip (the end, where a replay's action usually is, the middle or the
+  start). Then reorder, trim (in / out) or remove clips, add a song (uploaded from your phone or
+  PC) and set the clip and song volumes.
+- The montage is made on the NAS with ffmpeg (every clip scaled to one size, the song looped and
+  faded out at the end) and kept in the cache for a day to download. The clips folder isn't touched.
 
 **Storage**
 - The storage button shows the space your clips use and what's free on the NAS. It opens a
@@ -62,7 +79,7 @@ Port: **8420**. No database and no accounts.
 These steps are for TrueNAS SCALE 24.10 (Electric Eel) or later, where apps run on Docker. They
 were tested on 25.10 (Goldeye).
 
-The image is published at **`ghcr.io/aattiaibrahim/rewind-server`** (amd64 and arm64), with ffmpeg
+The image is published at **`ghcr.io/aattiaibrahim/hindsight-server`** (amd64 and arm64), with ffmpeg
 included. TrueNAS downloads it once. After that, the app starts and runs with no internet.
 
 ### 1. Clips dataset and user
@@ -74,13 +91,13 @@ Find your uid under Credentials → Users (the first user you create is usually 
 
 ### 2. Install with YAML
 
-**Apps → Discover Apps → ⋮ (next to Custom App) → Install via YAML**. Name it `rewind-server` and
+**Apps → Discover Apps → ⋮ (next to Custom App) → Install via YAML**. Name it `hindsight-server` and
 paste this, with your own path, uid and time zone:
 
 ```yaml
 services:
-  rewind-server:
-    image: ghcr.io/aattiaibrahim/rewind-server:0.2.0
+  hindsight-server:
+    image: ghcr.io/aattiaibrahim/hindsight-server:0.3.0
     restart: unless-stopped
     user: "3000:545"
     ports:
@@ -91,9 +108,9 @@ services:
       ALLOW_CHANGES: "1"      # cleanup may delete (to the trash) and shrink clips
     volumes:
       - /mnt/tank/clips:/clips    # add :ro and drop ALLOW_CHANGES for a strictly read-only server
-      - rewind-cache:/cache
+      - hindsight-cache:/cache
 volumes:
-  rewind-cache: {}
+  hindsight-cache: {}
 ```
 
 If the app shows **Stopped** after saving, press Start (▶) in the Controls column. Then open
@@ -103,7 +120,7 @@ If the app shows **Stopped** after saving, press Start (▶) in the Controls col
 
 **Apps → Discover Apps → Custom App**:
 
-- Image repository `ghcr.io/aattiaibrahim/rewind-server`, tag `0.2.0`
+- Image repository `ghcr.io/aattiaibrahim/hindsight-server`, tag `0.3.0`
 - User `3000`, group `545`
 - Port: container **8420** → host **8420**, TCP
 - Storage: host path `/mnt/tank/clips` → `/clips` (tick **read-only** for a read-only server); an
@@ -122,7 +139,7 @@ The page shows the running version when you hover over the HINDSIGHT logo, and s
 `http://<nas-ip>:8420/healthz` (`release` and the Git commit).
 
 Each release is tagged with its number, for example `0.2.0`, on the
-[package page](https://github.com/aattiaibrahim/hindsight/pkgs/container/rewind-server). Every
+[package page](https://github.com/aattiaibrahim/hindsight/pkgs/container/hindsight-server). Every
 change in between also gets `latest` and `sha-<commit>`.
 
 TrueNAS only downloads an image it doesn't already have, so it won't fetch a newer `latest` on its
@@ -155,7 +172,8 @@ and Shrink show progress while it works. Each clip is only converted once.
 
 There's no login. Anyone who can reach port 8420 can watch and download your clips, and with
 `ALLOW_CHANGES=1` also delete them (to the trash). Keep it on your home network, and don't forward
-the port on your router. To watch clips away from home, use a VPN such as Tailscale or WireGuard
+the port on your router. Share links are the exception you choose: a shared clip is public to
+anyone with its link. To watch clips away from home, use a VPN such as Tailscale or WireGuard
 (both are available as TrueNAS apps).
 
 ## Run it locally

@@ -1,8 +1,8 @@
 {
-  "name": "rewind-server",
-  "version": "0.2.0",
+  "name": "hindsight-server",
+  "version": "0.3.0",
   "private": true,
-  "description": "Serves a Rewind clip library from a NAS over the local network",
+  "description": "Hindsight on the NAS: browse, watch, share and make montages of your clips over the local network",
   "type": "module",
   "engines": { "node": ">=22" },
   "scripts": {

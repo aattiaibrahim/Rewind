@@ -23,6 +23,7 @@
       </div>
       <nav class="tabs" aria-label="Views">
         <button class="tab on" data-view="clips">Clips</button>
+        <button class="tab" data-view="montage">Montage</button>
         <button class="tab" data-view="cleanup">Cleanup</button>
         <button class="tab" data-view="trash">Trash <small id="trash-count"></small></button>
       </nav>
@@ -60,6 +61,11 @@
           <div class="filters" id="filters" hidden></div>
           <div class="chips" id="chips"></div>
           <div id="list" aria-live="polite"></div>
+        </section>
+
+        <section class="view" id="view-montage" hidden>
+          <div class="toolbar"><h1>Montage</h1></div>
+          <div id="montage-root"></div>
         </section>
 
         <section class="view" id="view-cleanup" hidden>
@@ -108,6 +114,21 @@
       <a id="dl-web" class="btn" href="#" download hidden>Download phone version</a>
       <button id="convert" class="btn" hidden>Make phone version</button>
       <button id="try-original" class="btn" hidden>Play original</button>
+      <span class="grow"></span>
+      <button id="prev-clip" class="btn" hidden>‹ Previous</button>
+      <button id="next-clip" class="btn" hidden>Next ›</button>
+    </div>
+    <div class="share-row">
+      <span class="meta">Share a link that plays in Discord and on phones:</span>
+      <select id="share-host" aria-label="Where to upload">
+        <option value="catbox">Catbox (kept, up to 200 MB)</option>
+        <option value="litterbox">Litterbox (72 hours, up to 1 GB)</option>
+      </select>
+      <button id="share" class="btn">Share link</button>
+    </div>
+    <div class="share-out" id="share-out" hidden>
+      <input id="share-url" readonly aria-label="Share link">
+      <button id="share-copy" class="btn small">Copy</button>
     </div>
     <p id="note" class="meta note" hidden></p>
   </dialog>

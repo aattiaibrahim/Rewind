@@ -1,4 +1,4 @@
-# Rewind Server.
+# Hindsight Server.
 #
 # On a NAS: uses the published image (ffmpeg included, starts offline once downloaded).
 #   CLIPS=/mnt/tank/clips docker compose up -d
@@ -7,10 +7,10 @@
 #   node scripts/make-samples.js sample-clips
 #   docker compose up --build        # then open http://localhost:8420
 services:
-  rewind-server:
-    image: ghcr.io/aattiaibrahim/rewind-server:latest
+  hindsight-server:
+    image: ghcr.io/aattiaibrahim/hindsight-server:latest
     build: .
-    container_name: rewind-server
+    container_name: hindsight-server
     restart: unless-stopped
     # Who reads the clips. On TrueNAS: your SMB user's uid and the builtin_users group (545),
     # which can read SMB-share datasets. Locally the image default (uid 1000) is fine.
@@ -27,8 +27,8 @@ services:
     volumes:
       # Clips. Add :ro (and drop ALLOW_CHANGES) and the server never writes here.
       - ${CLIPS:-./sample-clips}:/clips
-      # Thumbnails and phone versions.
-      - rewind-cache:/cache
+      # Thumbnails, phone versions, montages and share links.
+      - hindsight-cache:/cache
 
 volumes:
-  rewind-cache:
+  hindsight-cache:
