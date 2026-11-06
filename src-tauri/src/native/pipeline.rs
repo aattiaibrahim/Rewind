@@ -525,7 +525,7 @@ pub fn recover_saves(clips_dir: &Path) -> Vec<String> {
                     done.push(meta.out.to_string_lossy().into_owned());
                 }
                 Err(e) => {
-                    eprintln!("[rewind] couldn't finish the cut-off save in {}: {e}", dir.display());
+                    crate::log!("[rewind] couldn't finish the cut-off save in {}: {e}", dir.display());
                     let _ = fs::remove_file(&tmp);
                 }
             }
@@ -541,7 +541,7 @@ fn mux(video: &Path, format: &str, fps: u32, tracks: &[(PathBuf, TrackMeta)], ou
     match mux_with(video, format, fps, tracks, out, limit, "aac") {
         Ok(()) => Ok(()),
         Err(e) if !tracks.is_empty() => {
-            eprintln!("[rewind] clip audio as AAC failed ({e}); saving with FLAC audio instead");
+            crate::log!("[rewind] clip audio as AAC failed ({e}); saving with FLAC audio instead");
             mux_with(video, format, fps, tracks, out, limit, "flac")
         }
         Err(e) => Err(e),

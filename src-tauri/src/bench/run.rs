@@ -421,7 +421,7 @@ fn launch_obs_with(replay_buffer: bool) -> bool {
     {
         Ok(_) => true,
         Err(e) => {
-            eprintln!("[rewind] couldn't start OBS: {e}");
+            crate::log!("[rewind] couldn't start OBS: {e}");
             false
         }
     }

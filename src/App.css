@@ -957,3 +957,22 @@ input.switch:checked:active::after { transform: translateX(12px); }
 .dupe-copy.on { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .dupe-where { font-size: 13px; color: var(--text); }
 .dupe-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Beta tag and About */
+.beta-tag {
+  display: inline-block; padding: 1px 6px; border-radius: 999px; font-size: 9.5px; font-weight: 800; letter-spacing: 0.08em;
+  color: #10140a; background: var(--accent); vertical-align: middle; line-height: 15px;
+}
+.brand .beta-tag { margin-left: 6px; }
+.about-head { display: flex; gap: 14px; align-items: center; }
+.about-head h2 .beta-tag { font-size: 10px; margin-left: 4px; position: relative; top: -2px; }
+.about-text { margin: 4px 0 0; line-height: 1.55; max-width: 640px; color: var(--text-2); }
+.thanks { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border-radius: 12px; background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.thanks h3 { margin: 0; font-size: 15px; }
+.thanks-list { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--text); font-weight: 600; }
+.diag { display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
+.stack .diag { align-items: stretch; }
+.stack .diag > .btn { width: 100%; }
+.diag-block { display: flex; flex-direction: column; gap: 10px; padding: 12px 0; border-top: 1px solid var(--line, rgba(255,255,255,0.06)); }
+.diag-block .diag { align-items: flex-start; }
+.diag-block small { color: var(--muted); line-height: 1.5; max-width: 680px; }

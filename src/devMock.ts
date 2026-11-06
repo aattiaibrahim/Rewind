@@ -126,6 +126,9 @@ export function installDevMock() {
         ? { enabled: true, reachable: true, pending: 1, copying: null, copied: 3, lastError: null, lastSync: Date.now() - 20_000, paused: false, totalFiles: 0, doneFiles: 0, totalBytes: 0, doneBytes: 0, pendingBytes: 0, checking: false, rate: 0, etaSecs: null }
         : { enabled: false, reachable: false, pending: 0, copying: null, copied: 0, lastError: null, lastSync: null, paused: false, totalFiles: 0, doneFiles: 0, totalBytes: 0, doneBytes: 0, pendingBytes: 0, checking: false, rate: 0, etaSecs: null },
     sync_nas_now: () => null,
+    run_diagnostics: () => "C:\\Users\\you\\Downloads\\Hindsight diagnostics 2026-11-06 12-00-00.txt",
+    find_duplicates: () => [],
+    game_icon: () => null,
     gpu_encoders: () => ({ gpu: "NVIDIA GeForce RTX 3070", supported: ["hevc", "h264"], auto: "hevc" }),
     // Uploads (preview only): pretend to prepare and upload, with progress events, then give a fake link.
     upload_clip: async (a) => {

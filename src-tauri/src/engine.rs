@@ -692,7 +692,7 @@ fn supervise_native(
             let problem: Option<Option<String>> = if !want {
                 Some(None)
             } else if run.sig != sig {
-                eprintln!("[rewind] restarting native capture: settings or displays/devices changed");
+                crate::log!("[rewind] restarting native capture: settings or displays/devices changed");
                 Some(None)
             } else if let Some(e) = run.p.failed() {
                 Some(Some(format!("Capture restarted: {e}")))
@@ -706,7 +706,7 @@ fn supervise_native(
                 drop(n);
                 drop(run); // stops the thread; an open recording part is closed
                 if let Some(e) = err {
-                    eprintln!("[rewind] native capture: {e}");
+                    crate::log!("[rewind] native capture: {e}");
                     let mut st = status.lock().unwrap();
                     st.last_error = Some(e);
                     st.restarts += 1;
@@ -748,7 +748,7 @@ fn supervise_native(
                 } else {
                     format!("Native capture couldn't start: {e}")
                 };
-                eprintln!("[rewind] {msg}");
+                crate::log!("[rewind] {msg}");
                 status.lock().unwrap().last_error = Some(msg);
                 *retry_at = Instant::now() + Duration::from_secs(2);
             }
@@ -881,7 +881,7 @@ fn supervise(
                     let tail: Vec<String> = log.iter().rev().take(3).rev().cloned().collect();
                     let mut st = status.lock().unwrap();
                     st.last_error = Some(format!("ffmpeg stopped ({code}). {}", tail.join(" ")));
-                    eprintln!("[rewind] capture stopped: {:?}", st.last_error);
+                    crate::log!("[rewind] capture stopped: {:?}", st.last_error);
                     st.restarts += 1;
                     drop(st);
                     drop(log);
@@ -889,7 +889,7 @@ fn supervise(
                     retry_at = Instant::now() + Duration::from_secs(2);
                 }
                 Ok(None) if !want || r.sig != sig => {
-                    eprintln!("[rewind] restarting capture: settings or displays/devices changed");
+                    crate::log!("[rewind] restarting capture: settings or displays/devices changed");
                     stop(cur.take().unwrap())
                 }
                 // Watchdog: ffmpeg is alive but no new video is coming out
@@ -897,7 +897,7 @@ fn supervise(
                 // Restart it rather than keep re-saving old footage.
                 Ok(None) if r.started.elapsed() > FREEZE_GRACE && segment_age(r) > FREEZE_AFTER => {
                     let age = segment_age(r).as_secs();
-                    eprintln!("[rewind] capture froze (no new video for {age} s), restarting");
+                    crate::log!("[rewind] capture froze (no new video for {age} s), restarting");
                     let mut st = status.lock().unwrap();
                     st.last_error = Some(format!("Capture froze for {age} s and was restarted automatically."));
                     st.restarts += 1;

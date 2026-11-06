@@ -8,6 +8,7 @@ import { SharingSettings } from "./Share";
 import { Slider } from "./Slider";
 import { useUpdate } from "./hooks";
 import { SlidingPill } from "./SlidingPill";
+import { About } from "./About";
 
 function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
   return (
@@ -96,6 +97,7 @@ const TABS = [
   ["sharing", "Sharing"],
   ["integrations", "Stream Deck"],
   ["advanced", "Advanced"],
+  ["about", "About"],
 ] as const;
 type TabId = (typeof TABS)[number][0];
 
@@ -200,6 +202,7 @@ export function SettingsView({
         ))}
       </div>
       <div className="settings-grid" key={tab}>
+        <About version={upd?.current ?? null} hidden={tab !== "about"} />
         <section className="group" hidden={tab !== "advanced"}>
           <h2>Advanced</h2>
           <label className="setting">

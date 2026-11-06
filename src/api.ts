@@ -338,6 +338,8 @@ export const api = {
   gpuEncoders: () => invoke<GpuEncoders>("gpu_encoders"),
   /** Sets of paths holding the very same clip */
   findDuplicates: () => invoke<string[][]>("find_duplicates"),
+  /** Save a diagnostics report in Downloads (about one clip, if given); returns its path. */
+  runDiagnostics: (clip?: string) => invoke<string>("run_diagnostics", { clip: clip ?? null }),
   gameIcon: (name: string) => {
     if (!iconCache.has(name)) iconCache.set(name, invoke<string | null>("game_icon", { name }).then((p) => (p ? convertFileSrc(p) : null)).catch(() => null));
     return iconCache.get(name)!;

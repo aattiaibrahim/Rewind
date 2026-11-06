@@ -247,7 +247,7 @@ pub fn send(host: Host, file: &Path, cfg: &Config, ep: &Endpoints, report: Box<d
             if let Ok(r) = r
                 && !r.status().is_success()
             {
-                eprintln!("[rewind] posting the link to Discord failed: {}", r.status());
+                crate::log!("[rewind] posting the link to Discord failed: {}", r.status());
             }
         }
     }

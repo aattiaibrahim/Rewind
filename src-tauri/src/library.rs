@@ -394,7 +394,7 @@ pub fn trim(path: &str, start: f64, end: f64, exact: bool, audio: &AudioEdit) ->
         match smart_trim(path, start, end, &out, audio) {
             Ok(()) => return Ok(out.to_string_lossy().into_owned()),
             Err(e) => {
-                eprintln!("[rewind] smart trim not used ({e}); re-encoding the whole range");
+                crate::log!("[rewind] smart trim not used ({e}); re-encoding the whole range");
                 let _ = fs::remove_file(&out);
             }
         }

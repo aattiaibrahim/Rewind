@@ -2,6 +2,8 @@ mod app_audio;
 mod prepare;
 mod game_icons;
 mod duplicates;
+#[macro_use]
+mod diag;
 mod audio;
 mod audio_edit;
 mod bench;
@@ -910,6 +912,56 @@ async fn export_h264(app: AppHandle, path: String, replace: bool, audio: Option<
     edit(app, path, replace, secs, move |p| library::export_h264(p, &audio)).await
 }
 
+/// Make a diagnostics report (optionally about one clip), save it in
+/// Downloads and return its path. See diag.rs for what's in it.
+#[tauri::command]
+async fn run_diagnostics(app: AppHandle, clip: Option<String>) -> Result<String, String> {
+    let s = settings_of(&app);
+    let status = app.state::<AppState>().engine.status();
+    let version = app.package_info().version.to_string();
+    blocking(move || {
+        let nas = nas::state();
+        let extra = vec![
+            ("Recorder", serde_json::to_string_pretty(&status).unwrap_or_default()),
+            ("Settings", diag::settings_json(&s)),
+            (
+                "Storage",
+                format!(
+                    "Clips folder: {} ({})\nPrepared clip details: {}",
+                    s.clips_dir,
+                    diag::free_space_line(&s.clips_dir),
+                    if s.prepare_thumbnails { "on" } else { "off" }
+                ),
+            ),
+            (
+                "NAS",
+                if s.nas_dir.is_empty() {
+                    "off".to_string()
+                } else {
+                    // The NAS's own name stays private: only how it's doing.
+                    format!(
+                        "on, reachable: {}, paused: {}, pending: {} ({} bytes), copied this run: {}, last error: {}",
+                        nas.reachable,
+                        nas.paused,
+                        nas.pending,
+                        nas.pending_bytes,
+                        nas.copied,
+                        nas.last_error.unwrap_or_default().replace(&s.nas_dir, "<NAS>")
+                    )
+                },
+            ),
+            ("Health check", serde_json::to_string(&health::progress()).unwrap_or_default()),
+        ];
+        let mut text = diag::report(&version, &extra, clip.as_deref());
+        if !s.nas_dir.is_empty() {
+            // The settings JSON spells it with doubled backslashes.
+            text = text.replace(&s.nas_dir, "<NAS>").replace(&s.nas_dir.replace('\\', "\\\\"), "<NAS>");
+        }
+        diag::save(&text).map(|p| p.to_string_lossy().into_owned())
+    })
+    .await
+}
+
 /// Sets of library paths that hold the very same clip (checked byte for byte).
 #[tauri::command]
 async fn find_duplicates(app: AppHandle) -> Result<Vec<Vec<String>>, String> {
@@ -1240,7 +1292,7 @@ pub fn run() {
             control::start(handle.clone());
 
             if let Err(e) = apply_hotkeys(&handle, &s.hotkey, &s.record_hotkey) {
-                eprintln!("{e}");
+                crate::log!("{e}");
             }
             apply_autostart(&handle, s.launch_on_startup);
 
@@ -1377,6 +1429,7 @@ pub fn run() {
             gpu_encoders,
             game_icon,
             find_duplicates,
+            run_diagnostics,
             compress_clip,
             reveal_file,
             delete_clips,

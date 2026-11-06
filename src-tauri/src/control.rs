@@ -26,7 +26,7 @@ pub fn start(app: AppHandle) {
         let listener = match TcpListener::bind(("127.0.0.1", CONTROL_PORT)) {
             Ok(l) => l,
             Err(e) => {
-                eprintln!("[rewind] control API unavailable on port {CONTROL_PORT}: {e}");
+                crate::log!("[rewind] control API unavailable on port {CONTROL_PORT}: {e}");
                 return;
             }
         };

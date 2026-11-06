@@ -247,7 +247,7 @@ pub fn run(target: Target, stop: Arc<AtomicBool>, ready: mpsc::Sender<Result<(),
             Some(s) => {
                 unsafe { WaitForSingleObject(s.event, 100) };
                 if let Err(e) = drain(s, &mut emit) {
-                    eprintln!("[rewind] per-app audio ({target:?}): {e}; reopening");
+                    crate::log!("[rewind] per-app audio ({target:?}): {e}; reopening");
                     stream = None;
                     last_check = Instant::now() - Duration::from_secs(10);
                 }
@@ -263,7 +263,7 @@ pub fn run(target: Target, stop: Arc<AtomicBool>, ready: mpsc::Sender<Result<(),
                 if let Some(pid) = pick(discord) {
                     match open(pid, target == Target::Discord) {
                         Ok(s) => stream = Some(s),
-                        Err(e) => eprintln!("[rewind] per-app audio ({target:?}): {e}"),
+                        Err(e) => crate::log!("[rewind] per-app audio ({target:?}): {e}"),
                     }
                 }
             }

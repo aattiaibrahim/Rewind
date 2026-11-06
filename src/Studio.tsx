@@ -6,6 +6,7 @@ import { api, ClipFile, codecLabel, errText, fmtSize, fmtTime, Health, PreviewAu
 import { AudioLanes, hasAudioEdits, isMutedAt } from "./AudioLanes";
 import { useThumb } from "./hooks";
 import { SharePanel, ShareRequest } from "./Share";
+import { DiagnosticsButton } from "./About";
 import { HealReview } from "./HealReview";
 import { HealthNotice } from "./Health";
 import { Slider } from "./Slider";
@@ -1029,6 +1030,7 @@ export function Studio({
             <button className="btn block" onClick={() => api.reveal(path)}>
               Show in Explorer
             </button>
+            <DiagnosticsButton clip={path} label="Report a problem with this clip…" />
             <button
               className="btn block"
               style={{ color: "#ffb3b3" }}

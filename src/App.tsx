@@ -276,6 +276,9 @@ export default function App() {
         <div className="brand">
           <img src={logo} alt="" width={26} height={26} />
           HINDSIGHT
+          <span className="beta-tag" title="Hindsight is in beta: thanks for testing it">
+            BETA
+          </span>
           {upd?.current && <span className="brand-version">v{upd.current}</span>}
         </div>
         {nav.map(([id, label, sub]) => (

@@ -79,13 +79,13 @@ pub async fn check(app: &AppHandle, download: bool) -> Result<Option<String>, St
             let bytes = update.download(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
             *app.state::<Updates>().ready.lock().unwrap() = Some((update, bytes));
             set(app, |s| s.stage = "ready".into());
-            eprintln!("[rewind] update {version} downloaded and signature verified");
+            crate::log!("[rewind] update {version} downloaded and signature verified");
         }
         Ok(Some(version))
     }
     .await;
     if let Err(e) = &result {
-        eprintln!("[rewind] update check failed: {e}");
+        crate::log!("[rewind] update check failed: {e}");
         set(app, |s| {
             s.stage = "error".into();
             s.error = Some(e.clone());
@@ -97,7 +97,7 @@ pub async fn check(app: &AppHandle, download: bool) -> Result<Option<String>, St
 /// Install the downloaded update (Hindsight closes and reopens on the new version).
 pub fn install(app: &AppHandle) -> Result<(), String> {
     if std::env::var("REWIND_UPDATE_DRYRUN").is_ok() {
-        eprintln!("[rewind] dry run: would install the update now");
+        crate::log!("[rewind] dry run: would install the update now");
         return Ok(());
     }
     let Some((update, bytes)) = app.state::<Updates>().ready.lock().unwrap().take() else {
@@ -121,7 +121,7 @@ pub fn start(app: AppHandle) {
                 && has_ready_update(&app)
                 && safe_to_restart(&app)
             {
-                eprintln!("[rewind] installing update found at launch");
+                crate::log!("[rewind] installing update found at launch");
                 let _ = install(&app);
             }
             first = false;

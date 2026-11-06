@@ -115,7 +115,7 @@ fn open(src: Source, chunks: Option<Chunks>) -> Result<Opened, String> {
             Ok(name) => return Ok((stop, queue, crate::app_audio::RATE, crate::app_audio::CHANNELS, name)),
             // Older Windows: desktop audio still works, just with Discord in it.
             Err(e) if target == crate::app_audio::Target::AllButDiscord => {
-                eprintln!("[rewind] desktop audio without Discord isn't available ({e}); using all desktop audio");
+                crate::log!("[rewind] desktop audio without Discord isn't available ({e}); using all desktop audio");
                 return open(Source::Desktop, chunks);
             }
             Err(e) => return Err(e),
@@ -270,7 +270,7 @@ where
                 q.pop_front();
             }
         },
-        |e| eprintln!("audio stream error: {e}"),
+        |e| crate::log!("audio stream error: {e}"),
         None,
     )
     .map_err(|e| e.to_string())
