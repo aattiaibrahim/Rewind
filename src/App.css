@@ -924,3 +924,9 @@ input.switch:checked:active::after { transform: translateX(12px); }
 .nav > .slide-pill { background: var(--raised); }
 /* Options keep their colours; only the moving background is shared. */
 .chips > .chip, .fgroup > .chip, .row > .chip { transition: color 0.2s, border-color 0.2s; }
+
+/* Game logos: the game's own icon, or a letter tile */
+.game-icon { display: inline-flex; align-items: center; justify-content: center; flex: none; border-radius: 4px; object-fit: contain; }
+.game-icon.letter { color: #fff; font-weight: 700; line-height: 1; }
+.game-chip { display: inline-flex; align-items: center; gap: 7px; }
+.folder-title { display: flex; align-items: center; gap: 8px; }

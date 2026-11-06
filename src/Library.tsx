@@ -6,6 +6,7 @@ import { liveLink, progressText, ShareRequest, timeLeft } from "./Share";
 import { Timeline } from "./Timeline";
 import { DamagedStatus, damagedText } from "./Health";
 import { DeletePreview } from "./DeletePreview";
+import { GameIcon } from "./GameIcon";
 import { HealReview } from "./HealReview";
 import { NasBadge, nasStatus, useNasState } from "./NasProgress";
 import { SlidingPill } from "./SlidingPill";
@@ -51,7 +52,10 @@ function FolderTile({ name, items, onOpen }: { name: string; items: ClipFile[]; 
         <div className="folder-back" />
         <div className="thumb">{thumb && <img src={thumb} alt="" loading="lazy" />}</div>
       </div>
-      <div className="card-title">{name}</div>
+      <div className="card-title folder-title">
+        <GameIcon name={name} size={18} />
+        {name}
+      </div>
       <div className="card-meta">
         {items.length} clip{items.length === 1 ? "" : "s"} · {fmtSize(bytes)} · newest {dayLabel(cover.modified)}
       </div>
@@ -657,7 +661,8 @@ export function Library({
           <div className="chips">
             <SlidingPill />
             {folders.map((f) => (
-              <button key={f} className={`chip ${f === folder ? "on" : ""}`} onClick={() => setFolder(f)}>
+              <button key={f} className={`chip game-chip ${f === folder ? "on" : ""}`} onClick={() => setFolder(f)}>
+                {f !== "All" && <GameIcon name={f} size={16} />}
                 {f}
               </button>
             ))}

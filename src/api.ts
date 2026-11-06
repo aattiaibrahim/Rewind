@@ -289,6 +289,7 @@ async function limited<T>(job: () => Promise<T>): Promise<T> {
 }
 
 const thumbCache = new Map<string, Promise<string>>();
+const iconCache = new Map<string, Promise<string | null>>();
 const probeCache = new Map<string, Promise<Probe>>();
 
 export const api = {
@@ -335,6 +336,10 @@ export const api = {
   compress: (path: string, targetMb: number, replace = false, audio?: TrackEdit[]) =>
     invoke<string>("compress_clip", { path, targetMb, replace, audio: audio ?? null }),
   gpuEncoders: () => invoke<GpuEncoders>("gpu_encoders"),
+  gameIcon: (name: string) => {
+    if (!iconCache.has(name)) iconCache.set(name, invoke<string | null>("game_icon", { name }).then((p) => (p ? convertFileSrc(p) : null)).catch(() => null));
+    return iconCache.get(name)!;
+  },
   listAudioInputs: () => invoke<string[]>("list_audio_inputs"),
   reveal: (path: string) => invoke<void>("reveal_file", { path }),
   deleteClips: (paths: string[]) => invoke<DeleteResult>("delete_clips", { paths }),

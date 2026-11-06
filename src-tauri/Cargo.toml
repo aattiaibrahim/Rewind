@@ -25,6 +25,7 @@ serde_json = "1"
 chrono = "0.4"
 trash = "5"
 sha2 = "0.10"
+png = "0.18"
 cpal = "0.15"
 tauri-plugin-updater = "2"
 # Uploads (Catbox / Litterbox / Discord / Streamable). Same reqwest + rustls the updater already uses.
@@ -66,6 +67,7 @@ features = [
   "Win32_System_Com",
   "Win32_System_Com_StructuredStorage",
   "Win32_System_Variant",
+  "Win32_UI_Shell",
   "Win32_Security_Cryptography",
   "Win32_System_DataExchange",
   "Win32_System_Memory",

@@ -114,6 +114,18 @@ pub fn classify(exe_path: &str, window_title: &str, fullscreen: bool) -> Option<
     None
 }
 
+/// Known program names (lowercase, no .exe) for a game title: "Counter-Strike 2" → ["cs2"].
+pub fn known_programs(title: &str) -> Vec<&'static str> {
+    let key = crate::consolidate::game_key(title);
+    KNOWN.iter().filter(|(_, t)| crate::consolidate::game_key(t) == key).map(|(e, _)| *e).collect()
+}
+
+/// A folder named after a program ("SpeciesUnknown-Win64-Shipping", saved by
+/// older versions): the tidy game name to suggest instead ("Species Unknown").
+pub fn tidy_program_name(folder: &str) -> Option<String> {
+    looks_like_exe(folder).then(|| nice_name(&clean_exe_name(&folder.to_lowercase()), folder)).filter(|n| n != folder && !n.is_empty())
+}
+
 /// "SpeciesUnknown-Win64-Shipping", "MyGame_x64": a program name, not a title.
 fn looks_like_exe(t: &str) -> bool {
     !t.contains(' ') && ["-win64", "-shipping", "_x64", "_dx12", "_dx11", "-win32"].iter().any(|s| t.to_lowercase().contains(s))
@@ -195,6 +207,7 @@ pub fn observe() {
     if let Some((path, title, fullscreen, pid)) = foreground_info()
         && let Some(game) = detect(&path, &title, fullscreen)
     {
+        crate::game_icons::remember(&game, &path);
         *LAST.lock().unwrap() = Some(Seen { game, pid, at: std::time::Instant::now() });
     }
 }

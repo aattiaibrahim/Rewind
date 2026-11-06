@@ -89,11 +89,22 @@ pub fn find_similar(here: &[(String, usize)], nas: &[(String, usize)], dismissed
     }
     by_key
         .into_iter()
-        .filter(|(k, names)| names.len() > 1 && !dismissed.iter().any(|d| d == k))
+        // Several spellings, or one named after the game's program file.
+        .filter(|(k, names)| {
+            (names.len() > 1 || names.keys().any(|n| crate::games::tidy_program_name(n).is_some())) && !dismissed.iter().any(|d| d == k)
+        })
         .map(|(key, names)| {
             let mut names: Vec<Spelling> = names.into_values().collect();
             names.sort_by(|a, b| (b.here + b.nas).cmp(&(a.here + a.nas)).then_with(|| a.name.cmp(&b.name)));
-            Similar { key, suggested: names[0].name.clone(), names }
+            let mut suggested = names[0].name.clone();
+            // "SpeciesUnknown-Win64-Shipping": offer the tidy name as the folder to keep.
+            if let Some(tidy) = names.iter().find_map(|n| crate::games::tidy_program_name(&n.name)) {
+                if !names.iter().any(|n| n.name == tidy) {
+                    names.insert(0, Spelling { name: tidy.clone(), here: 0, nas: 0 });
+                }
+                suggested = tidy;
+            }
+            Similar { key, suggested, names }
         })
         .collect()
 }
@@ -203,6 +214,16 @@ mod tests {
         let mut v: Vec<String> = fs::read_dir(root).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
         v.sort();
         v
+    }
+
+    #[test]
+    fn program_named_folders_get_a_tidy_name() {
+        let here = vec![("SpeciesUnknown-Win64-Shipping".to_string(), 4), ("VALORANT".to_string(), 9)];
+        let found = find_similar(&here, &[], &[]);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].suggested, "Species Unknown");
+        assert_eq!(found[0].names[0].name, "Species Unknown");
+        assert_eq!(found[0].names[1].name, "SpeciesUnknown-Win64-Shipping");
     }
 
     #[test]

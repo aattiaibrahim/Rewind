@@ -1,5 +1,6 @@
 mod app_audio;
 mod prepare;
+mod game_icons;
 mod audio;
 mod audio_edit;
 mod bench;
@@ -908,6 +909,12 @@ async fn export_h264(app: AppHandle, path: String, replace: bool, audio: Option<
     edit(app, path, replace, secs, move |p| library::export_h264(p, &audio)).await
 }
 
+/// A game's logo (its program's icon) as a file path, or None for a letter tile.
+#[tauri::command]
+async fn game_icon(name: String) -> Result<Option<String>, String> {
+    blocking(move || Ok(game_icons::icon(&name).map(|p| p.to_string_lossy().into_owned()))).await
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct GpuEncoders {
@@ -1169,6 +1176,7 @@ pub fn run() {
                 games::observe();
                 thread::sleep(Duration::from_secs(2));
             });
+            game_icons::init(handle.state::<AppState>().thumbs_dir.with_file_name("icons"));
             // Clip details and thumbnails, ready before you scroll to them.
             if let Ok(file) = data_file(&handle, "probes.json") {
                 prepare::init(file);
@@ -1352,6 +1360,7 @@ pub fn run() {
             export_h264,
             export_audio,
             gpu_encoders,
+            game_icon,
             compress_clip,
             reveal_file,
             delete_clips,
