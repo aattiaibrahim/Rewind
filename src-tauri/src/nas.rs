@@ -16,6 +16,10 @@
 //!   to the Recycle Bin rather than being deleted outright.
 //! - Nothing is copied while a game is running (in front or tabbed out of)
 //!   or a recording is going, so it never costs frames.
+//! - Edits reach the NAS too: a trimmed, healed or re-exported clip that's
+//!   already there replaces its NAS copy (verified the same way). The old NAS
+//!   version isn't deleted: it moves to a hidden `.hindsight-replaced/<date>/`
+//!   folder for 30 days, since a network folder has no Recycle Bin.
 //! - The worker never touches the network on the save path: duplicate-name
 //!   checks use the cached NAS listing.
 
@@ -123,6 +127,77 @@ fn apply_renames(synced: &mut HashSet<String>, renames: &[(String, String)]) {
     }
 }
 static WAKE: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new());
+/// Edits made in the app since the worker last looked: (old rel, new rel).
+static EDITS: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
+/// Where replaced NAS versions wait, by day, before they're removed.
+const REPLACED: &str = ".hindsight-replaced";
+const KEEP_REPLACED_DAYS: i64 = 30;
+
+/// A clip was replaced by an edit (trim, heal, export with "replace"). `new`
+/// can differ from `old` when the edit changed the extension.
+pub fn edited(s: &crate::settings::Settings, old: &Path, new: &Path) {
+    if s.nas_dir.is_empty() {
+        return;
+    }
+    let dir = Path::new(&s.clips_dir);
+    if let (Some(a), Some(b)) = (rel_of(dir, old), rel_of(dir, new)) {
+        EDITS.lock().unwrap().push((a, b));
+        clip_saved();
+    }
+}
+
+/// Move a NAS file into today's `.hindsight-replaced` folder (never overwriting).
+fn set_aside(nas: &Path, rel: &str) -> Result<(), String> {
+    let from = nas.join(rel.replace('/', "\\"));
+    if !from.exists() {
+        return Ok(());
+    }
+    let day = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let mut to = nas.join(REPLACED).join(&day).join(rel.replace('/', "\\"));
+    let mut n = 2;
+    while to.exists() {
+        let stem = from.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        let ext = from.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();
+        to = to.with_file_name(format!("{stem} ({n}).{ext}"));
+        n += 1;
+    }
+    fs::create_dir_all(to.parent().unwrap()).map_err(|e| e.to_string())?;
+    fs::rename(&from, &to).map_err(|e| format!("couldn't set the old NAS version aside ({e})"))
+}
+
+/// Remove replaced versions older than `KEEP_REPLACED_DAYS` (by their day folder).
+fn prune_replaced(nas: &Path, today: chrono::NaiveDate) {
+    let Ok(days) = fs::read_dir(nas.join(REPLACED)) else { return };
+    for d in days.flatten() {
+        let name = d.file_name().to_string_lossy().into_owned();
+        if let Ok(date) = chrono::NaiveDate::parse_from_str(&name, "%Y-%m-%d")
+            && (today - date).num_days() > KEEP_REPLACED_DAYS
+        {
+            let _ = fs::remove_dir_all(d.path());
+        }
+    }
+}
+
+/// Bring the NAS copy of an edited clip up to date: copy and verify the new
+/// version, set the old one aside, then put the new one in its place.
+fn push_edit(local: &Path, nas: &Path, old: &str, new: &str, on_copy: &mut dyn FnMut(u64, bool)) -> Result<(), String> {
+    let src = local.join(new.replace('/', "\\"));
+    let dest = nas.join(new.replace('/', "\\"));
+    let name = dest.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let tmp = dest.with_file_name(format!(".{name}{PARTIAL}"));
+    if let Some(dir) = dest.parent() {
+        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    copy_verified(&src, &tmp, on_copy).inspect_err(|_| {
+        let _ = fs::remove_file(&tmp);
+    })?;
+    let set = set_aside(nas, old).and_then(|_| if old != new { set_aside(nas, new) } else { Ok(()) });
+    if let Err(e) = set {
+        let _ = fs::remove_file(&tmp);
+        return Err(e);
+    }
+    fs::rename(&tmp, &dest).map_err(|e| e.to_string())
+}
 
 /// " - GAMING-PC": added to clip names when a NAS is shared by several PCs.
 pub fn pc_suffix() -> String {
@@ -227,7 +302,18 @@ pub struct Pass {
     pub removed: Vec<String>,
     pub pending: usize,
     pub pending_bytes: u64,
+    /// NAS copies brought up to date after an edit
+    pub updated: Vec<String>,
     pub errors: Vec<String>,
+}
+
+/// Is `a` changed more recently than `b` (by over a minute)?
+fn newer(a: &Path, b: &Path) -> bool {
+    let t = |p: &Path| fs::metadata(p).and_then(|m| m.modified()).ok();
+    match (t(a), t(b)) {
+        (Some(a), Some(b)) => a.duration_since(b).map(|d| d > Duration::from_secs(60)).unwrap_or(false),
+        _ => false,
+    }
 }
 
 fn settled(p: &Path, min_age: Duration) -> bool {
@@ -329,6 +415,8 @@ pub fn sync_once(
     synced: &mut HashSet<String>,
     // Keys of clips whose NAS copy is known identical (only those are ever freed up here).
     verified: &mut HashSet<String>,
+    // Clips replaced by an edit whose NAS copy still needs updating: (old rel, new rel).
+    edits: &mut Vec<(String, String)>,
     remove_local: bool,
     min_age: Duration,
     mut on_copy: impl FnMut(Step),
@@ -349,14 +437,54 @@ pub fn sync_once(
         }
     }
     let (mut done_files, mut done_bytes) = (0usize, 0u64);
+
+    // Edits first, so the NAS never keeps an old version next to a new one.
+    let mut keep = Vec::new();
+    for (old, new) in std::mem::take(edits) {
+        let (old_key, new_key) = (rel_key(&old), rel_key(&new));
+        // Not on the NAS yet (or deleted there): the normal copy below handles it.
+        if !synced.contains(&old_key) || !local.join(new.replace('/', "\\")).exists() {
+            continue;
+        }
+        if stop() {
+            keep.push((old, new));
+            continue;
+        }
+        on_copy(Step { file: Some(&new), checking: false, done_bytes, total_bytes, done_files, total_files });
+        let mut progress = |n: u64, checking: bool| {
+            on_copy(Step { file: Some(&new), checking, done_bytes: done_bytes + n, total_bytes, done_files, total_files })
+        };
+        match push_edit(local, nas, &old, &new, &mut progress) {
+            Ok(()) => {
+                synced.remove(&old_key);
+                verified.remove(&old_key);
+                synced.insert(new_key.clone());
+                verified.insert(new_key);
+                pass.updated.push(new);
+            }
+            Err(e) => {
+                pass.errors.push(format!("{new}: couldn't update the NAS copy ({e}); will try again"));
+                keep.push((old, new));
+            }
+        }
+    }
+    *edits = keep;
+
     for (src, rel, _) in todo {
         let key = rel_key(&rel);
         let dest = nas.join(rel.replace('/', "\\"));
         let local_size = size(&src);
         if synced.contains(&key) {
+            // Edited outside the app (or by an older version): newer here, different
+            // size there. Update the NAS copy rather than leave two versions.
+            let nas_size = size(&dest);
+            if nas_size.is_some() && nas_size != local_size && newer(&src, &dest) {
+                edits.push((rel.clone(), rel.clone()));
+                continue;
+            }
             // Already copied once. Free up space if asked, the NAS copy is still
             // there, and it's identical (checked once, the first time).
-            if !remove_local || local_size.is_none() || size(&dest) != local_size {
+            if !remove_local || local_size.is_none() || nas_size != local_size {
                 continue;
             }
             if !verified.contains(&key) {
@@ -493,6 +621,7 @@ pub fn start(app: AppHandle) {
     std::thread::spawn(move || {
         let mut synced: HashSet<String> = HashSet::new();
         let mut verified: HashSet<String> = HashSet::new();
+        let mut edits: Vec<(String, String)> = Vec::new();
         let mut synced_root = String::new();
         loop {
             {
@@ -544,11 +673,12 @@ pub fn start(app: AppHandle) {
                 }
             }
             let nas = PathBuf::from(&s.nas_dir);
+            edits.append(&mut EDITS.lock().unwrap());
             let a = app.clone();
             let mut started: Option<std::time::Instant> = None;
             let mut last_emit = std::time::Instant::now() - Duration::from_secs(1);
             let mut last_file = String::new();
-            let result = sync_once(Path::new(&s.clips_dir), &nas, &mut synced, &mut verified, s.nas_remove_local, SETTLE, |step| {
+            let result = sync_once(Path::new(&s.clips_dir), &nas, &mut synced, &mut verified, &mut edits, s.nas_remove_local, SETTLE, |step| {
                 let file = step.file.map(|r| r.rsplit('/').next().unwrap_or(r).to_string());
                 // Throttled: a clip is hundreds of 1 MB chunks.
                 let new_file = file.as_deref().unwrap_or("") != last_file;
@@ -583,7 +713,8 @@ pub fn start(app: AppHandle) {
             let mut changed = false;
             match &result {
                 Ok(pass) => {
-                    changed = !pass.copied.is_empty() || !pass.removed.is_empty();
+                    prune_replaced(&nas, chrono::Local::now().date_naive());
+                    changed = !pass.copied.is_empty() || !pass.removed.is_empty() || !pass.updated.is_empty();
                     publish(&app, |st| {
                         st.enabled = true;
                         st.reachable = true;
@@ -646,6 +777,61 @@ mod tests {
     }
 
     #[test]
+    fn edits_update_the_nas_and_keep_the_old_version_aside() {
+        let (local, nas) = (tmp("e-local"), tmp("e-nas"));
+        fs::create_dir_all(&nas).unwrap();
+        let a = clip(&local, "Game/a.mkv", 1000);
+        let b = clip(&local, "Game/b.mkv", 1000);
+        let (mut synced, mut verified, mut edits) = (HashSet::new(), HashSet::new(), Vec::new());
+        let mut run = |synced: &mut HashSet<String>, verified: &mut HashSet<String>, edits: &mut Vec<(String, String)>| {
+            sync_once(&local, &nas, synced, verified, edits, false, Duration::ZERO, |_| {}, &|| false).unwrap()
+        };
+        run(&mut synced, &mut verified, &mut edits);
+        let replaced = |rel: &str| {
+            let day = chrono::Local::now().format("%Y-%m-%d").to_string();
+            nas.join(REPLACED).join(day).join(rel)
+        };
+
+        // Trimmed in place (same name): the NAS gets the new version, the old one is set aside.
+        fs::write(&a, vec![1u8; 600]).unwrap();
+        edits.push(("Game/a.mkv".into(), "Game/a.mkv".into()));
+        let pass = run(&mut synced, &mut verified, &mut edits);
+        assert_eq!(pass.updated, vec!["Game/a.mkv".to_string()], "{pass:?}");
+        assert_eq!(fs::read(nas.join("Game/a.mkv")).unwrap(), vec![1u8; 600]);
+        assert_eq!(size(&replaced("Game/a.mkv")), Some(1000));
+        assert!(edits.is_empty());
+
+        // Exported to MP4 with "replace": one clip on the NAS, not an old .mkv beside a new .mp4.
+        fs::remove_file(&b).unwrap();
+        clip(&local, "Game/b.mp4", 700);
+        edits.push(("Game/b.mkv".into(), "Game/b.mp4".into()));
+        let pass = run(&mut synced, &mut verified, &mut edits);
+        assert_eq!(pass.updated, vec!["Game/b.mp4".to_string()], "{pass:?}");
+        assert!(!nas.join("Game/b.mkv").exists() && nas.join("Game/b.mp4").exists());
+        assert_eq!(size(&replaced("Game/b.mkv")), Some(1000));
+        // The next pass doesn't copy it again.
+        assert!(run(&mut synced, &mut verified, &mut edits).copied.is_empty());
+
+        // Edited elsewhere: newer here and a different size there is picked up on its own.
+        let c = clip(&local, "Game/c.mkv", 1000);
+        run(&mut synced, &mut verified, &mut edits);
+        fs::write(&c, vec![2u8; 400]).unwrap();
+        let later = SystemTime::now() + Duration::from_secs(600);
+        fs::File::options().write(true).open(&c).unwrap().set_modified(later).unwrap();
+        run(&mut synced, &mut verified, &mut edits); // notices it
+        let pass = run(&mut synced, &mut verified, &mut edits); // updates it
+        assert_eq!(pass.updated, vec!["Game/c.mkv".to_string()], "{pass:?}");
+        assert_eq!(size(&nas.join("Game/c.mkv")), Some(400));
+
+        // Old set-aside versions go after 30 days.
+        let old_day = nas.join(REPLACED).join("2020-01-01");
+        fs::create_dir_all(&old_day).unwrap();
+        prune_replaced(&nas, chrono::Local::now().date_naive());
+        assert!(!old_day.exists() && replaced("Game/a.mkv").exists());
+        let _ = (fs::remove_dir_all(&local), fs::remove_dir_all(&nas));
+    }
+
+    #[test]
     fn progress_counts_files_and_bytes() {
         let (local, nas) = (tmp("p-local"), tmp("p-nas"));
         clip(&local, "A/a.mkv", 3 << 20);
@@ -654,7 +840,7 @@ mod tests {
         let (mut synced, mut verified) = (HashSet::new(), HashSet::new());
         let mut steps: Vec<(u64, u64, usize, usize, bool)> = Vec::new();
         let on = |s: Step| steps.push((s.done_bytes, s.total_bytes, s.done_files, s.total_files, s.checking));
-        sync_once(&local, &nas, &mut synced, &mut verified, false, Duration::ZERO, on, &|| false).unwrap();
+        sync_once(&local, &nas, &mut synced, &mut verified, &mut Vec::new(), false, Duration::ZERO, on, &|| false).unwrap();
         let total = 4u64 << 20;
         assert!(steps.iter().all(|s| s.1 == total && s.3 == 2), "{steps:?}");
         assert!(steps.windows(2).all(|w| w[1].0 >= w[0].0), "bytes only go up");
@@ -671,12 +857,12 @@ mod tests {
         clip(&local, "VALORANT/a.mkv", 1000);
         let mut synced = HashSet::new();
         let mut verified = HashSet::new();
-        let pass = sync_once(&local, &nas, &mut synced, &mut verified, true, Duration::ZERO, |_| {}, &|| true).unwrap();
+        let pass = sync_once(&local, &nas, &mut synced, &mut verified, &mut Vec::new(), true, Duration::ZERO, |_| {}, &|| true).unwrap();
         assert!(pass.copied.is_empty() && pass.removed.is_empty());
         assert_eq!(pass.pending, 1);
         assert!(local.join("VALORANT/a.mkv").exists() && !nas.join("VALORANT/a.mkv").exists());
         // Game closed: the next pass copies it.
-        let pass = sync_once(&local, &nas, &mut synced, &mut verified, false, Duration::ZERO, |_| {}, &|| false).unwrap();
+        let pass = sync_once(&local, &nas, &mut synced, &mut verified, &mut Vec::new(), false, Duration::ZERO, |_| {}, &|| false).unwrap();
         assert_eq!(pass.copied.len(), 1);
     }
 
@@ -688,7 +874,7 @@ mod tests {
         clip(&local, ".rewind-save-123/part.mkv", 50); // in-progress save: never copied
         let mut synced = HashSet::new();
         let mut verified = HashSet::new();
-        let pass = sync_once(&local, &nas, &mut synced, &mut verified, false, Duration::ZERO, |_| {}, &|| false).unwrap();
+        let pass = sync_once(&local, &nas, &mut synced, &mut verified, &mut Vec::new(), false, Duration::ZERO, |_| {}, &|| false).unwrap();
         assert_eq!(pass.copied.len(), 2, "{pass:?}");
         assert_eq!(pass.pending, 0);
         assert_eq!(size(&nas.join("VALORANT/VALORANT 2026-11-03 10-00-00 - PC1.mkv")), Some(1000));
@@ -698,7 +884,7 @@ mod tests {
         // Local copies are kept unless asked.
         assert!(local.join("VALORANT/VALORANT 2026-11-03 10-00-00 - PC1.mkv").exists());
         // A second pass does nothing.
-        let again = sync_once(&local, &nas, &mut synced, &mut verified, false, Duration::ZERO, |_| {}, &|| false).unwrap();
+        let again = sync_once(&local, &nas, &mut synced, &mut verified, &mut Vec::new(), false, Duration::ZERO, |_| {}, &|| false).unwrap();
         assert!(again.copied.is_empty() && again.errors.is_empty());
         let _ = (fs::remove_dir_all(&local), fs::remove_dir_all(&nas));
     }
@@ -709,7 +895,7 @@ mod tests {
         clip(&local, "Game/new.mkv", 100);
         let mut synced = HashSet::new();
         let mut verified = HashSet::new();
-        let pass = sync_once(&local, &nas, &mut synced, &mut verified, false, Duration::from_secs(60), |_| {}, &|| false).unwrap();
+        let pass = sync_once(&local, &nas, &mut synced, &mut verified, &mut Vec::new(), false, Duration::from_secs(60), |_| {}, &|| false).unwrap();
         assert!(pass.copied.is_empty());
         assert!(!nas.join("Game").exists());
         let _ = (fs::remove_dir_all(&local), fs::remove_dir_all(&nas));
@@ -721,16 +907,16 @@ mod tests {
         let a = clip(&local, "Game/a.mkv", 300);
         let mut synced = HashSet::new();
         let mut verified = HashSet::new();
-        sync_once(&local, &nas, &mut synced, &mut verified, false, Duration::ZERO, |_| {}, &|| false).unwrap();
+        sync_once(&local, &nas, &mut synced, &mut verified, &mut Vec::new(), false, Duration::ZERO, |_| {}, &|| false).unwrap();
         // Deleted on the NAS: not copied back.
         fs::remove_file(nas.join("Game/a.mkv")).unwrap();
-        let pass = sync_once(&local, &nas, &mut synced, &mut verified, true, Duration::ZERO, |_| {}, &|| false).unwrap();
+        let pass = sync_once(&local, &nas, &mut synced, &mut verified, &mut Vec::new(), true, Duration::ZERO, |_| {}, &|| false).unwrap();
         assert!(pass.copied.is_empty());
         // ...and the local copy is kept, because there's no NAS copy to rely on.
         assert!(a.exists());
         // A new clip with "remove local" on: copied, verified, then removed here.
         let b = clip(&local, "Game/b.mkv", 400);
-        let pass = sync_once(&local, &nas, &mut synced, &mut verified, true, Duration::ZERO, |_| {}, &|| false).unwrap();
+        let pass = sync_once(&local, &nas, &mut synced, &mut verified, &mut Vec::new(), true, Duration::ZERO, |_| {}, &|| false).unwrap();
         assert_eq!(pass.copied, vec!["Game/b.mkv".to_string()]);
         assert_eq!(pass.removed, vec!["Game/b.mkv".to_string()]);
         assert!(!b.exists());
@@ -744,7 +930,7 @@ mod tests {
         let a = clip(&local, "Game/a.mkv", 5000);
         let mut synced = HashSet::new();
         let mut verified = HashSet::new();
-        sync_once(&local, &nas, &mut synced, &mut verified, false, Duration::ZERO, |_| {}, &|| false).unwrap();
+        sync_once(&local, &nas, &mut synced, &mut verified, &mut Vec::new(), false, Duration::ZERO, |_| {}, &|| false).unwrap();
         // The copy is identical and keeps the clip's date.
         assert_eq!(fs::read(&a).unwrap(), fs::read(nas.join("Game/a.mkv")).unwrap());
         let date = |p: &Path| fs::metadata(p).unwrap().modified().unwrap();
@@ -755,13 +941,13 @@ mod tests {
         let mut bytes = fs::read(nas.join("Game/a.mkv")).unwrap();
         bytes[2500] ^= 0xff;
         fs::write(nas.join("Game/a.mkv"), bytes).unwrap();
-        let pass = sync_once(&local, &nas, &mut synced, &mut verified, true, Duration::ZERO, |_| {}, &|| false).unwrap();
+        let pass = sync_once(&local, &nas, &mut synced, &mut verified, &mut Vec::new(), true, Duration::ZERO, |_| {}, &|| false).unwrap();
         assert!(pass.removed.is_empty(), "{pass:?}");
         assert!(pass.errors[0].contains("isn't identical"), "{pass:?}");
         assert!(a.exists(), "the local clip must be kept");
         // Fixed on the NAS: now it's checked, found identical, and freed up.
         fs::copy(&a, nas.join("Game/a.mkv")).unwrap();
-        let pass = sync_once(&local, &nas, &mut synced, &mut verified, true, Duration::ZERO, |_| {}, &|| false).unwrap();
+        let pass = sync_once(&local, &nas, &mut synced, &mut verified, &mut Vec::new(), true, Duration::ZERO, |_| {}, &|| false).unwrap();
         assert_eq!(pass.removed, vec!["Game/a.mkv".to_string()]);
         let _ = (fs::remove_dir_all(&local), fs::remove_dir_all(&nas));
     }
@@ -773,7 +959,7 @@ mod tests {
         clip(&nas, "Game/x.mkv", 999);
         let mut synced = HashSet::new();
         let mut verified = HashSet::new();
-        let pass = sync_once(&local, &nas, &mut synced, &mut verified, true, Duration::ZERO, |_| {}, &|| false).unwrap();
+        let pass = sync_once(&local, &nas, &mut synced, &mut verified, &mut Vec::new(), true, Duration::ZERO, |_| {}, &|| false).unwrap();
         assert!(pass.copied.is_empty());
         assert_eq!(pass.errors.len(), 1);
         assert_eq!(size(&nas.join("Game/x.mkv")), Some(999));
@@ -786,7 +972,7 @@ mod tests {
         let local = tmp("e-local");
         let mut synced = HashSet::new();
         let mut verified = HashSet::new();
-        assert!(sync_once(&local, Path::new(r"Z:\no\such\nas"), &mut synced, &mut verified, false, Duration::ZERO, |_| {}, &|| false).is_err());
+        assert!(sync_once(&local, Path::new(r"Z:\no\such\nas"), &mut synced, &mut verified, &mut Vec::new(), false, Duration::ZERO, |_| {}, &|| false).is_err());
         let _ = fs::remove_dir_all(&local);
     }
 

@@ -786,10 +786,12 @@ async fn rescue_clip(app: AppHandle, path: String) -> Result<String, String> {
 #[tauri::command]
 async fn heal_clip(app: AppHandle, path: String) -> Result<String, String> {
     let cache = data_file(&app, "health.json")?;
+    let app2 = app.clone();
     let out = blocking(move || {
         let h = health::results(&cache, std::slice::from_ref(&path)).remove(&path).ok_or("Check the clip first.")?;
         let best = h.best.ok_or("There's no undamaged part long enough to keep.")?;
         let healed = health::heal(&path, best)?;
+        nas::edited(&settings_of(&app2), std::path::Path::new(&path), std::path::Path::new(&healed));
         // The healed file gets checked again in the background like any new clip.
         health::forget(&cache, &path);
         Ok(healed)
@@ -848,12 +850,18 @@ async fn edit(
     f: impl FnOnce(&str) -> Result<String, String> + Send + 'static,
 ) -> Result<String, String> {
     let original = path.clone();
+    // A network folder has no Recycle Bin: replacing would lose the original for good.
+    if replace && health::on_network(&path) {
+        return Err("This clip is on the NAS, which has no Recycle Bin, so it can't be replaced. Turn off \"Replace the original\" to save your edit as a new file.".into());
+    }
     let out = blocking(move || f(&path)).await?;
     if !replace {
         return Ok(out);
     }
     let o = original.clone();
     let final_path = blocking(move || library::replace_original(&o, &out, expected_secs)).await?;
+    // Keep the NAS copy in step with the edit.
+    nas::edited(&settings_of(&app), std::path::Path::new(&original), std::path::Path::new(&final_path));
     // Keep an imported file in the list even if its extension changed.
     let mut s = settings_of(&app);
     if let Some(p) = s.external_files.iter_mut().find(|p| **p == original) {
@@ -897,6 +905,30 @@ async fn export_h264(app: AppHandle, path: String, replace: bool, audio: Option<
     let secs = duration_of(&path);
     let audio = audio.unwrap_or_default();
     edit(app, path, replace, secs, move |p| library::export_h264(p, &audio)).await
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GpuEncoders {
+    gpu: String,
+    /// "av1" | "hevc" | "h264" this GPU can encode
+    supported: Vec<&'static str>,
+    /// What "auto" records with
+    auto: &'static str,
+}
+
+/// Which encoders this PC's NVIDIA GPU has (for the Encoder setting).
+#[tauri::command]
+async fn gpu_encoders() -> Result<GpuEncoders, String> {
+    use crate::native::nvenc;
+    blocking(|| {
+        Ok(GpuEncoders {
+            gpu: nvenc::nvidia_gpu_name(),
+            supported: nvenc::supported_codecs().into_iter().map(|c| c.setting()).collect(),
+            auto: nvenc::effective_encoder("auto"),
+        })
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1296,6 +1328,7 @@ pub fn run() {
             clip_waveforms,
             export_h264,
             export_audio,
+            gpu_encoders,
             compress_clip,
             reveal_file,
             delete_clips,

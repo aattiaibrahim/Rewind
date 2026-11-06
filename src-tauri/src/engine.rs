@@ -830,7 +830,9 @@ fn supervise(
     let mut retry_at = Instant::now();
 
     loop {
-        let s = settings.lock().unwrap().clone();
+        let mut s = settings.lock().unwrap().clone();
+        // "auto", or a choice this GPU can't encode, becomes what it can (AV1 needs an RTX 40).
+        s.encoder = crate::native::nvenc::effective_encoder(&s.encoder).to_string();
         let use_native = s.capture_engine == "native" && native.lock().unwrap().failures < NATIVE_MAX_FAILURES;
         let recording = rec.lock().unwrap().is_some() || native.lock().unwrap().rec.is_some();
         // A recording keeps capture running even if the replay buffer is paused.

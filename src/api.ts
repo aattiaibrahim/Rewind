@@ -1,6 +1,8 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 
-export type Encoder = "av1" | "hevc" | "h264";
+export type Encoder = "auto" | "av1" | "hevc" | "h264";
+/** What this PC's NVIDIA GPU can encode. */
+export type GpuEncoders = { gpu: string; supported: Exclude<Encoder, "auto">[]; auto: Exclude<Encoder, "auto"> };
 export type MonitorMode = "primary" | "cursor" | "fixed";
 
 export type Settings = {
@@ -329,6 +331,7 @@ export const api = {
     invoke<string>("export_audio", { path, start, end, track, label, audio: audio ?? null }),
   compress: (path: string, targetMb: number, replace = false, audio?: TrackEdit[]) =>
     invoke<string>("compress_clip", { path, targetMb, replace, audio: audio ?? null }),
+  gpuEncoders: () => invoke<GpuEncoders>("gpu_encoders"),
   listAudioInputs: () => invoke<string[]>("list_audio_inputs"),
   reveal: (path: string) => invoke<void>("reveal_file", { path }),
   deleteClips: (paths: string[]) => invoke<DeleteResult>("delete_clips", { paths }),
@@ -419,7 +422,7 @@ export function errText(e: unknown) {
 
 /** Rough RAM-free disk use of the buffer, for the settings hint (MB). */
 export function bufferEstimateMb(s: Pick<Settings, "bufferSeconds" | "quality" | "encoder">) {
-  const base = { av1: 22, hevc: 28, h264: 40 }[s.encoder]; // Mbps at CQ 20, busy 1440p60 game
+  const base = { auto: 22, av1: 22, hevc: 28, h264: 40 }[s.encoder]; // Mbps at CQ 20, busy 1440p60 game
   const mbps = base * Math.pow(0.88, s.quality - 20);
   return Math.round((mbps * s.bufferSeconds) / 8);
 }

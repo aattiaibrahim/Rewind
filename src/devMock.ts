@@ -53,7 +53,7 @@ export function installDevMock() {
   const uploads: Record<string, unknown[]> = {};
   const secrets: Record<string, boolean> = {};
   const settings = {
-    clipsDir: "C:\\Users\\you\\Videos\\Hindsight", encoder: "av1", quality: 24, fps: 60, bufferSeconds: 120,
+    clipsDir: "C:\\Users\\you\\Videos\\Hindsight", encoder: "auto", quality: 24, fps: 60, bufferSeconds: 120,
     bufferInRam: true, captureEngine: "native", monitorMode: "primary", fixedMonitor: "", drawCursor: true, hotkey: "Alt+F10",
     recordHotkey: "Alt+F9", bufferEnabled: true, launchOnStartup: false, autoUpdate: true, startMinimized: true,
     keepOriginalAfterRemux: true, replaceOriginalOnEdit: false, externalFiles: [], desktopAudio: true, discordTrack: true,
@@ -117,6 +117,7 @@ export function installDevMock() {
         ? { enabled: true, reachable: true, pending: 1, copying: null, copied: 3, lastError: null, lastSync: Date.now() - 20_000, paused: false, totalFiles: 0, doneFiles: 0, totalBytes: 0, doneBytes: 0, pendingBytes: 0, checking: false, rate: 0, etaSecs: null }
         : { enabled: false, reachable: false, pending: 0, copying: null, copied: 0, lastError: null, lastSync: null, paused: false, totalFiles: 0, doneFiles: 0, totalBytes: 0, doneBytes: 0, pendingBytes: 0, checking: false, rate: 0, etaSecs: null },
     sync_nas_now: () => null,
+    gpu_encoders: () => ({ gpu: "NVIDIA GeForce RTX 3070", supported: ["hevc", "h264"], auto: "hevc" }),
     // Uploads (preview only): pretend to prepare and upload, with progress events, then give a fake link.
     upload_clip: async (a) => {
       const path = a.path as string, host = (a.host as string) ?? settings.uploadHost;

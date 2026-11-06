@@ -5,7 +5,7 @@ use std::path::Path;
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
     pub clips_dir: String,
-    /// "av1" | "hevc" | "h264"
+    /// "auto" (best the GPU can do) | "av1" | "hevc" | "h264"
     pub encoder: String,
     /// NVENC constant-quality value (lower = better, bigger files)
     pub quality: u32,
@@ -88,7 +88,7 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             clips_dir: String::new(),
-            encoder: "av1".into(),
+            encoder: "auto".into(),
             quality: 24,
             fps: 60,
             output_height: 0,
@@ -140,7 +140,7 @@ impl Settings {
     /// Pull every value into a range the engine can actually use.
     pub fn sanitized(mut self) -> Settings {
         let d = Settings::default();
-        if !["av1", "hevc", "h264"].contains(&self.encoder.as_str()) {
+        if !["auto", "av1", "hevc", "h264"].contains(&self.encoder.as_str()) {
             self.encoder = d.encoder;
         }
         if !["native", "ffmpeg"].contains(&self.capture_engine.as_str()) {
@@ -220,7 +220,7 @@ mod tests {
         let s = Settings { fps: 9999, quality: 0, buffer_seconds: 0, encoder: "xvid".into(), hotkey: " ".into(), ..Default::default() }
             .sanitized();
         assert_eq!((s.fps, s.quality, s.buffer_seconds), (240, 10, 5));
-        assert_eq!(s.encoder, "av1");
+        assert_eq!(s.encoder, "auto");
         assert_eq!(s.hotkey, "Alt+F10");
     }
 

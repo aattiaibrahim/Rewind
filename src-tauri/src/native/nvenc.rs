@@ -87,6 +87,122 @@ macro_rules! call {
     }};
 }
 
+impl Codec {
+    pub fn setting(self) -> &'static str {
+        match self {
+            Codec::H264 => "h264",
+            Codec::Hevc => "hevc",
+            Codec::Av1 => "av1",
+        }
+    }
+}
+
+fn same_guid(a: &GUID, b: &GUID) -> bool {
+    (a.Data1, a.Data2, a.Data3, a.Data4) == (b.Data1, b.Data2, b.Data3, b.Data4)
+}
+
+/// What this PC's NVIDIA GPU can encode, straight from the driver (asked once).
+/// AV1 needs an RTX 40 series or newer; HEVC a GTX 950 / 10 series or newer.
+/// Empty when there's no NVIDIA GPU or driver.
+pub fn supported_codecs() -> Vec<Codec> {
+    static FOUND: std::sync::OnceLock<(String, Vec<Codec>)> = std::sync::OnceLock::new();
+    FOUND.get_or_init(|| detect().unwrap_or_default()).1.clone()
+}
+
+/// The NVIDIA GPU's name ("" if none), from the same check.
+pub fn nvidia_gpu_name() -> String {
+    static NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    NAME.get_or_init(|| detect().map(|d| d.0).unwrap_or_default()).clone()
+}
+
+fn detect() -> Result<(String, Vec<Codec>), String> {
+    use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1};
+    unsafe {
+        let factory: IDXGIFactory1 = CreateDXGIFactory1().map_err(|e| e.to_string())?;
+        let mut i = 0;
+        while let Ok(adapter) = factory.EnumAdapters1(i) {
+            i += 1;
+            let Ok(desc) = adapter.GetDesc1() else { continue };
+            if desc.VendorId != 0x10DE {
+                continue; // not NVIDIA
+            }
+            let name = String::from_utf16_lossy(&desc.Description).trim_end_matches('\0').to_string();
+            let gpu = Gpu::new(&adapter, name.clone()).map_err(|e| e.to_string())?;
+            let api = load_api()?;
+            let mut enc: *mut c_void = null_mut();
+            let mut open: NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS = zeroed();
+            open.version = NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS_VER;
+            open.deviceType = NV_ENC_DEVICE_TYPE_DIRECTX;
+            open.device = gpu.device.as_raw();
+            open.apiVersion = NVENCAPI_VERSION;
+            call!(api, nvEncOpenEncodeSessionEx, &mut open, &mut enc)?;
+            let mut n = 0u32;
+            let counted = call!(api, nvEncGetEncodeGUIDCount, enc, &mut n);
+            let mut guids: Vec<GUID> = vec![zeroed(); n as usize];
+            let mut got = 0u32;
+            let listed = counted.and_then(|_| call!(api, nvEncGetEncodeGUIDs, enc, guids.as_mut_ptr(), n, &mut got));
+            if let Some(f) = api.nvEncDestroyEncoder {
+                f(enc);
+            }
+            listed?;
+            guids.truncate(got as usize);
+            let codecs = [Codec::Av1, Codec::Hevc, Codec::H264]
+                .into_iter()
+                .filter(|c| guids.iter().any(|g| same_guid(g, &c.guid())))
+                .collect();
+            return Ok((name, codecs));
+        }
+        Err("No NVIDIA GPU found".into())
+    }
+}
+
+/// The encoder to really use for a setting: "auto" is the best this GPU has
+/// (AV1, then HEVC, then H.264), and a choice the GPU can't do falls back the
+/// same way, so an older card never fails to record.
+pub fn effective_encoder(setting: &str) -> &'static str {
+    pick(setting, &supported_codecs())
+}
+
+pub fn pick(setting: &str, supported: &[Codec]) -> &'static str {
+    if supported.is_empty() {
+        // Nothing to go on (no NVIDIA driver): keep the old behaviour.
+        return if setting == "auto" { "av1" } else { Codec::from_setting(setting).setting() };
+    }
+    if setting != "auto" {
+        let want = Codec::from_setting(setting);
+        if supported.contains(&want) {
+            return want.setting();
+        }
+    }
+    [Codec::Av1, Codec::Hevc, Codec::H264].into_iter().find(|c| supported.contains(c)).unwrap_or(Codec::H264).setting()
+}
+
+#[cfg(test)]
+mod pick_tests {
+    use super::*;
+
+    #[test]
+    fn auto_and_unsupported_choices_fall_back() {
+        let rtx40 = [Codec::Av1, Codec::Hevc, Codec::H264];
+        let rtx30 = [Codec::Hevc, Codec::H264];
+        let old = [Codec::H264];
+        assert_eq!(pick("auto", &rtx40), "av1");
+        assert_eq!(pick("auto", &rtx30), "hevc");
+        assert_eq!(pick("av1", &rtx30), "hevc", "AV1 on an RTX 30 records HEVC instead");
+        assert_eq!(pick("av1", &old), "h264");
+        assert_eq!(pick("h264", &rtx40), "h264", "an explicit choice the GPU can do is kept");
+        assert_eq!(pick("auto", &[]), "av1");
+    }
+
+    /// cargo test live_gpu_codecs -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn live_gpu_codecs() {
+        println!("{}: {:?} -> auto = {}", nvidia_gpu_name(), supported_codecs(), effective_encoder("auto"));
+        assert!(!supported_codecs().is_empty());
+    }
+}
+
 fn load_api() -> Result<NV_ENCODE_API_FUNCTION_LIST, String> {
     unsafe {
         let lib = LoadLibraryW(w!("nvEncodeAPI64.dll")).map_err(|_| "NVIDIA encoder not found (is the NVIDIA driver installed?)".to_string())?;

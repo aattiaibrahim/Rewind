@@ -261,7 +261,9 @@ export function Studio({
   settings: Settings | null;
   update: (p: Partial<Settings>) => Promise<void>;
 }) {
-  const replace = !!settings?.replaceOriginalOnEdit;
+  // A clip only on the NAS can't be replaced: a network folder has no Recycle Bin.
+  const onNetwork = !!path && (path.startsWith("\\\\") || clips?.find((c) => c.path === path)?.location === "nas");
+  const replace = !!settings?.replaceOriginalOnEdit && !onNetwork;
   const [reload, setReload] = useState(0);
   const video = useRef<HTMLVideoElement>(null);
   const bar = useRef<HTMLDivElement>(null);
@@ -1044,12 +1046,15 @@ export function Studio({
               type="checkbox"
               className="switch"
               checked={replace}
+              disabled={onNetwork}
               onChange={(e) => update({ replaceOriginalOnEdit: e.target.checked })}
             />
             Replace the original with my edit
           </label>
           <span className="muted" style={{ fontSize: 12, lineHeight: 1.5 }}>
-            {replace
+            {onNetwork
+              ? "This clip is on the NAS, which has no Recycle Bin, so edits are always saved as new files next to it."
+              : replace
               ? "Trims, exports and compresses overwrite this file. The old version goes to the Recycle Bin."
               : "The original is kept. Edits are saved as new files next to it."}
           </span>

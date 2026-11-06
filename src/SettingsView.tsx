@@ -1,7 +1,7 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useCallback, useEffect, useState } from "react";
-import { Accent, api, bufferEstimateMb, errText, fmtDb, Monitor, Settings, Theme } from "./api";
+import { Accent, api, bufferEstimateMb, errText, fmtDb, GpuEncoders, Monitor, Settings, Theme } from "./api";
 import { ConfirmDialog } from "./ConfirmUpdate";
 import { LibrarySettings } from "./LibrarySettings";
 import { SharingSettings } from "./Share";
@@ -113,6 +113,7 @@ export function SettingsView({
 }) {
   const [monitors, setMonitors] = useState<Monitor[]>([]);
   const [mics, setMics] = useState<string[]>([]);
+  const [enc, setEnc] = useState<GpuEncoders | null>(null);
   const upd = useUpdate();
   const [checking, setChecking] = useState(false);
   const [tab, setTab] = useState<TabId>(() => {
@@ -164,6 +165,7 @@ export function SettingsView({
   useEffect(() => {
     api.listMonitors().then(setMonitors).catch(() => {});
     api.listAudioInputs().then(setMics).catch(() => {});
+    api.gpuEncoders().then(setEnc).catch(() => {});
   }, []);
 
   const set = (p: Partial<Settings>) => update(p).catch((e) => onError(String(e)));
@@ -333,12 +335,31 @@ export function SettingsView({
           <label className="setting">
             <span>
               Encoder
-              <small>All run on your NVIDIA GPU (NVENC)</small>
+              <small>
+                All run on your NVIDIA GPU (NVENC){enc?.gpu ? `: ${enc.gpu.replace(/^NVIDIA /, "")}` : ""}. Auto picks the best
+                one it has. AV1 needs an RTX 40 series or newer.
+              </small>
+              {enc && s.encoder !== "auto" && enc.supported.length > 0 && !enc.supported.includes(s.encoder) && (
+                <small className="err-text">Your GPU can't record {s.encoder.toUpperCase()}, so it records {enc.auto.toUpperCase()} instead.</small>
+              )}
             </span>
             <select className="select" value={s.encoder} onChange={(e) => set({ encoder: e.target.value as Settings["encoder"] })}>
-              <option value="av1">AV1 (smallest files)</option>
-              <option value="hevc">HEVC / H.265</option>
-              <option value="h264">H.264 (plays everywhere)</option>
+              <option value="auto">Auto{enc ? ` (${({ av1: "AV1", hevc: "HEVC", h264: "H.264" } as const)[enc.auto]})` : ""}</option>
+              {(
+                [
+                  ["av1", "AV1 (smallest files)", "needs RTX 40 or newer"],
+                  ["hevc", "HEVC / H.265", "needs GTX 950 or newer"],
+                  ["h264", "H.264 (plays everywhere)", ""],
+                ] as const
+              ).map(([v, label, need]) => {
+                const can = !enc || enc.supported.length === 0 || enc.supported.includes(v);
+                return (
+                  <option key={v} value={v} disabled={!can}>
+                    {label}
+                    {can ? "" : ` · ${need}`}
+                  </option>
+                );
+              })}
             </select>
           </label>
           <label className="setting">
