@@ -12,6 +12,7 @@ import { ConfirmDelete } from "./ConfirmDelete";
 import { ConfirmUpdate, updateInterrupts } from "./ConfirmUpdate";
 import { MergeDialog, spellings, useSimilarFolders } from "./FolderMerge";
 import { Notice, Notifications } from "./Notifications";
+import { GameSortDialog, useGameSuggestions } from "./GameSort";
 import { useNasState } from "./NasProgress";
 import type { MoveOutcome } from "./api";
 import { useAppearance, useClips, useSettings, useStatus, useUpdate } from "./hooks";
@@ -202,6 +203,8 @@ export default function App() {
     return () => clearTimeout(t);
   }, [clips]);
   const nasNow = useNasState();
+  const [sortList] = useGameSuggestions(!!settings?.gameDetect);
+  const [sortOpen, setSortOpen] = useState(false);
   // Everything that used to be a banner or a pop-up, in the notification center.
   const notices: Notice[] = [];
   if (showBanner && upd?.version)
@@ -233,6 +236,13 @@ export default function App() {
       title: `${dupes} clip${dupes === 1 ? " is" : "s are"} saved twice on this PC`,
       detail: "Checked byte for byte. Copies on the NAS never count.",
       actions: [{ label: "Open Cleanup", run: () => setView("cleanup"), primary: true }],
+    });
+  if (sortList.length)
+    notices.push({
+      id: `sort:${sortList.length}`,
+      title: `Found the game for ${sortList.length} unsorted clip${sortList.length === 1 ? "" : "s"}`,
+      detail: [...new Set(sortList.map((s) => s.game))].slice(0, 3).join(", ") + " and more, from what's on screen. Check them before they move.",
+      actions: [{ label: "Review", run: () => setSortOpen(true), primary: true }],
     });
   if (nasNow?.enabled && !nasNow.reachable)
     notices.push({
@@ -457,6 +467,30 @@ export default function App() {
           busy={installing}
           onConfirm={installNow}
           onCancel={closeAskUpdate}
+        />
+      )}
+      {sortOpen && clips && (
+        <GameSortDialog
+          list={sortList}
+          clips={clips}
+          onClose={() => setSortOpen(false)}
+          onDone={(moved, failed) => {
+            setSortOpen(false);
+            refresh();
+            toast(
+              `Moved ${moved} clip${moved === 1 ? "" : "s"} into their game folders`,
+              failed > 0,
+              failed ? `${failed} couldn't be moved` : undefined,
+              {
+                label: "Undo",
+                run: () =>
+                  api
+                    .undoLastMove()
+                    .then(() => refresh())
+                    .catch((e) => toast(errText(e), true)),
+              },
+            );
+          }}
         />
       )}
       {mergeOpen && (

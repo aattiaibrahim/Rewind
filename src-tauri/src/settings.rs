@@ -84,6 +84,10 @@ pub struct Settings {
     pub health_check: bool,
     /// Make every clip's thumbnail and details ahead of time (only while no game is running)
     pub prepare_thumbnails: bool,
+    /// Find the game in clips from folders that don't say (OBS, Desktop…) from the picture (downloads a model)
+    pub game_detect: bool,
+    /// Clips whose game suggestion was turned down
+    pub detect_dismissed: Vec<String>,
 }
 
 impl Default for Settings {
@@ -135,6 +139,8 @@ impl Default for Settings {
             confirm_uploads: true,
             health_check: true,
             prepare_thumbnails: true,
+            game_detect: false,
+            detect_dismissed: Vec::new(),
         }
     }
 }

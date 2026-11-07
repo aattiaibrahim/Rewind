@@ -3,6 +3,7 @@ mod prepare;
 mod game_icons;
 mod duplicates;
 mod montage;
+mod game_detect;
 #[macro_use]
 mod diag;
 mod audio;
@@ -1028,6 +1029,69 @@ async fn run_diagnostics(app: AppHandle, clip: Option<String>) -> Result<String,
     .await
 }
 
+// ---------- Finding the game from the picture (see game_detect.rs) ----------
+
+#[tauri::command]
+fn detect_status() -> game_detect::Status {
+    game_detect::status()
+}
+
+/// Download the image model and runtime once (about 106 MB); "detect-progress" carries 0..1.
+#[tauri::command]
+async fn detect_install(app: AppHandle) -> Result<(), String> {
+    let a = app.clone();
+    blocking(move || {
+        let mut last = -1.0;
+        game_detect::install(|p| {
+            if p - last >= 0.01 || p >= 1.0 {
+                last = p;
+                let _ = a.emit("detect-progress", p);
+            }
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn game_suggestions(app: AppHandle) -> Result<Vec<game_detect::Suggestion>, String> {
+    let s = settings_of(&app);
+    blocking(move || {
+        let linked = linked_roots(&s);
+        let all = library::scan_all(PathBuf::from(&s.clips_dir).as_path(), &s.external_files, &[], &linked, &s.nas_dir);
+        Ok(game_detect::suggestions(&all, &s.detect_dismissed))
+    })
+    .await
+}
+
+/// Move the chosen clips into their game's folder (logged, so Undo works like other moves).
+#[tauri::command]
+async fn apply_game_sort(app: AppHandle, picks: Vec<(String, String)>) -> Result<consolidate::Outcome, String> {
+    let s = settings_of(&app);
+    let dir = moves_dir(&app)?;
+    let out = blocking(move || {
+        let plan = game_detect::plan(std::path::Path::new(&s.clips_dir), &picks);
+        let _ = std::fs::create_dir_all(&dir);
+        let log = dir.join(format!("{}-Sorted_by_game.jsonl", chrono::Local::now().format("%Y%m%d-%H%M%S")));
+        Ok(consolidate::run(&plan, &log, |_, _| {}))
+    })
+    .await?;
+    let _ = app.emit("clips-changed", ());
+    nas::wake();
+    Ok(out)
+}
+
+/// Don't suggest a game for these clips again.
+#[tauri::command]
+fn dismiss_game_suggestions(app: AppHandle, paths: Vec<String>) -> Result<(), String> {
+    let mut s = settings_of(&app);
+    for p in paths {
+        if !s.detect_dismissed.contains(&p) {
+            s.detect_dismissed.push(p);
+        }
+    }
+    set_settings(app, s)
+}
+
 /// Sets of library paths that hold the very same clip (checked byte for byte).
 #[tauri::command]
 async fn find_duplicates(app: AppHandle) -> Result<Vec<Vec<String>>, String> {
@@ -1315,6 +1379,26 @@ pub fn run() {
                 thread::sleep(Duration::from_secs(2));
             });
             game_icons::init(handle.state::<AppState>().thumbs_dir.with_file_name("icons"));
+            // Finding the game from the picture: only with the setting on and the model downloaded.
+            if let Ok(ai) = handle.path().app_data_dir().map(|d| d.join("ai")) {
+                game_detect::init(ai);
+                let (d1, d2, d3, d4) = (handle.clone(), handle.clone(), handle.clone(), handle.clone());
+                game_detect::start(
+                    move || {
+                        let s = settings_of(&d1);
+                        let linked = linked_roots(&s);
+                        library::scan_all(PathBuf::from(&s.clips_dir).as_path(), &s.external_files, &[], &linked, &s.nas_dir)
+                    },
+                    move || settings_of(&d2).game_detect,
+                    move || {
+                        let st = d3.state::<AppState>();
+                        games::game_running() || st.engine.is_recording() || engine::saves_in_progress() > 0 || bench::run::is_running()
+                    },
+                    move || {
+                        let _ = d4.emit("detect-changed", ());
+                    },
+                );
+            }
             // Clip details and thumbnails, ready before you scroll to them.
             if let Ok(file) = data_file(&handle, "probes.json") {
                 prepare::init(file);
@@ -1500,6 +1584,11 @@ pub fn run() {
             gpu_encoders,
             game_icon,
             find_duplicates,
+            detect_status,
+            detect_install,
+            game_suggestions,
+            apply_game_sort,
+            dismiss_game_suggestions,
             run_diagnostics,
             free_local_copy,
             render_montage,

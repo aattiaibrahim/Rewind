@@ -25,3 +25,14 @@ Rewind's installer includes Intel's PresentMon 2.6.0 (`presentmon/PresentMon.exe
 ## Rust and JavaScript dependencies
 
 Rewind is built with Tauri, React, cpal, the `windows` crate and other open-source libraries under MIT, Apache-2.0 and similar licenses. See `src-tauri/Cargo.lock` and `pnpm-lock.yaml` for the full list.
+
+## ONNX Runtime (optional download)
+
+Used by "Find the game in unsorted clips". `onnxruntime.dll` 1.31.1, Copyright (c) Microsoft Corporation,
+MIT License: https://github.com/microsoft/onnxruntime/blob/main/LICENSE
+
+## CLIP ViT-B/32 image model (optional download)
+
+Used by "Find the game in unsorted clips". The vision half of OpenAI's CLIP ViT-B/32 (MIT License,
+https://github.com/openai/CLIP/blob/main/LICENSE), as the quantized ONNX export published by Xenova
+(https://huggingface.co/Xenova/clip-vit-base-patch32).

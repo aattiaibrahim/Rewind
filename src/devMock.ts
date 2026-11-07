@@ -67,7 +67,7 @@ export function installDevMock() {
     recordHotkey: "Alt+F9", bufferEnabled: true, launchOnStartup: false, autoUpdate: true, startMinimized: true,
     keepOriginalAfterRemux: true, replaceOriginalOnEdit: false, externalFiles: [], desktopAudio: true, discordTrack: true,
     micEnabled: true, micMono: true, micDevice: "", micGainDb: 0, theme: "midnight", accent: "lime", reduceMotion: false,
-    saveSound: true, nasDir: "\\\\nas\\clips", nasRemoveLocal: false, linkedFolders: [] as string[], benchmarkMode: false, uploadHost: "catbox", litterboxTime: "72h", autoUpload: false, postLinkToDiscord: false, streamableEmail: "", discordWebhookName: "", confirmUploads: true, healthCheck: true, prepareThumbnails: true,
+    saveSound: true, nasDir: "\\\\nas\\clips", nasRemoveLocal: false, linkedFolders: [] as string[], benchmarkMode: false, uploadHost: "catbox", litterboxTime: "72h", autoUpload: false, postLinkToDiscord: false, streamableEmail: "", discordWebhookName: "", confirmUploads: true, healthCheck: true, prepareThumbnails: true, gameDetect: true, detectDismissed: [] as string[],
     folderNames: {} as Record<string, string>, similarDismissed: [] as string[], cleanupKept: {} as Record<string, number>,
   };
   // Same game under two folder names (preview of the merge prompt).
@@ -129,6 +129,11 @@ export function installDevMock() {
     run_diagnostics: () => "C:\\Users\\you\\Downloads\\Hindsight diagnostics 2026-11-06 12-00-00.txt",
     find_duplicates: () => [],
     edited_clips: () => [],
+    detect_status: () => ({ installed: true, downloading: null, lookedAt: 51, toLookAt: 53, error: null }),
+    game_suggestions: () =>
+      clips.filter((c) => c.folder === "Hunt Showdown").slice(0, 3).map((c, i) => ({ path: c.path, name: c.name, folder: "OBS", game: ["VALORANT", "Counter-Strike 2", "Rainbow Six Siege"][i], confidence: 0.92 - i * 0.07, likeness: 0.94 })),
+    apply_game_sort: (a) => ({ moved: (a.picks as unknown[]).length, failed: [] }),
+    dismiss_game_suggestions: () => null,
     render_montage: async () => (await new Promise((r) => setTimeout(r, 1200)), "C:\\Users\\you\\Videos\\Hindsight\\Montages\\Montage 2026-11-06 12-00-00.mp4"),
     cancel_montage: () => null,
     game_icon: () => null,

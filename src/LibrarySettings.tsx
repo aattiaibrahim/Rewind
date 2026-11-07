@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, ClipFolder, errText, FoundFolder, fmtSize, LastMove, MovePlan, NasState, Settings } from "./api";
 import { ConfirmDialog } from "./ConfirmUpdate";
 import { NasProgress, useNasState } from "./NasProgress";
+import { useDetectStatus } from "./GameSort";
 import { HealthSetting } from "./Health";
 
 type MoveJob = {
@@ -227,6 +228,8 @@ export function LibrarySettings({
         </div>
       )}
 
+      <DetectSetting s={s} set={set} Toggle={Toggle} />
+
       <label className="setting">
         <span>
           Prepare thumbnails ahead of time
@@ -405,5 +408,66 @@ export function LibrarySettings({
         </div>
       )}
     </section>
+  );
+}
+
+/** Settings → Library: finding the game in unsorted clips from the picture. */
+function DetectSetting({
+  s,
+  set,
+  Toggle,
+}: {
+  s: Settings;
+  set: (p: Partial<Settings>) => void;
+  Toggle: (p: { label: string; checked: boolean; onChange: (v: boolean) => void }) => React.ReactElement;
+}) {
+  const st = useDetectStatus();
+  const [dl, setDl] = useState<number | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    const un = listen<number>("detect-progress", (e) => setDl(e.payload));
+    return () => {
+      un.then((f) => f());
+    };
+  }, []);
+  const install = async () => {
+    setErr(null);
+    setDl(0);
+    try {
+      await api.detectInstall();
+    } catch (e) {
+      setErr(errText(e));
+    } finally {
+      setDl(null);
+    }
+  };
+  const status = !s.gameDetect
+    ? "Off."
+    : !st?.installed
+      ? "Needs a one-time download first."
+      : st.toLookAt
+        ? `Looked at ${st.lookedAt} of ${st.toLookAt} clips${st.lookedAt < st.toLookAt ? " (only while you're not gaming)" : ""}.`
+        : "Starting…";
+  return (
+    <div className="setting">
+      <span>
+        Find the game in unsorted clips
+        <small>
+          For clips in folders that don't say which game they're from (OBS, Desktop, Imports, other recorders), Hindsight looks at a
+          few frames and compares them with your sorted clips, then suggests a game for you to check. It runs on this PC only,
+          while you're not gaming. Needs a one-time download of an image model (about 106 MB).
+        </small>
+        <small>{dl != null ? `Downloading… ${Math.round(dl * 100)}%` : status}</small>
+        {err && <small className="err-text">{err}</small>}
+      </span>
+      <span className="row" style={{ flexWrap: "nowrap", flexShrink: 0 }}>
+        {s.gameDetect && st && !st.installed && (
+          <button className="btn small primary" disabled={dl != null} onClick={install}>
+            {dl != null ? "Downloading…" : "Download (106 MB)"}
+          </button>
+        )}
+        <Toggle label="Find the game in unsorted clips" checked={s.gameDetect} onChange={(v) => set({ gameDetect: v })} />
+      </span>
+    </div>
   );
 }

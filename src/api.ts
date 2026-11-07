@@ -1,6 +1,10 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 
 export type Encoder = "auto" | "av1" | "hevc" | "h264";
+/** The picture check's state. */
+export type DetectStatus = { installed: boolean; downloading: number | null; lookedAt: number; toLookAt: number; error: string | null };
+/** A clip in an unsorted folder and the game it looks like. */
+export type GameSuggestion = { path: string; name: string; folder: string; game: string; confidence: number; likeness: number };
 /** A montage to render: clip pieces in order, an optional song. */
 export type MontagePlan = {
   pieces: { path: string; start: number; end: number }[];
@@ -51,6 +55,9 @@ export type Settings = {
   healthCheck: boolean;
   /** Make every clip's thumbnail ahead of time, while no game is running */
   prepareThumbnails: boolean;
+  /** Find the game in unsorted clips from the picture (downloads a model) */
+  gameDetect: boolean;
+  detectDismissed: string[];
   startMinimized: boolean;
   keepOriginalAfterRemux: boolean;
   replaceOriginalOnEdit: boolean;
@@ -346,6 +353,11 @@ export const api = {
   gpuEncoders: () => invoke<GpuEncoders>("gpu_encoders"),
   /** Sets of paths holding the very same clip */
   findDuplicates: () => invoke<string[][]>("find_duplicates"),
+  detectStatus: () => invoke<DetectStatus>("detect_status"),
+  detectInstall: () => invoke<void>("detect_install"),
+  gameSuggestions: () => invoke<GameSuggestion[]>("game_suggestions"),
+  applyGameSort: (picks: [string, string][]) => invoke<MoveOutcome>("apply_game_sort", { picks }),
+  dismissGameSuggestions: (paths: string[]) => invoke<void>("dismiss_game_suggestions", { paths }),
   /** Save a diagnostics report in Downloads (about one clip, if given); returns its path. */
   /** Remove this PC's copy of a clip that's identical on the NAS (the NAS copy stays). */
   freeLocalCopy: (path: string) => invoke<void>("free_local_copy", { path }),
