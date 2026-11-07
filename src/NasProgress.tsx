@@ -78,19 +78,50 @@ export function NasProgress({ n, compact = false }: { n: NasState | null; compac
 }
 
 /** Where a clip stands with the NAS, for its badge. */
-export function nasStatus(clip: ClipFile, nasOn: boolean): "synced" | "waiting" | "nas-only" | null {
+export function nasStatus(clip: ClipFile, nasOn: boolean, copying?: string | null): "synced" | "copying" | "not-synced" | "nas-only" | null {
   if (clip.location === "nas") return "nas-only";
   if (clip.onNas) return "synced";
   // Other recorders' folders aren't copied, so they get no badge.
-  if (nasOn && clip.location === "local") return "waiting";
+  if (nasOn && clip.location === "local") {
+    if (copying && /[\\/]/.test(clip.path) && clip.path.replace(/\\/g, "/").endsWith("/" + copying)) return "copying";
+    return "not-synced";
+  }
   return null;
 }
 
 const NAS_TIP = {
   synced: "Safely copied to the NAS",
-  waiting: "Not on the NAS yet: it copies once you're out of game",
+  copying: "Copying to the NAS now",
+  "not-synced": "Not on the NAS yet: it copies once you're out of game",
   "nas-only": "Only on the NAS (not on this PC)",
 } as const;
+
+/** Studio: the open clip's NAS status, in words. */
+export function StudioNas({ clip }: { clip?: ClipFile }) {
+  const nas = useNasState();
+  if (!clip || !nas?.enabled) return null;
+  const status = nasStatus(clip, true, nas.copying);
+  if (!status) return null;
+  const pct = nas.totalBytes ? Math.round((nas.doneBytes / nas.totalBytes) * 100) : null;
+  const text =
+    status === "synced"
+      ? "On the NAS, checked"
+      : status === "nas-only"
+        ? "Only on the NAS"
+        : status === "copying"
+          ? `Copying to the NAS…${pct != null ? ` ${pct}%` : ""}`
+          : !nas.reachable
+            ? "Not on the NAS yet (can't reach it)"
+            : nas.paused
+              ? "Not on the NAS yet: copies after your game"
+              : "Not on the NAS yet";
+  return (
+    <span className={`studio-nas ${status}`} title={NAS_TIP[status]}>
+      <NasBadge status={status} />
+      {text}
+    </span>
+  );
+}
 
 /** A small NAS icon with a status mark, like iCloud's cloud icons. */
 export function NasBadge({ status }: { status: ReturnType<typeof nasStatus> }) {
@@ -104,8 +135,9 @@ export function NasBadge({ status }: { status: ReturnType<typeof nasStatus> }) {
         <rect x="3.2" y="8.6" width="8.6" height="2.4" rx="0.8" fill="var(--nas-bg)" />
         <circle cx="15.2" cy="11.2" r="4.3" fill="var(--nas-mark)" stroke="var(--nas-bg)" strokeWidth="1.4" />
         {status === "synced" && <path d="M13.3 11.3l1.3 1.3 2.4-2.6" fill="none" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />}
-        {status === "waiting" && <path d="M13.3 11.2h3.8" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" />}
-        {status === "nas-only" && <path d="M15.2 9.3v3.5M13.7 11.5l1.5 1.5 1.5-1.5" fill="none" stroke="#fff" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />}
+        {status === "copying" && <path d="M15.2 9.3v3.5M13.7 11.5l1.5 1.5 1.5-1.5" fill="none" stroke="#fff" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />}
+        {status === "not-synced" && <path d="M13.8 9.8l2.8 2.8M16.6 9.8l-2.8 2.8" fill="none" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" />}
+        {status === "nas-only" && <circle cx="15.2" cy="11.2" r="1.3" fill="#fff" />}
       </svg>
     </span>
   );

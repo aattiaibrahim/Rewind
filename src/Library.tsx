@@ -21,7 +21,7 @@ type Sort = "new" | "old" | "big";
 /** where: "" any, "pc" on this PC, "nas" on the NAS; sources: "Hindsight", "Medal"…; from/to: YYYY-MM-DD; minMb: 0 = any */
 type Filters = { where: "" | "pc" | "nas"; sources: string[]; from: string; to: string; minMb: number };
 const NO_FILTERS: Filters = { where: "", sources: [], from: "", to: "", minMb: 0 };
-const TITLES: Record<string, string> = { clips: "Clips", local: "Local clips", synced: "Synced clips", damaged: "Damaged clips" };
+const TITLES: Record<string, string> = { totrim: "To trim", clips: "Clips", local: "Local clips", synced: "Synced clips", damaged: "Damaged clips" };
 
 const remembered = <T extends string>(k: string, d: T): T => {
   try {
@@ -72,26 +72,28 @@ function ClipRow({
   onClick,
   damage,
   nasOn,
+  copying,
 }: {
   clip: ClipFile;
   selected: boolean;
   onClick: (e: React.MouseEvent) => void;
   damage?: Health;
   nasOn: boolean;
+  copying?: string | null;
 }) {
   const [rowRef, near] = useNearView<HTMLButtonElement>();
-  const thumb = useThumb(near ? clip.path : "", clip.modified);
+  const thumb = useThumb(clip.path, clip.modified, near);
   const time = new Date(clip.modified).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
   return (
     <button ref={rowRef} className={`clip-row ${selected ? "selected" : ""}`} onClick={onClick} title={clip.path} data-path={clip.path}>
-      <div className="clip-row-thumb">{thumb && <img src={thumb} alt="" loading="lazy" />}</div>
+      <div className="clip-row-thumb">{thumb && <img src={thumb} alt="" decoding="async" />}</div>
       <div className="clip-row-main">
         <div className="card-title">{clip.name}</div>
         <div className="card-meta">
           {clip.folder} · {time}
           {damage && damage.state !== "ok" && <span className="src-tag bad"> ⚠ Damaged</span>}
           {clip.location === "linked" && <span className="src-tag">{clip.source}</span>}
-          <NasBadge status={nasStatus(clip, nasOn)} />
+          <NasBadge status={nasStatus(clip, nasOn, copying)} />
         </div>
       </div>
       <div className="clip-row-size">{fmtSize(clip.size)}</div>
@@ -134,7 +136,13 @@ function ClipCard({
   returned,
   deleteCount = 1,
   nasOn,
+  onKeepWhole,
+  copying,
 }: {
+  /** The file the NAS sync is copying right now */
+  copying?: string | null;
+  /** To trim: take it off the list */
+  onKeepWhole?: () => void;
   /** NAS syncing is on (clips not copied yet get a "waiting" mark) */
   nasOn: boolean;
   /** How many clips its Delete removes (all selected ones when it's part of a selection) */
@@ -156,13 +164,14 @@ function ClipCard({
   // Only clips near the screen ask the drive for anything: with hundreds of
   // clips (or a slow hard drive) the ones you're looking at come first.
   const [cardRef, near] = useNearView<HTMLButtonElement>();
-  const thumb = useThumb(near ? clip.path : "", clip.modified);
+  const thumb = useThumb(clip.path, clip.modified, near);
   const [info, setInfo] = useState<Probe | null>(null);
   useEffect(() => {
     if (near) api.probe(clip.path, String(clip.modified)).then(setInfo).catch(() => {});
   }, [near, clip.path, clip.modified]);
 
   const time = new Date(clip.modified).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const nasState = nasStatus(clip, nasOn, copying);
 
   return (
     <button
@@ -172,8 +181,8 @@ function ClipCard({
       title={clip.path}
       data-path={clip.path}
     >
-      <div className="thumb">
-        {thumb && <img src={thumb} alt="" loading="lazy" />}
+      <div className={`thumb ${nasState ? "has-nas" : ""}`}>
+        {thumb && <img src={thumb} alt="" decoding="async" />}
         <span
           className={`check ${selected ? "on" : ""}`}
           role="checkbox"
@@ -212,6 +221,19 @@ function ClipCard({
           >
             Share
           </span>
+          {onKeepWhole && (
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={(e) => {
+                e.stopPropagation();
+                onKeepWhole();
+              }}
+              title="It's fine as it is: take it off this list"
+            >
+              Keep whole
+            </span>
+          )}
           {/* The NAS has no Recycle Bin, so clips only there are deleted on the NAS itself. */}
           {clip.location !== "nas" && (
             <span
@@ -245,8 +267,13 @@ function ClipCard({
             </span>
           )}
           {clip.location === "linked" && <span className="src-tag">{clip.source}</span>}
-          <NasBadge status={nasStatus(clip, nasOn)} />
         </div>
+        {/* Stays put on hover: at a glance, which clips are safely on the NAS. */}
+        {nasState && (
+          <span className="card-nas">
+            <NasBadge status={nasState} />
+          </span>
+        )}
         <div className="card-over">
           <div className="card-title">{clip.name}</div>
           <div className="card-meta">
@@ -276,9 +303,15 @@ export function Library({
   onShare,
   health,
   mode = "clips",
+  active = true,
+  onKeepWhole,
 }: {
-  /** "damaged": the Damaged section (only the damaged clips); "local" / "synced": this PC's or the NAS's. */
-  mode?: "clips" | "damaged" | "local" | "synced";
+  /** "damaged": the Damaged section (only the damaged clips); "local" / "synced": this PC's or the NAS's; "totrim": not trimmed yet. */
+  mode?: "clips" | "damaged" | "local" | "synced" | "totrim";
+  /** False while Studio covers it (it stays loaded, so coming back is instant) */
+  active?: boolean;
+  /** To trim: "Keep whole" takes clips off the list */
+  onKeepWhole?: (paths: string[]) => void;
   health?: Record<string, Health>;
   onShare?: (r: ShareRequest) => void;
   /** The clip last opened in Studio: scrolled back to and highlighted */
@@ -295,6 +328,7 @@ export function Library({
 }) {
   const memory = (memories[mode] ??= { scroll: 0, folder: "All", query: "" });
   const damagedMode = mode === "damaged";
+  const trimMode = mode === "totrim";
   const nas = useNasState();
   const nasOn = !!nas?.enabled;
   // Filter and search survive a trip to Studio too.
@@ -403,6 +437,10 @@ export function Library({
   const restored = useRef(false);
   useLayoutEffect(() => {
     const sc = scroller.current;
+    if (!active) {
+      restored.current = false;
+      return;
+    }
     if (!sc || restored.current || !clips?.length) return;
     restored.current = true;
     sc.scrollTop = memory.scroll;
@@ -416,10 +454,11 @@ export function Library({
         setTimeout(() => setReturnedTo(null), 2200);
       }
     }
-  }, [clips, focusPath]);
+  }, [clips, focusPath, active]);
   // "Back" again while already on the clips (mouse back button, Alt+←, Esc, or the
   // Clips tab): forget the old spot and go to the top.
   useEffect(() => {
+    if (!active) return;
     const top = () => {
       memory.scroll = 0;
       setReturnedTo(null);
@@ -427,9 +466,9 @@ export function Library({
     };
     window.addEventListener("rewind-top", top);
     return () => window.removeEventListener("rewind-top", top);
-  }, []);
+  }, [active]);
   const onScroll = () => {
-    if (scroller.current) memory.scroll = scroller.current.scrollTop;
+    if (scroller.current && active) memory.scroll = scroller.current.scrollTop;
   };
   // The date timeline only makes sense for the gallery in date order.
   const days = useMemo(
@@ -488,6 +527,7 @@ export function Library({
 
   // Delete removes the selection, Ctrl+A selects everything shown, Esc clears.
   useEffect(() => {
+    if (!active) return;
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement).tagName;
       if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
@@ -506,7 +546,7 @@ export function Library({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected, visible, deleteSelected]);
+  }, [selected, visible, deleteSelected, active]);
 
   const openAny = async () => {
     const picked = await open({
@@ -527,7 +567,7 @@ export function Library({
   const selectedBytes = (clips ?? []).filter((c) => selected.has(c.path)).reduce((n, c) => n + c.size, 0);
 
   return (
-    <div className="lib">
+    <div className="lib" hidden={!active}>
       {previewing && selecting && (
         <DeletePreview
           clips={selectedClips}
@@ -581,6 +621,7 @@ export function Library({
           </button>
         )}
       </div>
+      {damagedMode && !!clips?.length && <RepairAll clips={clips} onToast={onToast} />}
       {healing && clips && health && <HealReview clips={clips} health={health} onClose={() => setHealing(false)} onToast={onToast} />}
       {showFilters && (
         <div className="lib-filters">
@@ -638,6 +679,7 @@ export function Library({
         </div>
       )}
       {damagedMode && <DamagedStatus count={clips?.length ?? 0} />}
+      {trimMode && !!clips?.length && <TrimStatus clips={clips} />}
       {mode === "clips" && viewMode === "gallery" && !selecting && !query && folder === "All" && activeFilters === 0 && clips && (
         <OnThisDay clips={clips} onOpenClip={onOpen} />
       )}
@@ -654,6 +696,18 @@ export function Library({
           <button className="btn small" onClick={() => setSelected(new Set())}>
             Clear
           </button>
+          {onKeepWhole && (
+            <button
+              className="btn small"
+              onClick={() => {
+                onKeepWhole([...selected]);
+                setSelected(new Set());
+              }}
+              title="They're fine as they are: take them off this list"
+            >
+              Keep whole
+            </button>
+          )}
           <button className="btn small" onClick={() => setPreviewing(true)} title="Look through the selected clips before deleting them">
             Preview
           </button>
@@ -672,7 +726,12 @@ export function Library({
         )
       )}
 
-      {clips === null ? null : clips.length === 0 && damagedMode ? (
+      {clips === null ? null : clips.length === 0 && trimMode ? (
+        <div className="empty">
+          <strong>Nothing left to trim</strong>
+          <span>Every saved clip has been trimmed, or marked “Keep whole”. New clips show up here until you trim them.</span>
+        </div>
+      ) : clips.length === 0 && damagedMode ? (
         <div className="empty">
           <strong>No damaged clips</strong>
           <span>Every clip checked so far plays properly. Anything that doesn't will show up here.</span>
@@ -706,7 +765,7 @@ export function Library({
       ) : viewMode === "list" ? (
         <div className="clip-rows">
           {groups.flatMap((g) => g.items).map((c) => (
-            <ClipRow key={c.path} clip={c} selected={selected.has(c.path)} onClick={clickCard(c.path)} damage={health?.[c.path]} nasOn={nasOn} />
+            <ClipRow key={c.path} clip={c} selected={selected.has(c.path)} onClick={clickCard(c.path)} damage={health?.[c.path]} nasOn={nasOn} copying={nas?.copying} />
           ))}
         </div>
       ) : (
@@ -738,6 +797,7 @@ export function Library({
                 {g.items.map((c) => (
                   <ClipCard
                     nasOn={nasOn}
+                    copying={nas?.copying}
                     key={c.path}
                     clip={c}
                     selected={selected.has(c.path)}
@@ -751,6 +811,7 @@ export function Library({
                     damage={health?.[c.path]}
                     onShare={() => onShare?.({ path: c.path })}
                     returned={c.path === returnedTo}
+                    onKeepWhole={onKeepWhole ? () => onKeepWhole([c.path]) : undefined}
                   />
                 ))}
               </div>
@@ -760,6 +821,112 @@ export function Library({
       )}
     </div>
     <Timeline scroller={scroller} days={days} />
+    </div>
+  );
+}
+
+/**
+ * To trim: how much these clips take, and about how much trimming each to its
+ * best 30 seconds would free (from their lengths, worked out in the background).
+ */
+function TrimStatus({ clips }: { clips: ClipFile[] }) {
+  const [lens, setLens] = useState<Record<string, number>>({});
+  useEffect(() => {
+    let alive = true;
+    const t = setTimeout(async () => {
+      for (const c of clips) {
+        if (!alive) return;
+        try {
+          const p = await api.probe(c.path, String(c.modified));
+          if (alive) setLens((l) => ({ ...l, [c.path]: p.duration }));
+        } catch {
+          /* unreadable: left out of the estimate */
+        }
+      }
+    }, 600);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+  }, [clips]);
+  const bytes = clips.reduce((n, c) => n + c.size, 0);
+  let freed = 0;
+  let known = 0;
+  for (const c of clips) {
+    const d = lens[c.path];
+    if (!d) continue;
+    known++;
+    if (d > 30) freed += c.size * (1 - 30 / d);
+  }
+  return (
+    <div className="trim-status">
+      <strong>
+        {clips.length} clip{clips.length === 1 ? "" : "s"} not trimmed yet · {fmtSize(bytes)}
+      </strong>
+      <span className="muted">
+        {known === 0
+          ? "Working out how much trimming would save…"
+          : `Trimming each to its best 30 seconds would free about ${fmtSize(freed * (clips.length / known))}${known < clips.length ? " (estimate so far)" : ""}.`}{" "}
+        Open one to trim it, or choose “Keep whole” on clips that are fine as they are.
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Damaged: try to repair them all, one after another. Each repair writes a
+ * "(repaired)" copy next to the clip and leaves the original as it is, so
+ * nothing is lost; check the copies, then delete whichever you don't want.
+ */
+function RepairAll({ clips, onToast }: { clips: ClipFile[]; onToast: (t: string, err?: boolean) => void }) {
+  const [at, setAt] = useState<number | null>(null);
+  const stop = useRef(false);
+  const todo = clips.filter((c) => !/\(repaired\)/i.test(c.name));
+  const run = async () => {
+    stop.current = false;
+    let ok = 0;
+    let failed = 0;
+    for (let i = 0; i < todo.length; i++) {
+      if (stop.current) break;
+      setAt(i);
+      try {
+        await api.repairClip(todo[i].path);
+        ok++;
+      } catch {
+        failed++;
+      }
+    }
+    setAt(null);
+    onToast(
+      `Repaired ${ok} clip${ok === 1 ? "" : "s"}${failed ? `, ${failed} couldn't be` : ""}`,
+      failed > 0 && ok === 0,
+    );
+  };
+  if (!todo.length) return null;
+  return (
+    <div className="repair-all">
+      {at == null ? (
+        <>
+          <span className="muted">
+            Repair re-encodes each clip into a “(repaired)” copy next to it. The originals stay as they are until you delete them.
+          </span>
+          <button className="btn small" onClick={run}>
+            Repair all {todo.length}
+          </button>
+        </>
+      ) : (
+        <>
+          <span>
+            Repairing {at + 1} of {todo.length}: <span className="muted">{todo[at]?.name}</span>
+          </span>
+          <span className="dl-bar" style={{ flex: 1, maxWidth: 240 }}>
+            <span style={{ width: `${(at / todo.length) * 100}%` }} />
+          </span>
+          <button className="btn small" onClick={() => (stop.current = true)}>
+            Stop after this one
+          </button>
+        </>
+      )}
     </div>
   );
 }

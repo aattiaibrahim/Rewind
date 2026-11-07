@@ -89,6 +89,7 @@ export function MergeDialog({
 }) {
   const [pick, setPick] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
   const closeBtn = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     closeBtn.current?.focus();
@@ -103,9 +104,11 @@ export function MergeDialog({
   const merge = async (s: SimilarFolders) => {
     const target = pick[s.key] ?? s.suggested;
     setBusy(s.key);
+    setErr(null);
     try {
       onMerged(target, await api.mergeGameFolders(s.key, target));
     } catch (e) {
+      setErr(errText(e));
       onError(errText(e));
     } finally {
       setBusy(null);
@@ -151,6 +154,7 @@ export function MergeDialog({
             </div>
           );
         })}
+        {err && <small className="err-text">{err}</small>}
         <div className="row" style={{ justifyContent: "flex-end" }}>
           <button ref={closeBtn} className="btn" onClick={onClose} disabled={!!busy}>
             Close

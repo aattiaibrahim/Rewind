@@ -96,12 +96,18 @@ export function useNearView<T extends Element>(rootSelector = ".lib-page", margi
   return [ref, near] as const;
 }
 
-export function useThumb(path: string, key: string | number = "") {
-  const [src, setSrc] = useState<string | null>(null);
+/**
+ * A clip's thumbnail. One already loaded this session shows on the first frame
+ * (going back to the library doesn't blank them all); otherwise it's fetched
+ * once `want` is true (cards pass "near the screen").
+ */
+export function useThumb(path: string, key: string | number = "", want = true) {
+  const [src, setSrc] = useState<string | null>(() => (path ? api.thumbNow(path, String(key)) : null));
   useEffect(() => {
     let alive = true;
-    setSrc(null);
-    if (!path) return;
+    const now = path ? api.thumbNow(path, String(key)) : null;
+    setSrc(now);
+    if (!path || now || !want) return;
     api
       .thumbnail(path, String(key))
       .then((s) => alive && setSrc(s))
@@ -109,7 +115,7 @@ export function useThumb(path: string, key: string | number = "") {
     return () => {
       alive = false;
     };
-  }, [path, key]);
+  }, [path, key, want]);
   return src;
 }
 
@@ -119,7 +125,7 @@ export function useThumb(path: string, key: string | number = "") {
 export function useAppearance(settings: Settings | null) {
   useEffect(() => {
     if (!settings) return;
-    const look = { theme: settings.theme ?? "midnight", accent: settings.accent ?? "lime", motion: settings.reduceMotion ? "reduce" : "full" };
+    const look = { theme: settings.theme ?? "tinted", accent: settings.accent ?? "winblue", motion: settings.reduceMotion ? "reduce" : "full" };
     applyAppearance(look);
     try {
       localStorage.setItem("rewind.appearance", JSON.stringify(look));
@@ -127,6 +133,26 @@ export function useAppearance(settings: Settings | null) {
       /* only a start-up nicety */
     }
   }, [settings?.theme, settings?.accent, settings?.reduceMotion]); // eslint-disable-line react-hooks/exhaustive-deps
+  // "Follow Windows": Windows' accent, checked again whenever Hindsight comes back to the front.
+  useEffect(() => {
+    if (settings?.accent !== "system") return;
+    const load = () =>
+      api
+        .systemAccent()
+        .then((c) => {
+          if (!c) return;
+          document.documentElement.style.setProperty("--system-accent", c);
+          try {
+            localStorage.setItem("rewind.systemAccent", c);
+          } catch {
+            /* only a start-up nicety */
+          }
+        })
+        .catch(() => {});
+    load();
+    window.addEventListener("focus", load);
+    return () => window.removeEventListener("focus", load);
+  }, [settings?.accent]);
 }
 
 export function applyAppearance(look: { theme: string; accent: string; motion: string }) {
@@ -141,6 +167,8 @@ export function applyCachedAppearance() {
   try {
     const v = localStorage.getItem("rewind.appearance");
     if (v) applyAppearance(JSON.parse(v));
+    const sys = localStorage.getItem("rewind.systemAccent");
+    if (sys) document.documentElement.style.setProperty("--system-accent", sys);
   } catch {
     /* first launch or storage unavailable: defaults */
   }

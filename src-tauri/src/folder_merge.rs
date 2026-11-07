@@ -36,6 +36,11 @@ pub struct Similar {
     pub suggested: String,
 }
 
+/// The game a folder is for: "SpeciesUnknown-Win64-Shipping" counts as "Species Unknown".
+pub fn folder_key(name: &str) -> String {
+    game_key(&crate::games::tidy_program_name(name).unwrap_or_else(|| name.to_string()))
+}
+
 fn hidden(name: &str) -> bool {
     name.starts_with('.')
 }
@@ -66,7 +71,7 @@ pub fn folder_counts(root: &Path) -> Vec<(String, usize)> {
 pub fn find_similar(here: &[(String, usize)], nas: &[(String, usize)], dismissed: &[String]) -> Vec<Similar> {
     let mut by_key: BTreeMap<String, BTreeMap<String, Spelling>> = BTreeMap::new();
     let mut add = |name: &str, n: usize, on_nas: bool| {
-        let key = game_key(name);
+        let key = folder_key(name);
         if key.is_empty() {
             return;
         }
@@ -120,7 +125,7 @@ pub fn plan(roots: &[PathBuf], key: &str, target: &str) -> Result<Plan, String> 
             .flatten()
             .filter(|e| e.path().is_dir())
             .map(|e| e.file_name().to_string_lossy().into_owned())
-            .filter(|n| !hidden(n) && game_key(n) == key)
+            .filter(|n| !hidden(n) && folder_key(n) == key)
             .collect();
         let others: Vec<&String> = names.iter().filter(|n| n.as_str() != target).collect();
         if others.is_empty() {
@@ -186,7 +191,7 @@ pub fn remove_empty(roots: &[PathBuf], key: &str, target: &str) {
         let Ok(entries) = fs::read_dir(root) else { continue };
         for e in entries.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
-            if name != target && !hidden(&name) && game_key(&name) == key && e.path().is_dir() {
+            if name != target && !hidden(&name) && folder_key(&name) == key && e.path().is_dir() {
                 let _ = fs::remove_dir(e.path()); // only succeeds when empty
             }
         }
@@ -224,6 +229,33 @@ mod tests {
         assert_eq!(found[0].suggested, "Species Unknown");
         assert_eq!(found[0].names[0].name, "Species Unknown");
         assert_eq!(found[0].names[1].name, "SpeciesUnknown-Win64-Shipping");
+    }
+
+    #[test]
+    fn program_named_folder_merges_into_its_tidy_name() {
+        let pc = tmp("tidy-pc");
+        let nas = tmp("tidy-nas");
+        put(&pc.join("SpeciesUnknown-Win64-Shipping").join("a.mp4"), 10);
+        put(&nas.join("SpeciesUnknown-Win64-Shipping").join("b.mp4"), 10);
+        put(&nas.join("Species Unknown").join("c.mp4"), 10);
+        let found = find_similar(&folder_counts(&pc), &folder_counts(&nas), &[]);
+        assert_eq!(found.len(), 1, "{found:?}");
+        let s = &found[0];
+        assert_eq!(s.suggested, "Species Unknown");
+        // The name the dialog offers is accepted for this game.
+        assert_eq!(folder_key(&s.suggested), s.key);
+        let plan = plan(&[pc.clone(), nas.clone()], &s.key, &s.suggested).unwrap();
+        let log = pc.join("merge.jsonl");
+        let out = consolidate::run(&plan, &log, |_, _| {});
+        assert!(out.failed.is_empty(), "{:?}", out.failed);
+        remove_empty(&[pc.clone(), nas.clone()], &s.key, &s.suggested);
+        assert!(pc.join("Species Unknown").join("a.mp4").exists());
+        assert!(nas.join("Species Unknown").join("b.mp4").exists());
+        assert!(nas.join("Species Unknown").join("c.mp4").exists());
+        assert!(!pc.join("SpeciesUnknown-Win64-Shipping").exists());
+        assert!(!nas.join("SpeciesUnknown-Win64-Shipping").exists());
+        let _ = fs::remove_dir_all(&pc);
+        let _ = fs::remove_dir_all(&nas);
     }
 
     #[test]

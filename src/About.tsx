@@ -110,7 +110,7 @@ export function About({ version, hidden }: { version: string | null; hidden: boo
           </p>
         )}
         <p className="muted" style={{ margin: 0, fontSize: 12 }}>
-          Built on FFmpeg, Tauri and NVIDIA NVENC. Third-party licences are in THIRD_PARTY_NOTICES.md.
+          Built on FFmpeg, Tauri and NVIDIA NVENC. Game logos from Steam. Third-party licences are in THIRD_PARTY_NOTICES.md.
         </p>
       </div>
     </section>

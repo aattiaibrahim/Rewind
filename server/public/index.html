@@ -3,7 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0e1014">
+  <meta name="theme-color" content="#0f1217" id="theme-color">
+  <script>
+    // The saved colour scheme, before anything is drawn (no flash of the default).
+    try {
+      var a = localStorage.getItem("hs.accent");
+      if (a && a !== "winblue") document.documentElement.setAttribute("data-accent", a);
+    } catch (e) {}
+  </script>
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Hindsight</title>
@@ -27,6 +34,14 @@
         <button class="tab" data-view="cleanup">Cleanup</button>
         <button class="tab" data-view="trash">Trash <small id="trash-count"></small></button>
       </nav>
+      <div class="scheme">
+        <button class="btn scheme-btn" id="scheme-btn" title="Colour scheme" aria-label="Colour scheme" aria-haspopup="true" aria-expanded="false"><i></i></button>
+        <div class="scheme-pop" id="scheme-pop" hidden>
+          <span class="flabel">Colour</span>
+          <div class="swatches" id="swatches"></div>
+          <div class="scheme-name" id="scheme-name"></div>
+        </div>
+      </div>
       <button class="btn storage-btn" id="storage-btn" title="Space used on the NAS">
         <span class="meter" aria-hidden="true"><i id="storage-fill"></i></span>
         <span id="storage-text">Storage</span>

@@ -11,7 +11,7 @@ import { Cleanup } from "./Cleanup";
 import { ConfirmDelete } from "./ConfirmDelete";
 import { ConfirmUpdate, updateInterrupts } from "./ConfirmUpdate";
 import { MergeDialog, spellings, useSimilarFolders } from "./FolderMerge";
-import { Notice, Notifications } from "./Notifications";
+import { Notice, NotificationsPage, useNoticeState } from "./Notifications";
 import { GameSortDialog, useGameSuggestions } from "./GameSort";
 import { useNasState } from "./NasProgress";
 import type { MoveOutcome } from "./api";
@@ -24,10 +24,14 @@ import { Studio } from "./Studio";
 import { SlidingPill } from "./SlidingPill";
 import { MontageView } from "./Montage";
 
-type View = "clips" | "local" | "synced" | "damaged" | "cleanup" | "montage" | "studio" | "performance" | "settings";
+type View = "clips" | "local" | "synced" | "totrim" | "damaged" | "cleanup" | "montage" | "notifications" | "studio" | "performance" | "settings";
 /** The clip lists (Studio goes back to whichever you came from). */
-type ListView = "clips" | "local" | "synced" | "damaged";
-const isList = (v: View): v is ListView => v === "clips" || v === "local" || v === "synced" || v === "damaged";
+type ListView = "clips" | "local" | "synced" | "totrim" | "damaged";
+const isList = (v: View): v is ListView => v === "clips" || v === "local" || v === "synced" || v === "totrim" || v === "damaged";
+
+/** Files an edit made (trims, exports, repairs…), not clips waiting for one. */
+const MADE_BY_EDIT = /\((trim|remux|H\.264|repaired|audio|\d+ MB)( \(\d+\))?\)|\((trimmed|good part)\)/i;
+const EDIT_FOLDERS = new Set(["edits", "exports", "montages"]);
 type ToastAction = { label: string; run: () => void };
 type Toast = { id: number; text: string; sub?: string; err?: boolean; action?: ToastAction };
 type PendingDelete = { paths: string[]; resolve: (deleted: boolean) => void };
@@ -210,6 +214,7 @@ export default function App() {
   if (showBanner && upd?.version)
     notices.push({
       id: `update:${upd.version}`,
+      kind: "update",
       title: `Hindsight ${upd.version} is ${upd.stage === "ready" ? "ready" : "available"}`,
       detail: status?.recording ? "Restarting stops and saves your recording." : "It also installs by itself the next time Hindsight closes.",
       tone: "good",
@@ -218,6 +223,7 @@ export default function App() {
   if (similar.length)
     notices.push({
       id: `similar:${similar.map((s) => s.key).join(",")}`,
+      kind: "folders",
       title: similar.length === 1 ? "One game is saved under different folder names" : `${similar.length} games are saved under different folder names`,
       detail: spellings(similar[0]) + (similar.length > 1 ? ", and more" : ""),
       actions: [{ label: "Review", run: () => setMergeOpen(true), primary: true }],
@@ -225,6 +231,7 @@ export default function App() {
   if (damagedClips?.length)
     notices.push({
       id: `damaged:${damagedClips.length}`,
+      kind: "damaged",
       title: `${damagedClips.length} damaged clip${damagedClips.length === 1 ? "" : "s"}`,
       detail: "They won't play properly all the way through. You can try to repair them or keep their good part.",
       tone: "warn",
@@ -233,6 +240,7 @@ export default function App() {
   if (dupes)
     notices.push({
       id: `dupes:${dupes}`,
+      kind: "dupes",
       title: `${dupes} clip${dupes === 1 ? " is" : "s are"} saved twice on this PC`,
       detail: "Checked byte for byte. Copies on the NAS never count.",
       actions: [{ label: "Open Cleanup", run: () => setView("cleanup"), primary: true }],
@@ -240,6 +248,7 @@ export default function App() {
   if (sortList.length)
     notices.push({
       id: `sort:${sortList.length}`,
+      kind: "sort",
       title: `Found the game for ${sortList.length} unsorted clip${sortList.length === 1 ? "" : "s"}`,
       detail: [...new Set(sortList.map((s) => s.game))].slice(0, 3).join(", ") + " and more, from what's on screen. Check them before they move.",
       actions: [{ label: "Review", run: () => setSortOpen(true), primary: true }],
@@ -247,11 +256,44 @@ export default function App() {
   if (nasNow?.enabled && !nasNow.reachable)
     notices.push({
       id: `nas:${nasNow.lastError ?? ""}`,
+      kind: "nas",
       title: "Can't reach the NAS",
       detail: "Clips keep saving on this PC and copy over once it's back.",
       tone: "warn",
       actions: [{ label: "NAS settings", run: () => setView("settings") }],
     });
+  const noticeState = useNoticeState(notices);
+
+  // To trim: saved clips nobody has trimmed or edited yet (and not marked "Keep whole").
+  const [edited, setEdited] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    api.editedClips().then((l) => setEdited(new Set(l.map((p) => p.toLowerCase())))).catch(() => {});
+  }, [clips]);
+  const keepWhole = settings?.keepWhole;
+  const trimClips = useMemo(() => {
+    if (!clips) return null;
+    const keep = new Set((keepWhole ?? []).map((p) => p.toLowerCase()));
+    return clips.filter(
+      (c) =>
+        c.location !== "nas" &&
+        !EDIT_FOLDERS.has(c.folder.toLowerCase()) &&
+        !MADE_BY_EDIT.test(c.name) &&
+        !edited.has(c.path.toLowerCase()) &&
+        !keep.has(c.path.toLowerCase()),
+    );
+  }, [clips, edited, keepWhole]);
+  const keepClipsWhole = useCallback(
+    (paths: string[]) => {
+      if (!settings) return;
+      update({ keepWhole: [...new Set([...(settings.keepWhole ?? []), ...paths])] });
+      toast(paths.length === 1 ? "Kept whole" : `Kept ${paths.length} clips whole`, false, "Taken off To trim.", {
+        label: "Undo",
+        run: () => update({ keepWhole: (settings.keepWhole ?? []).filter((p) => !paths.includes(p)) }),
+      });
+    },
+    [settings, update, toast],
+  );
+
   // With a NAS: the clips on this PC, and the ones on the NAS (synced from here, or from other PCs).
   const syncing = !!settings?.nasDir;
   const localClips = useMemo(() => (clips ? clips.filter((c) => c.location !== "nas") : null), [clips]);
@@ -271,9 +313,11 @@ export default function App() {
           ["synced", "Synced clips", true],
         ] as [View, string, boolean][])
       : []),
+    ["totrim", "To trim"],
     ["damaged", "Damaged"],
     ["cleanup", "Cleanup"],
     ["montage", "Montage"],
+    ["notifications", "Notifications"],
     ...(settings?.benchmarkMode ? ([["performance", "Performance"]] as [View, string][]) : []),
     ["settings", "Settings"],
   ];
@@ -339,6 +383,16 @@ export default function App() {
             onClick={() => (id === view && isList(id) ? window.dispatchEvent(new Event("rewind-top")) : setView(id))}
           >
             {label}
+            {id === "totrim" && !!trimClips?.length && (
+              <span className="nav-badge quiet" title={`${trimClips.length} clip${trimClips.length === 1 ? "" : "s"} not trimmed yet`}>
+                {trimClips.length}
+              </span>
+            )}
+            {id === "notifications" && noticeState.shown.length > 0 && (
+              <span className="nav-badge notif-count" title={`${noticeState.shown.length} notification${noticeState.shown.length === 1 ? "" : "s"}`}>
+                {noticeState.shown.length}
+              </span>
+            )}
             {id === "damaged" && !!damagedClips?.length && (
               <span className="nav-badge" title={`${damagedClips.length} damaged clip${damagedClips.length === 1 ? "" : "s"}`}>
                 {damagedClips.length}
@@ -346,14 +400,26 @@ export default function App() {
             )}
           </button>
         ))}
-        <Notifications notices={notices} />
         <div className="nav-spacer" />
         <BufferCard status={status} hotkey={settings?.hotkey ?? "Alt+F10"} recordHotkey={settings?.recordHotkey ?? "Alt+F9"} />
       </nav>
       <main className="main">
-        {view === "clips" && (
+        {(isList(view) || view === "studio") && (
           <Library
-            clips={clips}
+            key={listView}
+            active={view !== "studio"}
+            clips={
+              listView === "local"
+                ? localClips
+                : listView === "synced"
+                  ? syncedClips
+                  : listView === "damaged"
+                    ? damagedClips
+                    : listView === "totrim"
+                      ? trimClips
+                      : clips
+            }
+            mode={listView}
             onOpen={openInStudio}
             onToast={(t, e) => toast(t, e)}
             onChanged={refresh}
@@ -364,23 +430,7 @@ export default function App() {
             focusPath={studioPath}
             onShare={requestShare}
             health={health}
-          />
-        )}
-        {(view === "local" || view === "synced") && (
-          <Library
-            key={view}
-            clips={view === "local" ? localClips : syncedClips}
-            mode={view}
-            onOpen={openInStudio}
-            onToast={(t, e) => toast(t, e)}
-            onChanged={refresh}
-            onDelete={requestDelete}
-            hotkey={settings?.hotkey ?? "Alt+F10"}
-            uploads={uploads.progress}
-            links={uploads.history}
-            focusPath={studioPath}
-            onShare={requestShare}
-            health={health}
+            onKeepWhole={listView === "totrim" ? keepClipsWhole : undefined}
           />
         )}
         {view === "cleanup" && settings && (
@@ -395,22 +445,7 @@ export default function App() {
           />
         )}
         {view === "montage" && <MontageView clips={clips} onOpen={openInStudio} />}
-        {view === "damaged" && (
-          <Library
-            clips={damagedClips}
-            mode="damaged"
-            onOpen={openInStudio}
-            onToast={(t, e) => toast(t, e)}
-            onChanged={refresh}
-            onDelete={requestDelete}
-            hotkey={settings?.hotkey ?? "Alt+F10"}
-            uploads={uploads.progress}
-            links={uploads.history}
-            focusPath={studioPath}
-            onShare={requestShare}
-            health={health}
-          />
-        )}
+        {view === "notifications" && <NotificationsPage state={noticeState} />}
         {view === "studio" && (
           <Studio
             path={studioPath}

@@ -45,9 +45,9 @@ pub struct Settings {
     /// Microphone volume while recording, in dB (-20..+20, 0 = as Windows gives it).
     #[serde(default)]
     pub mic_gain_db: f64,
-    /// Look of the app: "midnight" | "graphite" | "oled" (an old "light" becomes "midnight")
+    /// Look of the app: "tinted" | "midnight" | "graphite" | "oled" (an old "light" becomes "midnight")
     pub theme: String,
-    /// Highlight colour: "lime" | "cyan" | "violet" | "amber" | "rose" | "green"
+    /// Highlight colour: "winblue" (default), "system" (follows Windows), "cyan", "rose", "lime", "amber", "violet", "emerald", "gold", "pink", "teal", "mono", "green"
     pub accent: String,
     /// Turn off fades and motion in the interface
     pub reduce_motion: bool,
@@ -88,6 +88,10 @@ pub struct Settings {
     pub game_detect: bool,
     /// Clips whose game suggestion was turned down
     pub detect_dismissed: Vec<String>,
+    /// Clips taken off "To trim" ("Keep whole")
+    pub keep_whole: Vec<String>,
+    /// Game logos from Steam (only the game's name is sent), else the game's program icon
+    pub online_game_logos: bool,
 }
 
 impl Default for Settings {
@@ -119,8 +123,8 @@ impl Default for Settings {
             mic_mono: true,
             mic_device: String::new(),
             mic_gain_db: 0.0,
-            theme: "midnight".into(),
-            accent: "lime".into(),
+            theme: "tinted".into(),
+            accent: "winblue".into(),
             reduce_motion: false,
             save_sound: true,
             nas_dir: String::new(),
@@ -141,6 +145,8 @@ impl Default for Settings {
             prepare_thumbnails: true,
             game_detect: false,
             detect_dismissed: Vec::new(),
+            keep_whole: Vec::new(),
+            online_game_logos: true,
         }
     }
 }
@@ -188,10 +194,13 @@ impl Settings {
         self.folder_names.retain(|k, v| !k.is_empty() && !v.trim().is_empty());
         self.similar_dismissed.sort();
         self.similar_dismissed.dedup();
-        if !["midnight", "graphite", "oled"].contains(&self.theme.as_str()) {
+        if self.theme == "light" {
+            self.theme = "midnight".into();
+        }
+        if !["tinted", "midnight", "graphite", "oled"].contains(&self.theme.as_str()) {
             self.theme = d.theme.clone();
         }
-        if !["lime", "cyan", "violet", "amber", "rose", "green"].contains(&self.accent.as_str()) {
+        if !["winblue", "system", "cyan", "rose", "lime", "amber", "violet", "emerald", "gold", "pink", "teal", "mono", "green"].contains(&self.accent.as_str()) {
             self.accent = d.accent.clone();
         }
         self

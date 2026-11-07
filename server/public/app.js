@@ -829,6 +829,67 @@ async function openStorage() {
 }
 
 $("storage-btn").addEventListener("click", openStorage);
+
+// ---- colour scheme (the desktop app's set; saved per browser) ----
+
+const SCHEMES = [
+  ["winblue", "Windows blue", "#4cc2ff", "#0f1217"],
+  ["cyan", "Cyan", "#38d6ff", "#0f1115"],
+  ["crimson", "Crimson", "#ff4d6d", "#0e0d12"],
+  ["volt", "Volt", "#b6f23a", "#0d1110"],
+  ["ember", "Ember", "#ff9a1f", "#100e0b"],
+  ["violet", "Violet", "#a78bfa", "#0f0e14"],
+  ["emerald", "Emerald", "#2ee59d", "#0c110f"],
+  ["gold", "Gold", "#ffd23f", "#100f0b"],
+  ["pink", "Pink", "#ff5fc8", "#110d11"],
+  ["teal", "Teal", "#20c9c0", "#0c1112"],
+  ["mono", "Mono", "#f2f4f7", "#0c0d0f"],
+];
+const currentScheme = () => document.documentElement.getAttribute("data-accent") || "winblue";
+
+function applyScheme(id) {
+  const s = SCHEMES.find((x) => x[0] === id) ?? SCHEMES[0];
+  if (s[0] === "winblue") document.documentElement.removeAttribute("data-accent");
+  else document.documentElement.setAttribute("data-accent", s[0]);
+  $("theme-color")?.setAttribute("content", s[3]);
+  remember("accent", s[0]);
+  renderSwatches();
+}
+
+function renderSwatches() {
+  const cur = currentScheme();
+  $("swatches").replaceChildren(
+    ...SCHEMES.map(([id, name, accent]) =>
+      el("button", {
+        class: `swatch ${id === cur ? "on" : ""}`,
+        style: `background: ${accent}`,
+        title: name,
+        "aria-label": name,
+        "aria-pressed": String(id === cur),
+        onclick: () => applyScheme(id),
+      }),
+    ),
+  );
+  $("scheme-name").textContent = (SCHEMES.find((x) => x[0] === cur) ?? SCHEMES[0])[1];
+}
+
+$("scheme-btn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  const open = $("scheme-pop").hidden;
+  $("scheme-pop").hidden = !open;
+  $("scheme-btn").setAttribute("aria-expanded", String(open));
+  if (open) renderSwatches();
+});
+document.addEventListener("click", (e) => {
+  if (!$("scheme-pop").hidden && !e.target.closest(".scheme")) {
+    $("scheme-pop").hidden = true;
+    $("scheme-btn").setAttribute("aria-expanded", "false");
+  }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("scheme-pop").hidden) $("scheme-pop").hidden = true;
+});
+$("theme-color")?.setAttribute("content", (SCHEMES.find((x) => x[0] === currentScheme()) ?? SCHEMES[0])[3]);
 $("storage-close").addEventListener("click", () => $("storage").close());
 $("storage").addEventListener("click", (e) => e.target === $("storage") && $("storage").close());
 $("storage-cleanup").addEventListener("click", () => {

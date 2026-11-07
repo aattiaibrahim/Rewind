@@ -58,6 +58,10 @@ export type Settings = {
   /** Find the game in unsorted clips from the picture (downloads a model) */
   gameDetect: boolean;
   detectDismissed: string[];
+  /** Clips taken off "To trim" */
+  keepWhole: string[];
+  /** Game logos from Steam (only the game's name is sent) */
+  onlineGameLogos: boolean;
   startMinimized: boolean;
   keepOriginalAfterRemux: boolean;
   replaceOriginalOnEdit: boolean;
@@ -75,8 +79,8 @@ export type Settings = {
   reduceMotion: boolean;
 };
 
-export type Theme = "midnight" | "graphite" | "oled";
-export type Accent = "lime" | "cyan" | "violet" | "amber" | "rose" | "green";
+export type Theme = "tinted" | "midnight" | "graphite" | "oled";
+export type Accent = "winblue" | "system" | "cyan" | "rose" | "lime" | "amber" | "violet" | "emerald" | "gold" | "pink" | "teal" | "mono" | "green";
 
 export type Status = {
   enabled: boolean;
@@ -304,6 +308,7 @@ async function limited<T>(job: () => Promise<T>): Promise<T> {
 }
 
 const thumbCache = new Map<string, Promise<string>>();
+const thumbReady = new Map<string, string>();
 const iconCache = new Map<string, Promise<string | null>>();
 const probeCache = new Map<string, Promise<Probe>>();
 
@@ -316,10 +321,10 @@ export const api = {
   saveClip: (seconds?: number) => invoke<string>("save_clip", { seconds: seconds ?? null }),
   toggleRecording: () => invoke<string | null>("toggle_recording"),
   listClips: () => invoke<ClipFile[]>("list_clips"),
-  probe: (path: string, key = "") => {
+  probe: (path: string, key = "", now = false) => {
     const k = path + key;
     if (!probeCache.has(k)) {
-      const p = limited(() => invoke<Probe>("probe_file", { path }));
+      const p = now ? invoke<Probe>("probe_file", { path }) : limited(() => invoke<Probe>("probe_file", { path }));
       p.catch(() => probeCache.delete(k));
       probeCache.set(k, p);
     }
@@ -329,11 +334,13 @@ export const api = {
     const k = path + key;
     if (!thumbCache.has(k)) {
       const p = limited(() => invoke<string>("thumbnail", { path })).then(convertFileSrc);
-      p.catch(() => thumbCache.delete(k));
+      p.then((src) => thumbReady.set(k, src)).catch(() => thumbCache.delete(k));
       thumbCache.set(k, p);
     }
     return thumbCache.get(k)!;
   },
+  /** A thumbnail that's already loaded this session (no waiting, no flash). */
+  thumbNow: (path: string, key = "") => thumbReady.get(path + key) ?? null,
   startBench: (compare: BenchApp[], seconds: number, rounds: number) =>
     invoke<void>("start_bench", { options: { compare, seconds, rounds } }),
   cancelBench: () => invoke<void>("cancel_bench"),
@@ -366,6 +373,8 @@ export const api = {
   cancelMontage: () => invoke<void>("cancel_montage"),
   /** Clips changed in the app (trimmed, healed, exported) */
   editedClips: () => invoke<string[]>("edited_clips"),
+  /** Windows' accent colour ("#rrggbb"), for "Follow Windows" */
+  systemAccent: () => invoke<string | null>("system_accent"),
   gameIcon: (name: string) => {
     if (!iconCache.has(name)) iconCache.set(name, invoke<string | null>("game_icon", { name }).then((p) => (p ? convertFileSrc(p) : null)).catch(() => null));
     return iconCache.get(name)!;

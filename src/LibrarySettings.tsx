@@ -241,6 +241,18 @@ export function LibrarySettings({
         <Toggle label="Prepare thumbnails ahead of time" checked={s.prepareThumbnails} onChange={(v) => set({ prepareThumbnails: v })} />
       </label>
 
+      <label className="setting">
+        <span>
+          Online game logos
+          <small>
+            Shows each game's official icon from Steam. Only the game's folder name is sent to Steam's store search, once per
+            game, never while you're playing. Games that aren't on Steam (and everything, with this off) use the icon of the
+            game's own program on this PC.
+          </small>
+        </span>
+        <Toggle label="Online game logos" checked={s.onlineGameLogos} onChange={(v) => set({ onlineGameLogos: v })} />
+      </label>
+
       <HealthSetting on={s.healthCheck} set={(v) => set({ healthCheck: v })} Toggle={Toggle} />
       <div className="setting">
         <span>
@@ -422,25 +434,39 @@ function DetectSetting({
   Toggle: (p: { label: string; checked: boolean; onChange: (v: boolean) => void }) => React.ReactElement;
 }) {
   const st = useDetectStatus();
-  const [dl, setDl] = useState<number | null>(null);
+  const [dl, setDl] = useState<DetectStep | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
-    const un = listen<number>("detect-progress", (e) => setDl(e.payload));
+    const un = listen<DetectStep>("detect-progress", (e) => setDl(e.payload));
     return () => {
       un.then((f) => f());
     };
   }, []);
   const install = async () => {
     setErr(null);
-    setDl(0);
+    setDl({ stage: "downloading", done: 0, total: 0 });
     try {
       await api.detectInstall();
+      setDl({ stage: "ready", done: 1, total: 1 });
+      setTimeout(() => setDl((d) => (d?.stage === "ready" ? null : d)), 4000);
     } catch (e) {
       setErr(errText(e));
-    } finally {
       setDl(null);
     }
   };
+  const busy = !!dl && dl.stage !== "ready";
+  const mb = (b: number) => (b / 1_048_576).toFixed(0);
+  const stepText = !dl
+    ? null
+    : dl.stage === "downloading"
+      ? dl.total
+        ? `Downloading… ${mb(dl.done)} of ${mb(dl.total)} MB (${Math.round((dl.done / dl.total) * 100)}%)`
+        : "Starting the download…"
+      : dl.stage === "checking"
+        ? "Checking the files…"
+        : dl.stage === "installing"
+          ? "Installing: starting the model once to check it works…"
+          : "Installed. Looking through your unsorted clips now.";
   const status = !s.gameDetect
     ? "Off."
     : !st?.installed
@@ -457,13 +483,22 @@ function DetectSetting({
           few frames and compares them with your sorted clips, then suggests a game for you to check. It runs on this PC only,
           while you're not gaming. Needs a one-time download of an image model (about 106 MB).
         </small>
-        <small>{dl != null ? `Downloading… ${Math.round(dl * 100)}%` : status}</small>
+        {dl ? (
+          <span className="dl-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={dl.total ? Math.round((dl.done / dl.total) * 100) : 0} aria-label="Download">
+            <span className={`dl-bar ${dl.stage !== "downloading" ? "full" : ""} ${dl.stage === "checking" || dl.stage === "installing" ? "working" : ""}`}>
+              <span style={{ width: `${dl.stage === "downloading" ? (dl.total ? (dl.done / dl.total) * 100 : 0) : 100}%` }} />
+            </span>
+            <small>{stepText}</small>
+          </span>
+        ) : (
+          <small>{status}</small>
+        )}
         {err && <small className="err-text">{err}</small>}
       </span>
       <span className="row" style={{ flexWrap: "nowrap", flexShrink: 0 }}>
         {s.gameDetect && st && !st.installed && (
-          <button className="btn small primary" disabled={dl != null} onClick={install}>
-            {dl != null ? "Downloading…" : "Download (106 MB)"}
+          <button className="btn small primary" disabled={busy} onClick={install}>
+            {busy ? (dl?.stage === "downloading" ? "Downloading…" : "Installing…") : "Download (106 MB)"}
           </button>
         )}
         <Toggle label="Find the game in unsorted clips" checked={s.gameDetect} onChange={(v) => set({ gameDetect: v })} />
@@ -471,3 +506,5 @@ function DetectSetting({
     </div>
   );
 }
+
+type DetectStep = { stage: "downloading" | "checking" | "installing" | "ready"; done: number; total: number };

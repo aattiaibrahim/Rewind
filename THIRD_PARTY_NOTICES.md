@@ -26,6 +26,12 @@ Rewind's installer includes Intel's PresentMon 2.6.0 (`presentmon/PresentMon.exe
 
 Rewind is built with Tauri, React, cpal, the `windows` crate and other open-source libraries under MIT, Apache-2.0 and similar licenses. See `src-tauri/Cargo.lock` and `pnpm-lock.yaml` for the full list.
 
+## Game logos from Steam
+
+With "Online game logos" on, game icons are fetched from Steam's public store and community APIs. They are the
+property of their respective owners and Valve Corporation, shown only to label your own clips. Hindsight is not
+affiliated with Valve or Steam.
+
 ## ONNX Runtime (optional download)
 
 Used by "Find the game in unsorted clips". `onnxruntime.dll` 1.31.1, Copyright (c) Microsoft Corporation,

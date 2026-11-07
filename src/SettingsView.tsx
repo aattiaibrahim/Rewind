@@ -29,18 +29,26 @@ function hotkeyFrom(e: React.KeyboardEvent): string | null {
 
 // Preview colours for each theme card (bg, panel, line).
 const THEMES: { id: Theme; label: string; c: [string, string, string] }[] = [
+  { id: "tinted", label: "Tinted", c: ["#0e1116", "#1c222b", "#2a323e"] },
   { id: "midnight", label: "Midnight", c: ["#0e1014", "#1d222b", "#2b323d"] },
   { id: "graphite", label: "Graphite", c: ["#121212", "#252525", "#343434"] },
   { id: "oled", label: "OLED black", c: ["#000000", "#171717", "#262626"] },
 ];
 
 const ACCENTS: { id: Accent; label: string; c: string }[] = [
-  { id: "lime", label: "Lime", c: "#c6f432" },
-  { id: "cyan", label: "Cyan", c: "#38d6ff" },
+  { id: "winblue", label: "Windows blue", c: "#4cc2ff" },
+  { id: "system", label: "Follow Windows", c: "#4cc2ff" },
+  { id: "cyan", label: "Ice", c: "#38d6ff" },
+  { id: "rose", label: "Crimson", c: "#ff4d6d" },
+  { id: "lime", label: "Volt", c: "#c6f432" },
+  { id: "amber", label: "Ember", c: "#ff9a1f" },
   { id: "violet", label: "Violet", c: "#a78bfa" },
-  { id: "amber", label: "Amber", c: "#ffb020" },
-  { id: "rose", label: "Rose", c: "#ff5c8a" },
-  { id: "green", label: "Green", c: "#76b900" },
+  { id: "emerald", label: "Emerald", c: "#2ee59d" },
+  { id: "gold", label: "Gold", c: "#ffd23f" },
+  { id: "pink", label: "Hot pink", c: "#ff5fc8" },
+  { id: "teal", label: "Teal", c: "#20c9c0" },
+  { id: "mono", label: "Mono", c: "#f2f4f7" },
+  { id: "green", label: "NVIDIA green", c: "#76b900" },
 ];
 
 const QUALITY_PRESETS: [string, number][] = [
@@ -241,7 +249,10 @@ export function SettingsView({
           <div className="setting">
             <span>
               Accent colour
-              <small>{ACCENTS.find((a) => a.id === s.accent)?.label ?? "Lime"}</small>
+              <small>
+                {ACCENTS.find((a) => a.id === s.accent)?.label ?? "Windows blue"}
+                {s.accent === "system" ? ": changes when you change your accent colour in Windows" : ""}
+              </small>
             </span>
             <div className="swatches" role="radiogroup" aria-label="Accent colour">
               {ACCENTS.map((a) => (
@@ -251,8 +262,8 @@ export function SettingsView({
                   aria-checked={s.accent === a.id}
                   aria-label={a.label}
                   title={a.label}
-                  className={`swatch ${s.accent === a.id ? "on" : ""}`}
-                  style={{ "--c": a.c } as React.CSSProperties}
+                  className={`swatch ${s.accent === a.id ? "on" : ""} ${a.id === "system" ? "system" : ""}`}
+                  style={{ "--c": a.id === "system" ? "var(--system-accent, #4cc2ff)" : a.c } as React.CSSProperties}
                   onClick={() => set({ accent: a.id })}
                 />
               ))}

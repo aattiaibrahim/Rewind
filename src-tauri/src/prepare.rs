@@ -93,17 +93,24 @@ fn known(path: &str) -> bool {
         .is_some_and(|e| Some((e.size, e.modified)) == st)
 }
 
-/// Background preparer: details + thumbnail for every clip not ready yet.
+/// How many of the newest clips get their audio (waveforms, extra tracks) ready
+/// too, so they open in Studio without reading the file three times at once.
+const AUDIO_AHEAD: usize = 30;
+
+/// Background preparer: details + thumbnail for every clip not ready yet, then
+/// the audio for the newest few.
 pub fn start(
     thumbs: PathBuf,
     clips: impl Fn() -> Vec<String> + Send + 'static,
     enabled: impl Fn() -> bool + Send + 'static,
     busy: impl Fn() -> bool + Send + 'static,
+    audio: impl Fn(&str) + Send + 'static,
 ) {
     std::thread::Builder::new()
         .name("rewind-prepare".into())
         .spawn(move || {
             std::thread::sleep(Duration::from_secs(20)); // let startup settle first
+            let mut audio_done: std::collections::HashSet<(String, Option<(u64, i64)>)> = Default::default();
             loop {
                 if !enabled() || busy() {
                     flush();
@@ -117,6 +124,27 @@ pub fn start(
                     .collect();
                 if todo.is_empty() {
                     flush();
+                    // The newest clips' audio, the ones you're likely to open next.
+                    let mut recent: Vec<(String, Option<(u64, i64)>)> = clips()
+                        .into_iter()
+                        .filter(|p| !p.starts_with(r"\\"))
+                        .map(|p| {
+                            let st = stamp(Path::new(&p));
+                            (p, st)
+                        })
+                        .collect();
+                    recent.sort_by_key(|(_, st)| std::cmp::Reverse(st.map(|s| s.1)));
+                    for item in recent.into_iter().take(AUDIO_AHEAD) {
+                        if !enabled() || busy() {
+                            break;
+                        }
+                        if audio_done.contains(&item) {
+                            continue;
+                        }
+                        audio(&item.0);
+                        audio_done.insert(item);
+                        std::thread::sleep(Duration::from_millis(150));
+                    }
                     // Everything's ready: look for duplicates too, so Cleanup opens instantly.
                     let sized: Vec<(String, u64)> = clips().into_iter().filter_map(|p| fs::metadata(&p).ok().map(|m| (p, m.len()))).collect();
                     let _ = crate::duplicates::find(&sized);

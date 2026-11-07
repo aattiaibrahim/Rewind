@@ -552,7 +552,7 @@ async fn similar_game_folders(app: AppHandle) -> Result<Vec<folder_merge::Simila
 async fn merge_game_folders(app: AppHandle, key: String, target: String) -> Result<consolidate::Outcome, String> {
     let s = settings_of(&app);
     let target = consolidate::safe_name(&target);
-    if consolidate::game_key(&target) != key {
+    if folder_merge::folder_key(&target) != key {
         return Err("That name is for a different game.".into());
     }
     let mut roots = vec![PathBuf::from(&s.clips_dir)];
@@ -920,7 +920,7 @@ async fn trim_clip(
 async fn clip_waveforms(app: AppHandle, path: String) -> Result<Vec<audio_edit::Waveform>, String> {
     let cache = app.state::<AppState>().thumbs_dir.with_file_name("preview");
     blocking(move || {
-        let n = library::probe(&path)?.audio_tracks.min(8);
+        let n = prepare::probe(&path)?.audio_tracks.min(8);
         audio_edit::waveforms(&path, n, &cache)
     })
     .await
@@ -943,6 +943,42 @@ fn remember_edited(app: &AppHandle, path: &str) {
             let _ = std::fs::write(&file, serde_json::to_string(&list).unwrap_or_default());
         }
     }
+}
+
+/// Windows' accent colour as "#rrggbb", made light enough to read on a dark
+/// background (the way Windows' own dark mode shows it).
+#[tauri::command]
+fn system_accent() -> Option<String> {
+    use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
+    use windows::core::HSTRING;
+    let (mut v, mut len) = (0u32, 4u32);
+    unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            &HSTRING::from(r"Software\Microsoft\Windows\DWM"),
+            &HSTRING::from("AccentColor"),
+            RRF_RT_REG_DWORD,
+            None,
+            Some((&mut v as *mut u32).cast()),
+            Some(&mut len),
+        )
+        .ok()
+        .ok()?;
+    }
+    // Stored as 0xAABBGGRR.
+    let (r, g, b) = ((v & 0xff) as f32, ((v >> 8) & 0xff) as f32, ((v >> 16) & 0xff) as f32);
+    Some(lighten_for_dark(r, g, b))
+}
+
+/// Mix with white until it's bright enough on a dark background.
+fn lighten_for_dark(r: f32, g: f32, b: f32) -> String {
+    let lum = |r: f32, g: f32, b: f32| 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    let mut t = 0.0;
+    let mix = |c: f32, t: f32| c + (255.0 - c) * t;
+    while lum(mix(r, t), mix(g, t), mix(b, t)) < 150.0 && t < 0.9 {
+        t += 0.05;
+    }
+    format!("#{:02x}{:02x}{:02x}", mix(r, t).round() as u8, mix(g, t).round() as u8, mix(b, t).round() as u8)
 }
 
 #[tauri::command]
@@ -1036,20 +1072,24 @@ fn detect_status() -> game_detect::Status {
     game_detect::status()
 }
 
-/// Download the image model and runtime once (about 106 MB); "detect-progress" carries 0..1.
+/// Download the image model and runtime once (about 106 MB); "detect-progress"
+/// carries the stage and bytes (downloading, checking, installing, ready).
 #[tauri::command]
 async fn detect_install(app: AppHandle) -> Result<(), String> {
     let a = app.clone();
-    blocking(move || {
-        let mut last = -1.0;
-        game_detect::install(|p| {
-            if p - last >= 0.01 || p >= 1.0 {
-                last = p;
-                let _ = a.emit("detect-progress", p);
+    let out = blocking(move || {
+        let mut last: (&str, u64) = ("", 0);
+        game_detect::install(|step| {
+            // At most every ~1 MB while downloading, and every change of stage.
+            if step.stage != last.0 || step.done >= last.1 + (1 << 20) || step.done == step.total {
+                last = (step.stage, step.done);
+                let _ = a.emit("detect-progress", step);
             }
         })
     })
-    .await
+    .await;
+    let _ = app.emit("detect-changed", ());
+    out
 }
 
 #[tauri::command]
@@ -1113,8 +1153,9 @@ async fn find_duplicates(app: AppHandle) -> Result<Vec<Vec<String>>, String> {
 
 /// A game's logo (its program's icon) as a file path, or None for a letter tile.
 #[tauri::command]
-async fn game_icon(name: String) -> Result<Option<String>, String> {
-    blocking(move || Ok(game_icons::icon(&name).map(|p| p.to_string_lossy().into_owned()))).await
+async fn game_icon(app: AppHandle, name: String) -> Result<Option<String>, String> {
+    let online = settings_of(&app).online_game_logos;
+    blocking(move || Ok(game_icons::icon(&name, online).map(|p| p.to_string_lossy().into_owned()))).await
 }
 
 #[derive(serde::Serialize)]
@@ -1403,6 +1444,7 @@ pub fn run() {
             if let Ok(file) = data_file(&handle, "probes.json") {
                 prepare::init(file);
                 let thumbs = handle.state::<AppState>().thumbs_dir.clone();
+                let preview = thumbs.with_file_name("preview");
                 let (p1, p2, p3) = (handle.clone(), handle.clone(), handle.clone());
                 prepare::start(
                     thumbs,
@@ -1418,6 +1460,12 @@ pub fn run() {
                     move || {
                         let st = p3.state::<AppState>();
                         games::game_running() || st.engine.is_recording() || engine::saves_in_progress() > 0 || bench::run::is_running()
+                    },
+                    move |p: &str| {
+                        if let Ok(pr) = prepare::probe(p) {
+                            let _ = audio_edit::waveforms(p, pr.audio_tracks.min(8), &preview);
+                        }
+                        let _ = library::preview_tracks(p, &preview);
                     },
                 );
             }
@@ -1594,6 +1642,7 @@ pub fn run() {
             render_montage,
             cancel_montage,
             edited_clips,
+            system_accent,
             compress_clip,
             reveal_file,
             delete_clips,

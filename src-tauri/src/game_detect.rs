@@ -151,7 +151,7 @@ const PACK: [(&str, &str, u64); 2] = [
 const PACK_URL: &str = "https://github.com/aattiaibrahim/hindsight/releases/download/ai-pack-v1/";
 
 /// Folders that don't say which game a clip is.
-const UNSORTED: [&str; 14] = [
+pub(crate) const UNSORTED: [&str; 14] = [
     "desktop", "obs", "other", "imports", "imported", "recordings", "screenrecording", "captures", "xboxgamebar", "ascent", "clips", "videos", "temp", "untitled",
 ];
 /// Desktop clips are examples too: of "not a game".
@@ -218,8 +218,18 @@ fn sha256_file(p: &Path) -> Option<String> {
     Some(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
 }
 
-/// Download the pack (about 106 MB) once, checking each file's SHA-256.
-pub fn install(mut progress: impl FnMut(f64)) -> Result<(), String> {
+/// Where a download stands: "downloading" (bytes), "checking", "installing", "ready".
+#[derive(serde::Serialize, Clone, Copy, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Step {
+    pub stage: &'static str,
+    pub done: u64,
+    pub total: u64,
+}
+
+/// Download the pack (about 106 MB) once, checking each file's SHA-256, then
+/// load the model once to make sure it works on this PC.
+pub fn install(mut progress: impl FnMut(Step)) -> Result<(), String> {
     use std::io::{Read, Write};
     let d = dir().ok_or("not ready")?;
     std::fs::create_dir_all(&d).map_err(|e| e.to_string())?;
@@ -228,10 +238,12 @@ pub fn install(mut progress: impl FnMut(f64)) -> Result<(), String> {
     // HTTPS needs its crypto chosen first (as for uploads); doing it twice is harmless.
     let _ = rustls::crypto::ring::default_provider().install_default();
     let client = reqwest::blocking::Client::builder().timeout(Duration::from_secs(600)).build().map_err(|e| e.to_string())?;
+    progress(Step { stage: "downloading", done: 0, total });
     for (name, hash, size) in PACK {
         let out = d.join(name);
         if std::fs::metadata(&out).is_ok_and(|m| m.len() == size) && sha256_file(&out).as_deref() == Some(hash) {
             done += size;
+            progress(Step { stage: "downloading", done, total });
             continue;
         }
         let tmp = d.join(format!("{name}.part"));
@@ -248,16 +260,26 @@ pub fn install(mut progress: impl FnMut(f64)) -> Result<(), String> {
             }
             f.write_all(&buf[..n]).map_err(|e| e.to_string())?;
             done += n as u64;
-            progress(done as f64 / total as f64);
+            progress(Step { stage: "downloading", done, total });
         }
         drop(f);
+        progress(Step { stage: "checking", done, total });
         if sha256_file(&tmp).as_deref() != Some(hash) {
             let _ = std::fs::remove_file(&tmp);
             return Err(format!("{name} didn't download correctly (its checksum is wrong). Try again."));
         }
         std::fs::rename(&tmp, &out).map_err(|e| e.to_string())?;
     }
-    progress(1.0);
+    progress(Step { stage: "installing", done: total, total });
+    {
+        let mut g = STATE.lock().unwrap();
+        if let Some(state) = g.as_mut()
+            && state.model.is_none()
+        {
+            state.model = Some(Model::load(&state.dir.join(PACK[0].0), &state.dir.join(PACK[1].0)).map_err(|e| format!("The download worked, but the model wouldn't start on this PC: {e}"))?);
+        }
+    }
+    progress(Step { stage: "ready", done: total, total });
     Ok(())
 }
 

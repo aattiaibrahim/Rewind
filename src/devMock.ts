@@ -66,7 +66,7 @@ export function installDevMock() {
     bufferInRam: true, captureEngine: "native", monitorMode: "primary", fixedMonitor: "", drawCursor: true, hotkey: "Alt+F10",
     recordHotkey: "Alt+F9", bufferEnabled: true, launchOnStartup: false, autoUpdate: true, startMinimized: true,
     keepOriginalAfterRemux: true, replaceOriginalOnEdit: false, externalFiles: [], desktopAudio: true, discordTrack: true,
-    micEnabled: true, micMono: true, micDevice: "", micGainDb: 0, theme: "midnight", accent: "lime", reduceMotion: false,
+    micEnabled: true, micMono: true, micDevice: "", micGainDb: 0, theme: "tinted", accent: "winblue", keepWhole: [], reduceMotion: false,
     saveSound: true, nasDir: "\\\\nas\\clips", nasRemoveLocal: false, linkedFolders: [] as string[], benchmarkMode: false, uploadHost: "catbox", litterboxTime: "72h", autoUpload: false, postLinkToDiscord: false, streamableEmail: "", discordWebhookName: "", confirmUploads: true, healthCheck: true, prepareThumbnails: true, gameDetect: true, detectDismissed: [] as string[],
     folderNames: {} as Record<string, string>, similarDismissed: [] as string[], cleanupKept: {} as Record<string, number>,
   };
@@ -129,6 +129,7 @@ export function installDevMock() {
     run_diagnostics: () => "C:\\Users\\you\\Downloads\\Hindsight diagnostics 2026-11-06 12-00-00.txt",
     find_duplicates: () => [],
     edited_clips: () => [],
+    system_accent: () => "#4cc2ff",
     detect_status: () => ({ installed: true, downloading: null, lookedAt: 51, toLookAt: 53, error: null }),
     game_suggestions: () =>
       clips.filter((c) => c.folder === "Hunt Showdown").slice(0, 3).map((c, i) => ({ path: c.path, name: c.name, folder: "OBS", game: ["VALORANT", "Counter-Strike 2", "Rainbow Six Siege"][i], confidence: 0.92 - i * 0.07, likeness: 0.94 })),

@@ -7,3 +7,10 @@
   nsExec::Exec `powershell -NoProfile -NonInteractive -Command "Get-Process ffmpeg,ffprobe,PresentMon -ErrorAction SilentlyContinue | Where-Object { $$_.Path -like '$INSTDIR\*' } | Stop-Process -Force"`
   Pop $0
 !macroend
+
+!macro NSIS_HOOK_POSTINSTALL
+  ; Windows keeps old shortcut icons in its icon cache: refresh it so the new
+  ; logo shows in the Start menu and taskbar without signing out.
+  nsExec::Exec `"$SYSDIR\ie4uinit.exe" -show`
+  Pop $0
+!macroend

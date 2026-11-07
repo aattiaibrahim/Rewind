@@ -9,6 +9,7 @@ import { SharePanel, ShareRequest } from "./Share";
 import { DiagnosticsButton } from "./About";
 import { HealReview } from "./HealReview";
 import { HealthNotice } from "./Health";
+import { StudioNas } from "./NasProgress";
 import { Slider } from "./Slider";
 
 type Job = { label: string } | null;
@@ -399,16 +400,28 @@ export function Studio({
     setWaves(null);
     if (!path) return;
     let alive = true;
+    // On a hard drive, reading the file for the waveform and the extra audio
+    // tracks at the same time as the video made opening a clip take seconds.
+    // The picture comes first; the rest follows once it shows (or soon after).
+    let started = false;
+    const rest = () => {
+      if (started || !alive) return;
+      started = true;
+      api
+        .clipWaveforms(path)
+        .then((w) => alive && setWaves(w))
+        .catch(() => alive && setWaves([]));
+      api
+        .previewAudio(path)
+        .then((t) => alive && setTracks(t))
+        .catch(() => {});
+    };
+    const v = video.current;
+    const onReady = () => rest();
+    v?.addEventListener("loadeddata", onReady);
+    const fallback = window.setTimeout(rest, 1500);
     api
-      .clipWaveforms(path)
-      .then((w) => alive && setWaves(w))
-      .catch(() => alive && setWaves([]));
-    api
-      .previewAudio(path)
-      .then((t) => alive && setTracks(t))
-      .catch(() => {});
-    api
-      .probe(path, String(reload))
+      .probe(path, String(reload), true)
       .then((p) => {
         // Probes can queue behind thumbnails: ignore one for a clip that's no longer open.
         if (!alive) return;
@@ -419,6 +432,8 @@ export function Studio({
       .catch(() => {});
     return () => {
       alive = false;
+      v?.removeEventListener("loadeddata", onReady);
+      window.clearTimeout(fallback);
     };
   }, [path, reload]);
 
@@ -665,6 +680,7 @@ export function Studio({
         <div className="studio-title" style={{ flex: 1 }} title={path}>
           {name}
         </div>
+        <StudioNas clip={clips?.find((c) => c.path === path)} />
         <button
           className="btn primary"
           disabled={busy || (wholeFile && !audioEdited)}
