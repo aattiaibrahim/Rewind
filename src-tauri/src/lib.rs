@@ -20,6 +20,7 @@ mod health;
 mod library;
 mod monitors;
 mod nas;
+mod old_folders;
 mod native;
 mod secrets;
 mod settings;
@@ -379,6 +380,37 @@ async fn move_into_rewind(app: AppHandle, folders: Vec<String>) -> Result<consol
     let _ = app.emit("clips-changed", ());
     nas::wake();
     Ok(out)
+}
+
+/// Hindsight's clips folder and the NAS: never offered as an old folder.
+fn own_folders(s: &Settings) -> Vec<PathBuf> {
+    let mut v = vec![PathBuf::from(&s.clips_dir)];
+    if !s.nas_dir.is_empty() {
+        v.push(PathBuf::from(&s.nas_dir));
+    }
+    v
+}
+
+/// Recorder folders that "Move into Hindsight" emptied (no clips left in them).
+#[tauri::command]
+async fn old_folders(app: AppHandle) -> Result<Vec<old_folders::OldFolder>, String> {
+    let s = settings_of(&app);
+    let logs = moves_dir(&app)?;
+    blocking(move || Ok(old_folders::find(&s.linked_folders, &own_folders(&s), &logs))).await
+}
+
+/// Send an emptied recorder folder to the Recycle Bin and stop showing it.
+#[tauri::command]
+async fn remove_old_folder(app: AppHandle, path: String) -> Result<(), String> {
+    let s = settings_of(&app);
+    let logs = moves_dir(&app)?;
+    let (p, linked, keep) = (path.clone(), s.linked_folders.clone(), own_folders(&s));
+    blocking(move || old_folders::remove(&p, &linked, &keep, &logs)).await?;
+    let mut s = settings_of(&app);
+    s.linked_folders.retain(|f| !library::same_path(std::path::Path::new(f), std::path::Path::new(&path)));
+    set_settings(app.clone(), s)?;
+    let _ = app.emit("clips-changed", ());
+    Ok(())
 }
 
 #[derive(serde::Serialize)]
@@ -1151,7 +1183,15 @@ async fn find_duplicates(app: AppHandle) -> Result<Vec<Vec<String>>, String> {
     .await
 }
 
-/// A game's logo (its program's icon) as a file path, or None for a letter tile.
+/// Use a picture as a game's logo, or `None` to go back to the automatic one.
+#[tauri::command]
+async fn set_game_logo(app: AppHandle, name: String, picture: Option<String>) -> Result<(), String> {
+    blocking(move || game_icons::set_logo(&name, picture.as_deref().map(std::path::Path::new))).await?;
+    let _ = app.emit("icons-changed", ());
+    Ok(())
+}
+
+/// A game's logo (a picture you chose, Steam's, or its program's icon) as a file path, or None for a letter tile.
 #[tauri::command]
 async fn game_icon(app: AppHandle, name: String) -> Result<Option<String>, String> {
     let online = settings_of(&app).online_game_logos;
@@ -1631,6 +1671,9 @@ pub fn run() {
             export_audio,
             gpu_encoders,
             game_icon,
+            set_game_logo,
+            old_folders,
+            remove_old_folder,
             find_duplicates,
             detect_status,
             detect_install,

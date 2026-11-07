@@ -14,7 +14,9 @@ import { MergeDialog, spellings, useSimilarFolders } from "./FolderMerge";
 import { Notice, NotificationsPage, useNoticeState } from "./Notifications";
 import { GameSortDialog, useGameSuggestions } from "./GameSort";
 import { useNasState } from "./NasProgress";
-import type { MoveOutcome } from "./api";
+import type { MoveOutcome, OldFolder } from "./api";
+import { fmtSize } from "./api";
+import { OldFolderDialog } from "./OldFolder";
 import { useAppearance, useClips, useSettings, useStatus, useUpdate } from "./hooks";
 import { Library } from "./Library";
 import { Performance } from "./Performance";
@@ -209,6 +211,14 @@ export default function App() {
   const nasNow = useNasState();
   const [sortList] = useGameSuggestions(!!settings?.gameDetect);
   const [sortOpen, setSortOpen] = useState(false);
+  // Recorder folders that moving into Hindsight emptied: offer to remove them.
+  const [oldFolders, setOldFolders] = useState<OldFolder[]>([]);
+  const [oldAsk, setOldAsk] = useState<OldFolder | null>(null);
+  useEffect(() => {
+    if (!clips) return;
+    const t = setTimeout(() => api.oldFolders().then((l) => setOldFolders(Array.isArray(l) ? l : [])).catch(() => {}), 1500);
+    return () => clearTimeout(t);
+  }, [clips, settings?.linkedFolders]);
   // Everything that used to be a banner or a pop-up, in the notification center.
   const notices: Notice[] = [];
   if (showBanner && upd?.version)
@@ -252,6 +262,14 @@ export default function App() {
       title: `Found the game for ${sortList.length} unsorted clip${sortList.length === 1 ? "" : "s"}`,
       detail: [...new Set(sortList.map((s) => s.game))].slice(0, 3).join(", ") + " and more, from what's on screen. Check them before they move.",
       actions: [{ label: "Review", run: () => setSortOpen(true), primary: true }],
+    });
+  for (const f of oldFolders)
+    notices.push({
+      id: `old:${f.path}`,
+      kind: "folders",
+      title: `Your old ${f.label} folder isn't used any more`,
+      detail: `All ${f.moved} of its clips moved into Hindsight. ${f.files ? `Only ${f.files} other file${f.files === 1 ? "" : "s"} (${fmtSize(f.bytes)}) are left in it.` : "It's empty."}`,
+      actions: [{ label: "Delete folder…", run: () => setOldAsk(f), primary: true }],
     });
   if (nasNow?.enabled && !nasNow.reachable)
     notices.push({
@@ -525,6 +543,17 @@ export default function App() {
                     .catch((e) => toast(errText(e), true)),
               },
             );
+          }}
+        />
+      )}
+      {oldAsk && (
+        <OldFolderDialog
+          folder={oldAsk}
+          onClose={() => setOldAsk(null)}
+          onDone={() => {
+            setOldAsk(null);
+            setOldFolders((l) => l.filter((f) => f.path !== oldAsk.path));
+            toast(`Moved the old ${oldAsk.label} folder to the Recycle Bin`, false, "Restore it from there if you need it.");
           }}
         />
       )}

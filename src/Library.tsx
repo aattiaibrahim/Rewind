@@ -587,7 +587,13 @@ export function Library({
       )}
     <div className={`page lib-page ${selecting ? "selecting" : ""}`} ref={scroller} onScroll={onScroll}>
       <div className="toolbar">
-        <h1 style={{ flex: 1 }}>{viewMode === "folders" && folder !== "All" ? folder : TITLES[mode] ?? "Clips"}</h1>
+        <h1 style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+          {folder !== "All" && <GameIcon name={folder} size={26} />}
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {viewMode === "folders" && folder !== "All" ? folder : TITLES[mode] ?? "Clips"}
+          </span>
+          {folder !== "All" && <LogoButton game={folder} onToast={onToast} />}
+        </h1>
         <label className="search">
           <span className="muted" style={{ fontSize: 12 }}>
             Search
@@ -928,5 +934,47 @@ function RepairAll({ clips, onToast }: { clips: ClipFile[]; onToast: (t: string,
         </>
       )}
     </div>
+  );
+}
+
+/** Pick a picture as this game's logo (for games with no logo, or the wrong one). */
+function LogoButton({ game, onToast }: { game: string; onToast: (t: string, err?: boolean) => void }) {
+  const [menu, setMenu] = useState(false);
+  const pick = async () => {
+    setMenu(false);
+    const file = await open({ multiple: false, title: `Logo for ${game}`, filters: [{ name: "Pictures", extensions: ["png", "jpg", "jpeg", "webp"] }] });
+    if (!file || Array.isArray(file)) return;
+    try {
+      await api.setGameLogo(game, file);
+      onToast(`New logo for ${game}`);
+    } catch (e) {
+      onToast(errText(e), true);
+    }
+  };
+  const reset = async () => {
+    setMenu(false);
+    try {
+      await api.setGameLogo(game, null);
+      onToast(`${game} uses its automatic logo again`);
+    } catch (e) {
+      onToast(errText(e), true);
+    }
+  };
+  return (
+    <span className="logo-btn">
+      <button className="btn small" onClick={() => setMenu((m) => !m)} aria-expanded={menu} title="Change this game's logo">
+        Logo…
+      </button>
+      {menu && (
+        <span className="logo-menu" role="menu">
+          <button role="menuitem" className="more-item" onClick={pick}>
+            Choose a picture…
+          </button>
+          <button role="menuitem" className="more-item" onClick={reset}>
+            Use the automatic logo
+          </button>
+        </span>
+      )}
+    </span>
   );
 }

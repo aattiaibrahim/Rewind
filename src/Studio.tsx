@@ -275,7 +275,16 @@ export function Studio({
   // Shown in the player until the first frame is decoded (no black box while a clip loads).
   const openClip = (clips ?? []).find((c) => c.path === path);
   const poster = useThumb(path ?? "", openClip?.modified ?? 0);
-  const [theater, setTheater] = useState(() => loadJson("rewind.theater", false));
+  // Theater hides the editing panel, so it lasts for this visit only (it used to
+  // be remembered, and one stray "T" left every clip opening without its tools).
+  const [theater, setTheater] = useState(false);
+  useEffect(() => {
+    try {
+      localStorage.removeItem("rewind.theater");
+    } catch {
+      /* nothing to forget */
+    }
+  }, []);
   // Overlay controls: shown while the pointer moves over the video, hidden after a moment of stillness.
   const [hover, setHover] = useState(false);
   const [active, setActive] = useState(false);
@@ -414,7 +423,8 @@ export function Studio({
       api
         .previewAudio(path)
         .then((t) => alive && setTracks(t))
-        .catch(() => {});
+        // Only the preview of the other tracks is lost; editing them still works.
+        .catch(() => alive && setTracks({ firstTitle: "Game audio", extra: [] }));
     };
     const v = video.current;
     const onReady = () => rest();
@@ -511,12 +521,7 @@ export function Studio({
     },
     [],
   );
-  const toggleTheater = useCallback(() => {
-    setTheater((t: boolean) => {
-      saveJson("rewind.theater", !t);
-      return !t;
-    });
-  }, []);
+  const toggleTheater = useCallback(() => setTheater((t: boolean) => !t), []);
 
   // Minimized, hidden to the tray, or covered: pause right where it is.
   useEffect(() => {
@@ -666,7 +671,9 @@ export function Studio({
   const name = path.split("\\").pop() ?? path;
   const busy = !!job;
   const wholeFile = a <= 0.01 && duration - b <= 0.05;
-  const trackTitles = tracks ? [tracks.firstTitle, ...tracks.extra.map((t) => t.title)].slice(0, info?.audioTracks ?? 1) : [];
+  const trackTitles = Array.from({ length: info?.audioTracks ?? 0 }, (_, i) =>
+    i === 0 ? (tracks?.firstTitle ?? "Game audio") : (tracks?.extra[i - 1]?.title ?? (i === 1 ? "Microphone" : `Track ${i + 1}`)),
+  );
 
   return (
     <div className="studio">
@@ -681,6 +688,11 @@ export function Studio({
           {name}
         </div>
         <StudioNas clip={clips?.find((c) => c.path === path)} />
+        {theater && (
+          <button className="btn" onClick={toggleTheater} title="Leave theater mode (T)">
+            Show editing tools
+          </button>
+        )}
         <button
           className="btn primary"
           disabled={busy || (wholeFile && !audioEdited)}
@@ -906,9 +918,9 @@ export function Studio({
             <div className="tl-head" style={{ left: pct(time) }} />
           </div>
           <Ruler duration={duration} onPointerDown={drag("seek")} />
-          {tracks && (info?.audioTracks ?? 0) > 0 && (
+          {trackTitles.length > 0 && (
             <AudioLanes
-              titles={[tracks.firstTitle, ...tracks.extra.map((t) => t.title)].slice(0, info?.audioTracks ?? 1)}
+              titles={trackTitles}
               waves={waves}
               edits={audioEdits}
               setEdits={setAudioEdits}

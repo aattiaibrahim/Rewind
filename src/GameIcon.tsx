@@ -1,3 +1,4 @@
+import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
 import { api } from "./api";
 
@@ -15,14 +16,22 @@ function hue(name: string) {
  */
 export function GameIcon({ name, size = 18 }: { name: string; size?: number }) {
   const [src, setSrc] = useState<string | null>(null);
+  const [version, setVersion] = useState(0);
+  // A logo picked (or reset) anywhere: show the new one.
+  useEffect(() => {
+    const un = listen("icons-changed", () => setVersion((v) => v + 1));
+    return () => {
+      un.then((f) => f());
+    };
+  }, []);
   useEffect(() => {
     let alive = true;
     setSrc(null);
-    if (name && name !== "All") api.gameIcon(name).then((s) => alive && setSrc(s));
+    if (name && name !== "All") api.gameIcon(name).then((s) => alive && setSrc(s ? `${s}${s.includes("?") ? "&" : "?"}v=${version}` : null));
     return () => {
       alive = false;
     };
-  }, [name]);
+  }, [name, version]);
   if (src) return <img className="game-icon" src={src} alt="" width={size} height={size} style={{ width: size, height: size }} />;
   const letter = (name.match(/[A-Za-z0-9]/)?.[0] ?? "?").toUpperCase();
   return (

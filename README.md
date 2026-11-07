@@ -20,24 +20,24 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/studio.jpg" alt="Hindsight's Studio: a clip open with the trim timeline and share panel" width="900" />
+  <img src="docs/screenshots/studio.jpg" alt="Hindsight's Studio: a clip open with the trim timeline, audio lanes and share panel" width="900" />
 </p>
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/screenshots/library.jpg" alt="Clip library grouped by day with a date timeline" />
-      <p><b>Your clips, by game and day.</b> Thumbnails first, a date timeline to jump through months, and clips from Medal, OBS and NVIDIA in the same place.</p>
+      <img src="docs/screenshots/totrim.jpg" alt="To trim: clips not trimmed yet, by game and day" />
+      <p><b>Your clips, by game and day.</b> To trim lists every clip you haven't cut down yet and how much space trimming would free. Clips from Medal, OBS and NVIDIA sit in the same place, with official game logos.</p>
     </td>
     <td width="50%" valign="top">
-      <img src="docs/screenshots/sharing.jpg" alt="Sharing settings" />
-      <p><b>Share in one click.</b> Upload to Catbox, Litterbox, Streamable or a Discord channel and get a link that plays inside Discord, no Nitro needed.</p>
+      <img src="docs/screenshots/notifications.jpg" alt="The notifications page" />
+      <p><b>One page for what needs a look.</b> Folder names to merge, damaged clips to repair, duplicates, games found for unsorted clips, and old recorder folders that are empty now.</p>
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/screenshots/appearance.jpg" alt="Appearance settings with themes and accent colours" />
-      <p><b>Yours to style.</b> Midnight, Graphite or OLED black, six accent colours, and a Reduce motion switch.</p>
+      <img src="docs/screenshots/appearance.jpg" alt="Appearance settings with four themes and thirteen accent colours" />
+      <p><b>Yours to style.</b> Tinted, Midnight, Graphite or OLED black, 13 accent colours (Windows blue by default, or follow your Windows accent), and a Reduce motion switch.</p>
     </td>
     <td width="50%" valign="top">
       <p><b>Light on your game.</b></p>

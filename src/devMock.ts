@@ -130,6 +130,9 @@ export function installDevMock() {
     find_duplicates: () => [],
     edited_clips: () => [],
     system_accent: () => "#4cc2ff",
+    old_folders: () => [{ path: "C:\\Users\\you\\Videos\\Medal", label: "Medal", moved: 42, files: 3, bytes: 18_400_000 }],
+    remove_old_folder: () => null,
+    set_game_logo: () => null,
     detect_status: () => ({ installed: true, downloading: null, lookedAt: 51, toLookAt: 53, error: null }),
     game_suggestions: () =>
       clips.filter((c) => c.folder === "Hunt Showdown").slice(0, 3).map((c, i) => ({ path: c.path, name: c.name, folder: "OBS", game: ["VALORANT", "Counter-Strike 2", "Rainbow Six Siege"][i], confidence: 0.92 - i * 0.07, likeness: 0.94 })),

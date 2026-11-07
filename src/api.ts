@@ -1,6 +1,8 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 
 export type Encoder = "auto" | "av1" | "hevc" | "h264";
+/** A recorder's folder with no clips left in it (they all moved into Hindsight). */
+export type OldFolder = { path: string; label: string; moved: number; files: number; bytes: number };
 /** The picture check's state. */
 export type DetectStatus = { installed: boolean; downloading: number | null; lookedAt: number; toLookAt: number; error: string | null };
 /** A clip in an unsorted folder and the game it looks like. */
@@ -375,6 +377,11 @@ export const api = {
   editedClips: () => invoke<string[]>("edited_clips"),
   /** Windows' accent colour ("#rrggbb"), for "Follow Windows" */
   systemAccent: () => invoke<string | null>("system_accent"),
+  /** A picture as a game's logo (null: back to the automatic one) */
+  setGameLogo: (name: string, picture: string | null) => {
+    iconCache.clear();
+    return invoke<void>("set_game_logo", { name, picture });
+  },
   gameIcon: (name: string) => {
     if (!iconCache.has(name)) iconCache.set(name, invoke<string | null>("game_icon", { name }).then((p) => (p ? convertFileSrc(p) : null)).catch(() => null));
     return iconCache.get(name)!;
@@ -410,6 +417,9 @@ export const api = {
   recorderClipFolders: () => invoke<ClipFolder[]>("recorder_clip_folders"),
   planMoveIntoRewind: (folders: string[]) => invoke<MovePlan>("plan_move_into_rewind", { folders }),
   moveIntoRewind: (folders: string[]) => invoke<MoveOutcome>("move_into_rewind", { folders }),
+  /** Recorder folders that moving into Hindsight emptied */
+  oldFolders: () => invoke<OldFolder[]>("old_folders"),
+  removeOldFolder: (path: string) => invoke<void>("remove_old_folder", { path }),
   lastMove: () => invoke<LastMove | null>("last_move"),
   undoLastMove: () => invoke<MoveOutcome>("undo_last_move"),
   similarGameFolders: () => invoke<SimilarFolders[]>("similar_game_folders"),

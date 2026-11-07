@@ -23,7 +23,7 @@
     @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } * { transition: none !important; animation: none !important; } }
     body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 "Geist", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
     a { color: inherit; }
-    img { max-width: 100%; display: block; }
+    img { max-width: 100%; height: auto; display: block; }
     .wrap { width: min(1160px, calc(100% - 32px)); margin: 0 auto; }
     .mono { font-family: "Geist Mono", ui-monospace, monospace; }
 
@@ -67,6 +67,7 @@
     .icon svg { width: 20px; height: 20px; }
     .shots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
     .shots figure { margin: 0; border-radius: 14px; overflow: hidden; border: 1px solid var(--line); background: var(--panel); }
+    .shots img { width: 100%; aspect-ratio: 2000 / 1175; object-fit: cover; object-position: top left; }
     .shots figcaption { padding: 12px 14px; color: var(--text-2); font-size: 14px; }
     @media (max-width: 900px) { .shots { grid-template-columns: 1fr; } }
 
@@ -139,7 +140,7 @@
           <a class="btn" href="#features">See what it does</a>
         </div>
         <p class="fine">About 3% of one CPU core at 1080p60. The installer isn't code-signed yet: if SmartScreen warns, click <b>More info → Run anyway</b>.</p>
-        <div class="hero-shot"><img src="img/studio.jpg" alt="Hindsight's editor: a clip open with the trim timeline, audio lanes and the share panel" width="2000" height="1175"></div>
+        <div class="hero-shot"><img src="img/studio.jpg" alt="Hindsight's editor: a clip open with the trim timeline, audio lanes, its NAS status and the share panel" width="2000" height="1175"></div>
       </div>
     </div>
 
@@ -154,10 +155,12 @@
           <div class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3v18M18 3v18M3 8h18M3 16h18"/></svg></div><h3>Frame-exact editor</h3><p>Trims cut on the exact frame and copy the rest untouched, so they're instant and lossless. Waveforms per track, mute stretches, change volumes, export as MP3.</p></div>
           <div class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg></div><h3>Links that play in Discord</h3><p>One click uploads to Catbox, Litterbox, Streamable or a Discord channel, converted so it plays inline for everyone. No Nitro needed.</p></div>
           <div class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 14h20M7 4v10M12 4v10M17 4v10"/></svg></div><h3>Montages in a few clicks</h3><p>Pick a length and which clips (random, a date range, edited or not), then fine-tune on a Premiere-style timeline with your own song under it.</p></div>
-          <div class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01"/></svg></div><h3>Your NAS, built in</h3><p>Every clip is copied to your NAS once you're out of game and checked byte for byte. Free up space on your PC and keep watching every clip, here or on your phone.</p></div>
-          <div class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21.2l8.8-8.8a5.5 5.5 0 0 0 0-7.8z"/></svg></div><h3>Heals damaged clips</h3><p>Finds clips that won't play properly (a common NVIDIA and OBS problem after a crash) and cuts them down to their good part, after you've watched what's kept.</p></div>
+          <div class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01"/></svg></div><h3>Your NAS, built in</h3><p>Every clip is copied to your NAS once you're out of game and checked byte for byte. A badge on each clip shows if it's there yet. Free up space on your PC and keep watching every clip, here or on your phone.</p></div>
+          <div class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21.2l8.8-8.8a5.5 5.5 0 0 0 0-7.8z"/></svg></div><h3>Heals damaged clips</h3><p>Finds clips that won't play properly (a common NVIDIA and OBS problem after a crash). Repair them all into fixed copies, or cut one down to its good part after you've watched what's kept.</p></div>
           <div class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></div><h3>On this day</h3><p>"1 year ago today": clips from this date in earlier years, at the top of your library, ready to watch straight through.</p></div>
-          <div class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h6l2 2h10v10H3z"/></svg></div><h3>One library for every recorder</h3><p>Clips from Medal, OBS, NVIDIA, Ascent, AMD, Xbox Game Bar and more, grouped by game with their logos. Duplicates and misspelled folders are spotted for you.</p></div>
+          <div class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h6l2 2h10v10H3z"/></svg></div><h3>One library for every recorder</h3><p>Clips from Medal, OBS, NVIDIA, Ascent, AMD, Xbox Game Bar and more, grouped by game with official logos from Steam. Duplicates and misspelled folders are spotted, and emptied old folders can go.</p></div>
+          <div class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.1 15.9M14.5 14.5 20 20M8.1 8.1 12 12"/></svg></div><h3>Knows what to trim</h3><p>To trim lists every clip you saved but never cut down, with how much space trimming each to its best 30 seconds would free. "Keep whole" takes a clip off the list.</p></div>
+          <div class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="m21 16-5-5-8 8"/></svg></div><h3>Finds the game for you</h3><p>For clips in folders that don't say which game (OBS, Desktop, imports), an optional image model on your PC looks at a few frames and suggests the game. You check before anything moves.</p></div>
           <div class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19V5M4 19h16M8 15l4-4 3 3 5-6"/></svg></div><h3>Measures itself</h3><p>A built-in performance test turns OBS, NVIDIA and Medal on and off and measures what each costs in your game, on your PC.</p></div>
           <div class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></div><h3>Stream Deck and hotkeys</h3><p>Save, record, pause and open from a Stream Deck plugin, hotkeys or the tray. The right encoder is picked for your GPU automatically.</p></div>
           <div class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 6v6l4 2"/></svg></div><h3>Made with its testers</h3><p>It's in beta. A diagnostics report (with your name and paths left out) makes bugs quick to fix, and feature requests go straight on GitHub.</p></div>
@@ -167,9 +170,9 @@
 
     <section>
       <div class="wrap shots">
-        <figure class="reveal"><img src="img/library.jpg" alt="The clip library grouped by day with a date timeline" loading="lazy"><figcaption>Your clips by game and day, with a date timeline to jump through months.</figcaption></figure>
-        <figure class="reveal"><img src="img/sharing.jpg" alt="Sharing settings" loading="lazy"><figcaption>Share links that play inside Discord, from the app or the NAS.</figcaption></figure>
-        <figure class="reveal"><img src="img/appearance.jpg" alt="Appearance settings with themes and accent colours" loading="lazy"><figcaption>Midnight, Graphite or OLED black, six accents, and Reduce motion.</figcaption></figure>
+        <figure class="reveal"><img src="img/totrim.jpg" alt="To trim: the clips not trimmed yet, by game and day, with how much space trimming would free" width="2000" height="1175" loading="lazy"><figcaption>To trim: every clip you haven't cut down yet, and how much space trimming would free.</figcaption></figure>
+        <figure class="reveal"><img src="img/notifications.jpg" alt="The notifications page with folder merges, damaged clips and game suggestions" width="2000" height="1175" loading="lazy"><figcaption>One page for everything that needs a look: merges, damaged clips, duplicates, old folders.</figcaption></figure>
+        <figure class="reveal"><img src="img/appearance.jpg" alt="Appearance settings with four themes and thirteen accent colours" width="2000" height="1175" loading="lazy"><figcaption>Four themes and 13 accents, Windows blue by default, or follow your Windows accent.</figcaption></figure>
       </div>
     </section>
 
@@ -232,7 +235,8 @@
         <details><summary>Is it really free? What's the catch?</summary><p>It's free and open source, with no account, ads or watermark. Your clips stay on your PC (and your NAS, if you add one). Nothing is uploaded unless you press Share.</p></details>
         <details><summary>Windows says it "protected my PC". Is it safe?</summary><p>The installer isn't code-signed yet, so SmartScreen doesn't recognise it. Click <b>More info → Run anyway</b>. The source code is on GitHub for anyone to check.</p></details>
         <details><summary>Will it slow my game down?</summary><p>Very little: about 3% of one CPU core at 1080p60, with encoding on the GPU's dedicated chip. Background jobs (NAS copying, thumbnails, damage checks) wait until you're out of game. You can measure it yourself with the built-in performance test.</p></details>
-        <details><summary>Can I bring my clips from Medal, NVIDIA or OBS?</summary><p>Yes. Hindsight finds their folders, shows their clips in your library by game, and can move them into its own folders (with undo).</p></details>
+        <details><summary>If I delete a clip on my PC, is it deleted on the NAS too?</summary><p>No. The NAS is your safe copy: deleting a clip on your PC (it goes to the Recycle Bin) leaves the NAS copy where it is, and freeing up space on your PC only removes the local copy once the NAS copy is checked. To delete it everywhere, delete it on the NAS too.</p></details>
+        <details><summary>Can I bring my clips from Medal, NVIDIA or OBS?</summary><p>Yes. Hindsight finds their folders, shows their clips in your library by game, and can move them into its own folders (with undo). Once a recorder's folder has no clips left, Hindsight offers to send it to the Recycle Bin.</p></details>
         <details><summary>Something's broken, or I have an idea.</summary><p>Run <b>Settings → About → Run diagnostics</b> and attach the file to a <a href="https://github.com/aattiaibrahim/hindsight/issues/new?template=bug_report.yml">bug report</a>. Ideas go in a <a href="https://github.com/aattiaibrahim/hindsight/issues/new?template=feature_request.yml">feature request</a>.</p></details>
       </div>
     </section>

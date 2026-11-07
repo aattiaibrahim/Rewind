@@ -213,17 +213,36 @@ fn not_a_game(key: &str) -> bool {
 /// "Resident Evil 3" for "Resident Evil 3 Remake").
 fn same_game(folder_key: &str, steam_name: &str) -> bool {
     let k = game_key(steam_name);
+    // Only a number or an edition may differ: "Hunt: Showdown 1896" for "Hunt Showdown",
+    // "Overwatch" for "Overwatch 2", but not "Minecraft Dungeons" for "Minecraft".
+    let edition = |tail: &str| {
+        tail.chars().all(|c| c.is_ascii_digit())
+            || ["x", "remake", "remastered", "hd", "goty", "definitiveedition", "enhancededition", "gameoftheyearedition", "classic", "reloaded"].contains(&tail)
+    };
     k == folder_key
-        || (folder_key.len() >= 6 && k.starts_with(folder_key))
-        // "Overwatch" for "Overwatch 2", "Resident Evil 3" for "… Remake": only a number or an edition may differ.
-        || (k.len() >= 8 && folder_key.strip_prefix(k.as_str()).is_some_and(|tail| {
-            tail.chars().all(|c| c.is_ascii_digit()) || ["remake", "remastered", "hd", "goty", "definitiveedition", "enhancededition"].contains(&tail)
-        }))
+        || (folder_key.len() >= 6 && k.strip_prefix(folder_key).is_some_and(edition))
+        || (k.len() >= 8 && folder_key.strip_prefix(k.as_str()).is_some_and(edition))
 }
 
-/// The Steam app for a game: from this PC's Steam records, else the store search.
+/// Games whose Steam name changed, or that the store search no longer lists.
+const STEAM_ALIASES: [(&str, u64); 9] = [
+    ("hitman3", 1659040),
+    ("hitman", 1659040),
+    ("rocketleague", 252950),
+    ("counterstrikeglobaloffensive", 730),
+    ("csgo", 730),
+    ("cs2", 730),
+    ("pubg", 578080),
+    ("gtav", 271590),
+    ("grandtheftautov", 271590),
+];
+
+/// The Steam app for a game: a known alias, this PC's Steam records, else the store search.
 fn steam_app(game: &str, client: &reqwest::blocking::Client) -> Option<u64> {
     let key = game_key(game);
+    if let Some((_, id)) = STEAM_ALIASES.iter().find(|(k, _)| *k == key) {
+        return Some(*id);
+    }
     for lib in steam_libraries() {
         for e in fs::read_dir(&lib).into_iter().flatten().flatten() {
             let n = e.file_name().to_string_lossy().to_lowercase();
@@ -287,12 +306,15 @@ fn steam_icon(game: &str, out: &Path) -> Result<(), String> {
         .json()
         .map_err(|e| e.to_string())?;
     let hash = j["response"]["apps"][0]["icon"].as_str().filter(|h| h.chars().all(|c| c.is_ascii_hexdigit()) && !h.is_empty()).ok_or("no icon")?;
-    let bytes = client
-        .get(format!("https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/{id}/{hash}.jpg"))
-        .send()
-        .and_then(|r| r.error_for_status())
-        .and_then(|r| r.bytes())
-        .map_err(|e| e.to_string())?;
+    // Newer icons are only at the first address, older ones at either.
+    let mut bytes = None;
+    for host in ["https://shared.akamai.steamstatic.com/community_assets/images/apps", "https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps"] {
+        if let Ok(b) = client.get(format!("{host}/{id}/{hash}.jpg")).send().and_then(|r| r.error_for_status()).and_then(|r| r.bytes()) {
+            bytes = Some(b);
+            break;
+        }
+    }
+    let bytes = bytes.ok_or("the icon wouldn't download")?;
     // A real JPEG, not an error page.
     if bytes.len() < 200 || bytes[..2] != [0xff, 0xd8] {
         return Err("not an image".into());
@@ -309,22 +331,52 @@ fn tried_recently(marker: &Path, secs: u64) -> bool {
         .unwrap_or(false)
 }
 
+const CUSTOM_EXTS: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
+
+fn custom_logo(dir: &Path, key: &str) -> Option<PathBuf> {
+    CUSTOM_EXTS.iter().map(|e| dir.join(format!("{key}.custom.{e}"))).find(|p| p.exists())
+}
+
+/// Use a picture you chose as a game's logo (`None` goes back to the automatic one).
+pub fn set_logo(game: &str, picture: Option<&Path>) -> Result<(), String> {
+    let dir = DIR.lock().unwrap().clone().ok_or("not ready")?;
+    let key = game_key(game);
+    if key.is_empty() {
+        return Err("That folder has no name to keep a logo for.".into());
+    }
+    for e in CUSTOM_EXTS {
+        let _ = fs::remove_file(dir.join(format!("{key}.custom.{e}")));
+    }
+    let Some(src) = picture else { return Ok(()) };
+    let ext = src.extension().map(|e| e.to_string_lossy().to_lowercase()).filter(|e| CUSTOM_EXTS.contains(&e.as_str())).ok_or("Pick a PNG, JPG or WebP picture.")?;
+    if fs::metadata(src).map(|m| m.len()).unwrap_or(0) > 8 * 1024 * 1024 {
+        return Err("That picture is over 8 MB. Pick a smaller one.".into());
+    }
+    fs::copy(src, dir.join(format!("{key}.custom.{ext}"))).map(|_| ()).map_err(|e| e.to_string())
+}
+
 /// The icon for a game folder, made once and kept. None = nothing found
 /// (checked again a day later, in case the game gets installed or played).
-/// `online`: look the official icon up on Steam first.
+/// `online`: look the official icon up on Steam first. A logo you picked
+/// yourself always wins.
 pub fn icon(game: &str, online: bool) -> Option<PathBuf> {
     let dir = DIR.lock().unwrap().clone()?;
     let key = game_key(game);
     if key.is_empty() {
         return None;
     }
+    if let Some(p) = custom_logo(&dir, &key) {
+        return Some(p);
+    }
     if online && !not_a_game(&key) {
-        let steam = dir.join(format!("{key}.steam.jpg"));
+        // ".steam2": looked up with the stricter name match (older lookups could
+        // give "Minecraft" the logo of "Minecraft Dungeons").
+        let steam = dir.join(format!("{key}.steam2.jpg"));
         if steam.exists() {
             return Some(steam);
         }
         // Never while a game is running; a miss is asked again after a week.
-        let miss = dir.join(format!("{key}.steam-none"));
+        let miss = dir.join(format!("{key}.steam2-none"));
         if !crate::games::game_running() && !tried_recently(&miss, 7 * 86_400) {
             // "SpeciesUnknown-Win64-Shipping" is looked up as "Species Unknown".
             let title = crate::games::tidy_program_name(game).unwrap_or_else(|| game.to_string());
@@ -369,6 +421,9 @@ mod tests {
     fn steam_names_match_only_the_same_game() {
         assert!(same_game("huntshowdown", "Hunt: Showdown 1896"));
         assert!(same_game("overwatch2", "Overwatch®"));
+        assert!(same_game("tomclancysrainbowsixsiege", "Tom Clancy's Rainbow Six® Siege X"));
+        assert!(!same_game("minecraft", "Minecraft Dungeons"));
+        assert!(!same_game("render", "Render Voice VR"));
         assert!(same_game("residentevil3remake", "Resident Evil 3"));
         assert!(same_game("counterstrike2", "Counter-Strike 2"));
         assert!(!same_game("edit", "Edith Finch"));
@@ -399,7 +454,7 @@ mod tests {
     fn live_game_icons() {
         let dir = std::env::temp_dir().join("rewind-live-icons");
         init(dir.clone());
-        for g in ["SpeciesUnknown-Win64-Shipping", "Species Unknown", "Escape From Tarkov", "Resident Evil 3 Remake", "Edits", "funny not cool", "VALORANT", "League of Legends", "Counter-strike 2", "Marvel Rivals", "Overwatch 2", "Tom Clancys Rainbow Six Siege", "Hunt Showdown", "Payday The Heist", "Resident Evil Requiem", "The Outlast Trials", "Desktop"] {
+        for g in ["Payday The Heist", "Battlefield 6", "Minecraft", "Render", "Hitman 3", "Rocket League", "Apex Legends", "SpeciesUnknown-Win64-Shipping", "Species Unknown", "Escape From Tarkov", "Resident Evil 3 Remake", "Edits", "funny not cool", "VALORANT", "League of Legends", "Counter-strike 2", "Marvel Rivals", "Overwatch 2", "Tom Clancys Rainbow Six Siege", "Hunt Showdown", "Payday The Heist", "Resident Evil Requiem", "The Outlast Trials", "Desktop"] {
             println!("{g}: {:?} -> {:?}", find_program(g), icon(g, true));
         }
     }
