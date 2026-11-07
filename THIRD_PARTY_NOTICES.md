@@ -22,6 +22,11 @@ Rewind's installer includes Intel's PresentMon 2.6.0 (`presentmon/PresentMon.exe
 - PresentMon is © Intel Corporation under the **MIT license**. The license text ships with the app as `presentmon/LICENSE.txt`.
 - Source and releases: https://github.com/GameTechDev/PresentMon (`scripts/get-ffmpeg.ps1` fetches the exact release).
 
+## Archivo (website headings)
+
+The website's headings use Archivo by Omnibus-Type, under the SIL Open Font License 1.1:
+https://fonts.google.com/specimen/Archivo/license
+
 ## Rust and JavaScript dependencies
 
 Rewind is built with Tauri, React, cpal, the `windows` crate and other open-source libraries under MIT, Apache-2.0 and similar licenses. See `src-tauri/Cargo.lock` and `pnpm-lock.yaml` for the full list.

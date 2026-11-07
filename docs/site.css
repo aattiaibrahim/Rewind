@@ -1,5 +1,7 @@
 /* Hindsight's website: the same black frame and soft panels as the app. */
 @font-face { font-family: "Geist"; src: url("fonts/geist-latin-wght-normal.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+/* Headings: Archivo (SIL Open Font Licence), Latin only. */
+@font-face { font-family: "Archivo"; src: url("fonts/archivo-latin-wght.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
 @font-face { font-family: "Geist Mono"; src: url("fonts/geist-mono-latin-wght-normal.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
 :root {
   --frame: #000; --panel: #181818; --raised: #242424; --line: #2a2a2a;
@@ -101,3 +103,16 @@ details p { margin-top: 8px; }
 .release time { font-family: var(--head); font-weight: 400; font-size: 14px; color: var(--muted); }
 .release .notes { margin-top: 8px; color: var(--text-2); white-space: pre-line; }
 .row .shot.narrow { max-width: 300px; justify-self: center; }
+
+/* "Save the moment": the hotkey and what the app shows after it. */
+.saved { display: flex; flex-direction: column; align-items: flex-start; gap: 18px; padding: 28px; border-radius: 10px; background: #000; }
+.keys { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 18px; }
+kbd { display: inline-grid; place-items: center; min-width: 64px; height: 56px; padding: 0 16px; border-radius: 10px; background: var(--raised); border-bottom: 3px solid #111; color: var(--text); font: 600 20px/1 "Geist", system-ui, sans-serif; }
+.toast-demo { display: flex; align-items: center; gap: 12px; width: min(380px, 100%); padding: 12px; border-radius: 10px; background: #242424; border: 1px solid #363636; }
+.toast-demo .bar { width: 5px; align-self: stretch; border-radius: 3px; background: var(--accent); }
+.toast-demo div { flex: 1; min-width: 0; display: flex; flex-direction: column; font-size: 14px; }
+.toast-demo small { color: var(--muted); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.toast-demo .trim { padding: 5px 12px; border-radius: 999px; background: #fff; color: #000; font-weight: 600; font-size: 13px; }
+.status-demo { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--muted); font-size: 13px; }
+.status-demo .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.status-demo .sep { width: 1px; height: 12px; background: #333; }

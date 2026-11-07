@@ -10,6 +10,7 @@
   <meta property="og:description" content="Save the last two minutes with a key, trim it, share it, keep it on your NAS. Free and open source.">
   <meta property="og:image" content="img/studio.jpg">
   <link rel="icon" href="logo.svg" type="image/svg+xml">
+  <link rel="preload" href="fonts/archivo-latin-wght.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="site.css">
 </head>
 <body>
@@ -51,7 +52,15 @@
           <p>Hindsight keeps the last few minutes in memory while you play. Press Alt+F10 and they're a clip in under a second, in a folder named after the game.</p>
           <p>It records on the NVIDIA chip that's there for video, so it costs about 3% of one CPU core at 1080p60. Your game, your microphone and Discord are three separate audio tracks.</p>
         </div>
-        <div class="shot"><img src="img/library.jpg" alt="Hindsight's library by day, with the status bar along the bottom: buffer on, AV1 at 1080p60, the NAS, and Save clip" width="2000" height="1175" loading="lazy"></div>
+        <div class="saved" aria-label="Pressing Alt+F10 saves the last two minutes as a clip">
+          <div class="keys"><kbd>Alt</kbd><span>+</span><kbd>F10</kbd></div>
+          <div class="toast-demo">
+            <span class="bar"></span>
+            <div><b>Clip saved</b><small>VALORANT · 2:00 · 128 MB · in “Valorant”</small></div>
+            <span class="trim">Trim</span>
+          </div>
+          <div class="status-demo"><span class="dot"></span>Buffer on · 2:00 of 2:00<span class="sep"></span>AV1 · 1080p60<span class="sep"></span>NAS up to date</div>
+        </div>
       </section>
 
       <section class="panel row flip">
