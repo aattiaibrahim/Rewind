@@ -25,16 +25,21 @@ $exists = ($LASTEXITCODE -eq 0)
 $ErrorActionPreference = "Stop"
 if ($exists) { throw "Release $tag already exists. Bump the version first." }
 
-Write-Host "Building Rewind $version (signed)..."
+Write-Host "Building Hindsight $version (signed)..."
 $env:TAURI_SIGNING_PRIVATE_KEY = Get-Content $KeyPath -Raw
 $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ""
 pnpm tauri build
 if ($LASTEXITCODE -ne 0) { throw "Build failed" }
 Remove-Item Env:\TAURI_SIGNING_PRIVATE_KEY, Env:\TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
 
-$exeName = "Rewind_${version}_x64-setup.exe"
+# The build still comes out as "Rewind_…" (the app's internal name, kept so
+# updates install over the same app); it's published under Hindsight's name.
+# The signature covers the file's contents, so renaming the file is fine.
+$built = "src-tauri\target\release\bundle\nsis\Rewind_${version}_x64-setup.exe"
+$exeName = "Hindsight_${version}_x64-setup.exe"
 $exe = "src-tauri\target\release\bundle\nsis\$exeName"
-$sig = Get-Content "$exe.sig" -Raw
+Copy-Item $built $exe -Force
+$sig = Get-Content "$built.sig" -Raw
 $manifest = [ordered]@{
     version   = $version
     notes     = $Notes
@@ -54,7 +59,7 @@ $notesFile = New-TemporaryFile
 $Notes
 
 ### Install
-Download **$exeName** below and run it. Already have Rewind? It updates itself.
+Download **$exeName** below and run it. Already have Hindsight? It updates itself.
 Windows SmartScreen may warn because the app isn't code-signed yet: click **More info → Run anyway**.
 "@ | Set-Content $notesFile
 
@@ -63,11 +68,11 @@ $plugin = "streamdeck\dist\Hindsight.streamDeckPlugin"
 if (-not (Test-Path $plugin)) { throw "Stream Deck plugin wasn't built at $plugin" }
 
 Write-Host "Publishing $tag..."
-gh release create $tag $exe $latest $plugin --repo $repo --title "Rewind $version" --notes-file $notesFile --latest
+gh release create $tag $exe $latest $plugin --repo $repo --title "Hindsight $version" --notes-file $notesFile --latest
 $published = $LASTEXITCODE -eq 0
 Remove-Item $notesFile
 # GitHub sometimes answers 500: don't claim success, and say how to retry without rebuilding.
 if (-not $published) {
-    throw "Publishing failed (GitHub error). The build is fine; retry with: gh release create $tag $exe $latest $plugin --repo $repo --title `"Rewind $version`" --latest"
+    throw "Publishing failed (GitHub error). The build is fine; retry with: gh release create $tag $exe $latest $plugin --repo $repo --title `"Hindsight $version`" --latest"
 }
 Write-Host "Done: https://github.com/$repo/releases/tag/$tag"
