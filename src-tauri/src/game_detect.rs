@@ -549,7 +549,9 @@ mod live_pipeline {
         let Ok(pack) = std::env::var("REWIND_DETECT_PACK") else { return };
         init(PathBuf::from(&pack));
         assert!(installed(), "pack files missing or wrong size");
-        let mut all = crate::library::scan(Path::new(r"C:\Users\Admin\Videos\Rewind"), &[]);
+        // The clips folder to test against, e.g. %USERPROFILE%\Videos\Rewind.
+        let Ok(clips) = std::env::var("REWIND_DETECT_CLIPS") else { return };
+        let mut all = crate::library::scan(Path::new(&clips), &[]);
         all.sort_by(|a, b| b.modified.cmp(&a.modified));
         let mut per: HashMap<String, usize> = HashMap::new();
         all.retain(|c| {

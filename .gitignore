@@ -42,3 +42,8 @@ install-log.txt
 # Preview-only thumbnails (frames from real clips; only the final README screenshots are published)
 public/thumb-*.jpg
 readme-thumbnail-picks.jpg
+
+# Notes for Claude sessions: kept on this PC only, never pushed
+CLAUDE.md
+CLAUDE.local.md
+context/
