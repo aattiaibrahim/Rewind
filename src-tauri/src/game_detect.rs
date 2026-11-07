@@ -225,6 +225,8 @@ pub fn install(mut progress: impl FnMut(f64)) -> Result<(), String> {
     std::fs::create_dir_all(&d).map_err(|e| e.to_string())?;
     let total: u64 = PACK.iter().map(|p| p.2).sum();
     let mut done = 0u64;
+    // HTTPS needs its crypto chosen first (as for uploads); doing it twice is harmless.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let client = reqwest::blocking::Client::builder().timeout(Duration::from_secs(600)).build().map_err(|e| e.to_string())?;
     for (name, hash, size) in PACK {
         let out = d.join(name);
@@ -540,5 +542,22 @@ mod live_pipeline {
         for s in suggestions(&all, &[]) {
             println!("  {} [{}] -> {} ({:.2}, likeness {:.3})", s.name, s.folder, s.game, s.confidence, s.likeness);
         }
+    }
+}
+
+#[cfg(test)]
+mod live_install {
+    /// Downloads the real pack into a temp folder: cargo test live_detect_install -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn live_detect_install() {
+        let d = std::env::temp_dir().join("rewind-ai-install-test");
+        let _ = std::fs::remove_dir_all(&d);
+        super::init(d.clone());
+        let t = std::time::Instant::now();
+        super::install(|_| {}).unwrap();
+        assert!(super::installed());
+        println!("installed in {:?}", t.elapsed());
+        let _ = std::fs::remove_dir_all(d);
     }
 }
