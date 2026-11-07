@@ -170,6 +170,64 @@ pub fn rescue(path: &str, from: f64, to: f64) -> Result<String, String> {
     Ok(out.to_string_lossy().into_owned())
 }
 
+/// Try to recover a damaged clip at full length: decode it while telling the
+/// decoder to ignore errors and fill in broken pictures from the frames around
+/// them (motion-guessed concealment), then encode that again on the GPU.
+/// The damaged stretch usually comes out smeared rather than garbled, and
+/// everything else is kept. Saved next to it as "<name> (repaired)"; the
+/// original is never changed, so you can compare and choose.
+pub fn repair(path: &str) -> Result<String, String> {
+    let src = Path::new(path);
+    let ext = match src.extension().map(|e| e.to_string_lossy().to_lowercase()).as_deref() {
+        Some("mkv") => "mkv",
+        _ => "mp4",
+    };
+    let stem = src.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let dir = src.parent().unwrap_or(Path::new("."));
+    let mut out = dir.join(format!("{stem} (repaired).{ext}"));
+    let mut n = 2;
+    while out.exists() {
+        out = dir.join(format!("{stem} (repaired {n}).{ext}"));
+        n += 1;
+    }
+    let info = crate::library::probe(path).map_err(|_| "This file can't be read at all, so there's nothing to repair.".to_string())?;
+    if info.codec.is_empty() {
+        return Err("This file has no picture to repair.".into());
+    }
+    let enc = match info.codec.as_str() {
+        "hevc" => "hevc_nvenc",
+        "av1" => "av1_nvenc",
+        _ => "h264_nvenc",
+    };
+    let gop = (info.fps.round() as i64).max(1).to_string();
+    let mut a = crate::ffmpeg::args(&["-hide_banner", "-loglevel", "error", "-y", "-err_detect", "ignore_err", "-ec", "guess_mvs+deblock", "-fflags", "+genpts", "-i"]);
+    a.push(path.into());
+    a.extend(crate::ffmpeg::args(&[
+        "-map", "0:v:0", "-map", "0:a?", "-c:v", enc, "-preset", "p5", "-cq", "20", "-b:v", "0", "-g", &gop, "-c:a", "aac", "-b:a", "192k",
+    ]));
+    if ext == "mp4" {
+        a.extend(crate::ffmpeg::args(&["-movflags", "+faststart"]));
+    }
+    a.push(out.clone().into());
+    // ffmpeg reports every broken frame as an error but still writes the file: judge by the result.
+    let _ = crate::ffmpeg::run("ffmpeg", &a);
+    let got = crate::library::probe(&out.to_string_lossy()).ok().filter(|p| !p.codec.is_empty() && p.duration > 0.5);
+    match got {
+        Some(p) if p.duration >= info.duration * 0.8 => {
+            if let Ok(t) = fs::metadata(path).and_then(|m| m.modified())
+                && let Ok(f) = fs::File::options().write(true).open(&out)
+            {
+                let _ = f.set_modified(t);
+            }
+            Ok(out.to_string_lossy().into_owned())
+        }
+        _ => {
+            let _ = fs::remove_file(&out);
+            Err("The repair didn't produce a usable video. Keeping the good part (Heal) is the way to go for this one.".into())
+        }
+    }
+}
+
 /// Network shares and mapped network drives have no Recycle Bin: anything
 /// "recycled" there is gone for good.
 pub fn on_network(path: &str) -> bool {
@@ -349,6 +407,36 @@ mod tests {
         assert!(!on_network(r"C:\Users\me\Videos\a.mp4"));
         let err = heal(&nas, (70.0, 180.0)).unwrap_err();
         assert!(err.contains("no Recycle Bin"), "{err}");
+    }
+
+    /// A clip with garbage written over part of it: repair keeps its full length
+    /// and the result decodes with far fewer errors.
+    #[test]
+    fn repair_keeps_the_full_length_of_a_damaged_clip() {
+        crate::ffmpeg::init(None);
+        let d = std::env::temp_dir().join(format!("rewind-repair-{}", std::process::id()));
+        fs::create_dir_all(&d).unwrap();
+        let clip = d.join("a.mp4");
+        let mut a = crate::ffmpeg::args(&["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30", "-t", "8", "-c:v", "h264_nvenc", "-g", "60"]);
+        a.push(clip.clone().into());
+        crate::ffmpeg::run("ffmpeg", &a).unwrap();
+        // Scribble over 30 KB in the middle (as a driver crash would).
+        let mut bytes = fs::read(&clip).unwrap();
+        let mid = bytes.len() / 2;
+        for (i, b) in bytes[mid..mid + 30_000].iter_mut().enumerate() {
+            *b = (i * 7919 % 251) as u8;
+        }
+        fs::write(&clip, &bytes).unwrap();
+        let errors = |p: &str| decode_errors(p, 0.0, 8.0, false).unwrap();
+        let before = errors(&clip.to_string_lossy());
+        let out = repair(&clip.to_string_lossy()).unwrap();
+        assert!(out.ends_with("a (repaired).mp4"));
+        let p = crate::library::probe(&out).unwrap();
+        assert!((p.duration - 8.0).abs() < 0.6, "{}", p.duration);
+        let after = errors(&out);
+        println!("decode errors before {before}, after {after}");
+        assert!(before > 0 && after < before, "before {before}, after {after}");
+        let _ = fs::remove_dir_all(d);
     }
 
     #[test]

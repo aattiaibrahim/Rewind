@@ -797,6 +797,14 @@ async fn rescue_clip(app: AppHandle, path: String) -> Result<String, String> {
     Ok(out)
 }
 
+/// Try to recover a damaged clip at full length into "<name> (repaired)"; the original stays.
+#[tauri::command]
+async fn repair_clip(app: AppHandle, path: String) -> Result<String, String> {
+    let out = blocking(move || health::repair(&path)).await?;
+    let _ = app.emit("clips-changed", ());
+    Ok(out)
+}
+
 /// Replace a damaged clip with its longest good part (original to the Recycle Bin).
 #[tauri::command]
 async fn heal_clip(app: AppHandle, path: String) -> Result<String, String> {
@@ -1522,6 +1530,7 @@ pub fn run() {
             health_progress,
             rescue_clip,
             heal_clip,
+            repair_clip,
             plan_move_into_rewind,
             move_into_rewind,
             last_move,

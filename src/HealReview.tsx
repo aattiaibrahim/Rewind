@@ -53,6 +53,8 @@ export function HealReview({
   const [i, setI] = useState(0);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [repaired, setRepaired] = useState<Record<string, string>>({});
+  const [repairing, setRepairing] = useState(false);
   // Clips whose kept part has been watched long enough to unlock Heal.
   const [seen, setSeen] = useState<Set<string>>(new Set());
   const n = list.length;
@@ -153,6 +155,12 @@ export function HealReview({
           </span>
         </div>
         {err && <small className="err-text">{err}</small>}
+        {repaired[clip.path] && (
+          <small className="muted">
+            Saved a repaired copy: <b>{repaired[clip.path].split("\\").pop()}</b>. It keeps the whole clip; the damaged moment is
+            smoothed over rather than perfect. Compare it in the library, then keep whichever you like. The original is untouched.
+          </small>
+        )}
         <div className="row" style={{ justifyContent: "flex-end" }}>
           <span className="muted" style={{ fontSize: 12, marginRight: "auto" }}>
             {seen.has(clip.path) || done
@@ -164,6 +172,25 @@ export function HealReview({
           </button>
           <button className="btn" disabled={busy || i >= n - 1} onClick={() => go(1)}>
             Skip
+          </button>
+          <button
+            className="btn"
+            disabled={busy || repairing || done || remote || !!repaired[clip.path]}
+            title="Make a full-length copy with the broken frames filled in from the ones around them (the original stays)"
+            onClick={async () => {
+              setRepairing(true);
+              setErr(null);
+              try {
+                const out = await api.repairClip(clip.path);
+                setRepaired((r) => ({ ...r, [clip.path]: out }));
+              } catch (e) {
+                setErr(errText(e));
+              } finally {
+                setRepairing(false);
+              }
+            }}
+          >
+            {repairing ? "Repairing…" : repaired[clip.path] ? "Repaired copy saved" : "Try repair (keep it all)"}
           </button>
           <button className="btn primary" disabled={busy || done || remote || !h.best || !seen.has(clip.path)} onClick={heal}>
             {busy ? "Healing…" : "Heal this clip"}

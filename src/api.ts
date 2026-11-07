@@ -382,6 +382,8 @@ export const api = {
   rescueClip: (path: string) => invoke<string>("rescue_clip", { path }),
   /** Replace a damaged clip with its longest good part (original to the Recycle Bin). */
   healClip: (path: string) => invoke<string>("heal_clip", { path }),
+  /** A full-length repaired copy, "<name> (repaired)"; the original stays. */
+  repairClip: (path: string) => invoke<string>("repair_clip", { path }),
   secretsSet: () => invoke<{ discordWebhook: boolean; streamablePassword: boolean }>("secrets_set"),
   syncNasNow: () => invoke<void>("sync_nas_now"),
   recorderClipFolders: () => invoke<ClipFolder[]>("recorder_clip_folders"),

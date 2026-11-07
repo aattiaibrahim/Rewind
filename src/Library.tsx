@@ -7,6 +7,7 @@ import { Timeline } from "./Timeline";
 import { DamagedStatus, damagedText } from "./Health";
 import { DeletePreview } from "./DeletePreview";
 import { GameIcon } from "./GameIcon";
+import { GamePicker } from "./GamePicker";
 import { OnThisDay } from "./OnThisDay";
 import { HealReview } from "./HealReview";
 import { NasBadge, nasStatus, useNasState } from "./NasProgress";
@@ -662,15 +663,9 @@ export function Library({
         </div>
       ) : (
         folders.length > 1 && !atFolderRoot && (
-          <div className="chips">
-            <SlidingPill />
-            {folders.map((f) => (
-              <button key={f} className={`chip game-chip ${f === folder ? "on" : ""}`} onClick={() => setFolder(f)}>
-                {f !== "All" && <GameIcon name={f} size={16} />}
-                {f}
-              </button>
-            ))}
-            <span className="muted" style={{ fontSize: 12, alignSelf: "center", marginLeft: "auto" }}>
+          <div className="row game-row">
+            <GamePicker clips={clips ?? []} folder={folder} setFolder={setFolder} />
+            <span className="muted" style={{ fontSize: 12, marginLeft: "auto" }}>
               Tip: Ctrl+click or Shift+click to select several
             </span>
           </div>

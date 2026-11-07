@@ -49,6 +49,17 @@ pub struct Probe {
     pub container: String,
 }
 
+/// Medal can save each clip's sound as extra files next to it:
+/// "MedalTVValorant20250914010640_Game.mp4" and "…_Mic.mp4" beside
+/// "MedalTVValorant20250914010640.mp4". They're sound only, part of that clip,
+/// not clips of their own.
+pub(crate) fn is_sidecar(p: &Path) -> bool {
+    let Some(stem) = p.file_stem().map(|s| s.to_string_lossy().into_owned()) else { return false };
+    let Some(main) = ["_Game", "_Mic", "_Desktop", "_Voice"].iter().find_map(|s| stem.strip_suffix(s)) else { return false };
+    let ext = p.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();
+    p.with_file_name(format!("{main}.{ext}")).is_file()
+}
+
 pub(crate) fn is_video(p: &Path) -> bool {
     p.extension()
         .map(|e| VIDEO_EXT.contains(&e.to_string_lossy().to_lowercase().as_str()))
@@ -93,7 +104,7 @@ pub(crate) fn scan_linked(root: &LinkedRoot, avoid: &[PathBuf], out: &mut Vec<Cl
                 if depth < 3 && !skip_dir(&name) && !avoid.iter().any(|a| same_path(a, &p)) {
                     walk(&p, depth + 1, root, avoid, out);
                 }
-            } else if is_video(&p) {
+            } else if is_video(&p) && !is_sidecar(&p) {
                 let group = if depth == 0 { root.label.clone() } else { dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default() };
                 if let Some(mut c) = clip_file(&p, group, true) {
                     c.location = "linked";
@@ -164,12 +175,12 @@ pub fn scan(clips_dir: &Path, external: &[String]) -> Vec<ClipFile> {
                 if let Ok(inner) = fs::read_dir(&p) {
                     for f in inner.flatten() {
                         let fp = f.path();
-                        if fp.is_file() && is_video(&fp) {
+                        if fp.is_file() && is_video(&fp) && !is_sidecar(&fp) {
                             out.extend(clip_file(&fp, folder.clone(), false));
                         }
                     }
                 }
-            } else if is_video(&p) {
+            } else if is_video(&p) && !is_sidecar(&p) {
                 out.extend(clip_file(&p, "Other".into(), false));
             }
         }
@@ -1179,6 +1190,19 @@ mod tests {
         let out = export_h264(&sample(&d, "a.mkv"), &AudioEdit::default()).unwrap();
         let p = probe(&out).unwrap();
         assert_eq!((p.codec.as_str(), p.audio_tracks), ("h264", 1));
+        let _ = fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn medal_sound_files_are_part_of_their_clip() {
+        let d = tmp("sidecar");
+        fs::create_dir_all(&d).unwrap();
+        for n in ["Clip1.mp4", "Clip1_Game.mp4", "Clip1_Mic.mp4", "Lonely_Game.mp4"] {
+            fs::write(d.join(n), b"x").unwrap();
+        }
+        assert!(is_sidecar(&d.join("Clip1_Game.mp4")) && is_sidecar(&d.join("Clip1_Mic.mp4")));
+        assert!(!is_sidecar(&d.join("Clip1.mp4")));
+        assert!(!is_sidecar(&d.join("Lonely_Game.mp4")), "no main clip beside it: it's shown");
         let _ = fs::remove_dir_all(d);
     }
 

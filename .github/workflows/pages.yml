@@ -1,10 +1,10 @@
-# Publishes the website (site/) to GitHub Pages: https://aattiaibrahim.github.io/hindsight/
+# Publishes the website (docs/) to GitHub Pages: https://aattiaibrahim.github.io/hindsight/
 name: Website
 
 on:
   push:
     branches: [main]
-    paths: ["site/**", ".github/workflows/pages.yml"]
+    paths: ["docs/**", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
@@ -27,6 +27,6 @@ jobs:
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: site
+          path: docs
       - id: deployment
         uses: actions/deploy-pages@v4

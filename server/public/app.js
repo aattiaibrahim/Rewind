@@ -916,8 +916,15 @@ function cleanupRow(c, data) {
       "div",
       { class: "row-actions" },
       btn("Keep", "", "Hide it until the next cleanup check", () => act("Keeping…", () => postJson(api(c.id, "keep")))),
-      btn("Shrink", "", "Swap it for a smaller H.264 copy (the original goes to the trash)", () => act("Shrinking…", shrink), true),
-      btn("Delete", "danger", `Move it to the trash for ${data.trashDays} days`, () => act("Deleting…", () => postJson(api(c.id, "trash"))), true),
+      // The NAS is usually the copy that's kept for good, so both ask first and say what happens.
+      btn("Shrink", "", "Swap it for a smaller H.264 copy (asks first; the original goes to the trash)", () => {
+        if (!confirm(`Shrink "${c.name}"?\n\nIt's replaced by a smaller H.264 copy that looks a little worse. The full-quality original goes to the trash for ${data.trashDays} days (Trash → Restore), then it's gone for good.`)) return;
+        act("Shrinking…", shrink);
+      }, true),
+      btn("Delete", "danger", `Move it to the trash for ${data.trashDays} days (asks first)`, () => {
+        if (!confirm(`Delete "${c.name}"?\n\nIt goes to the trash for ${data.trashDays} days (Trash → Restore), then it's gone for good.`)) return;
+        act("Deleting…", () => postJson(api(c.id, "trash")));
+      }, true),
     ),
   );
   return row;

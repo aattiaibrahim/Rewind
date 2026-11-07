@@ -298,6 +298,20 @@ export function Studio({
     save("rewind.volume", clamped);
   }, []);
   const toggleMute = useCallback(() => setMutedState((m) => !m), []);
+  // A brief "Volume 60%" over the video when the wheel or ↑ ↓ change it.
+  const [volFlash, setVolFlash] = useState<number | null>(null);
+  const flashTimer = useRef<number | undefined>(undefined);
+  const nudgeVolume = useCallback(
+    (by: number) => {
+      const v = Math.round(Math.min(1, Math.max(0, (muted ? 0 : volume) + by)) * 100) / 100;
+      setVolume(v);
+      if (v === 0) setMutedState(true);
+      setVolFlash(v);
+      window.clearTimeout(flashTimer.current);
+      flashTimer.current = window.setTimeout(() => setVolFlash(null), 900);
+    },
+    [muted, volume, setVolume],
+  );
   useEffect(() => save("rewind.muted", muted ? 1 : 0), [muted]);
   // The video element only plays the first audio track; other tracks (the
   // mic) play from their own <audio> elements, kept in sync with the video.
@@ -517,10 +531,10 @@ export function Studio({
       else if (e.key === "ArrowRight") seek(v.currentTime + (e.shiftKey ? 1 / 60 : 5));
       else if (e.key === "ArrowUp") {
         e.preventDefault();
-        setVolume(volume + 0.1);
+        nudgeVolume(0.1);
       } else if (e.key === "ArrowDown") {
         e.preventDefault();
-        setVolume(volume - 0.1);
+        nudgeVolume(-0.1);
       } else if (e.key === "m" || e.key === "M") toggleMute();
       else if ((e.key === "f" || e.key === "F") && !e.ctrlKey && !e.altKey) toggleFullscreen();
       else if (e.key === "Escape" && fullscreen) setFullscreen(false);
@@ -529,7 +543,7 @@ export function Studio({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [path, toggle, seek, volume, setVolume, toggleMute, toggleFullscreen, toggleTheater, fullscreen, onBack]);
+  }, [path, toggle, seek, nudgeVolume, toggleMute, toggleFullscreen, toggleTheater, fullscreen, onBack]);
 
   // Dragging on the timeline: handles move in/out, anywhere else scrubs.
   const drag = (kind: "in" | "out" | "seek") => (e: React.PointerEvent) => {
@@ -674,6 +688,11 @@ export function Studio({
             }}
             onPointerEnter={() => setHover(true)}
             onPointerLeave={() => setHover(false)}
+            // The mouse wheel over the video turns the volume up or down (5% a notch).
+            onWheel={(e) => {
+              if (e.ctrlKey) return;
+              nudgeVolume(e.deltaY < 0 ? 0.05 : -0.05);
+            }}
           >
             <video
               key={`${path}#${reload}`}
@@ -746,6 +765,17 @@ export function Studio({
                       <div className="vid-progress" onPointerDown={scrubProgress}>
                         <div style={{ width: duration ? `${(time / duration) * 100}%` : 0 }} />
                       </div>
+                      <button className="vid-btn" aria-label={muted ? "Unmute (M)" : "Mute (M)"} title={muted ? "Unmute (M)" : "Mute (M)"} onClick={toggleMute}>
+                        <SpeakerIcon level={muted ? 0 : volume} />
+                      </button>
+                      <Slider
+                        className="vid-volume"
+                        aria-label="Volume"
+                        title="Volume (scroll the wheel over the video, or ↑ ↓)"
+                        value={muted ? 0 : Math.round(volume * 100)}
+                        onValue={(v) => setVolume(v / 100)}
+                        style={{ width: 110 }}
+                      />
                     </>
                   )}
                   {!fullscreen && <span style={{ flex: 1 }} />}
@@ -768,6 +798,12 @@ export function Studio({
                     {fullscreen ? Icon.exitFullscreen : Icon.fullscreen}
                   </button>
                 </div>
+              </div>
+            )}
+            {volFlash != null && (
+              <div className="vol-flash" aria-live="polite">
+                <SpeakerIcon level={volFlash} />
+                <span className="mono">{Math.round(volFlash * 100)}%</span>
               </div>
             )}
             {playError && (
