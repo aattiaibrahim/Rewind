@@ -3,270 +3,153 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Hindsight · the game clipper that stays out of your way</title>
-  <meta name="description" content="Hindsight is a free, open-source game clipper for Windows and NVIDIA GPUs: an always-on replay buffer in RAM, a frame-exact editor, Discord on its own audio track, montages, and a NAS library.">
-  <meta name="theme-color" content="#0b0d11">
-  <meta property="og:title" content="Hindsight: the game clipper that stays out of your way">
-  <meta property="og:description" content="Free and open source. Replay buffer on your NVIDIA GPU, a frame-exact editor, Discord on its own track, montages and a NAS library.">
+  <title>Hindsight · a free replay buffer and clip library for Windows</title>
+  <meta name="description" content="Hindsight is a free, open-source replay buffer and clip library for Windows with an NVIDIA GPU. Save the last minutes with a key, trim them, share them, and keep them on your NAS.">
+  <meta name="theme-color" content="#000000">
+  <meta property="og:title" content="Hindsight: a free replay buffer and clip library for Windows">
+  <meta property="og:description" content="Save the last two minutes with a key, trim it, share it, keep it on your NAS. Free and open source.">
   <meta property="og:image" content="img/studio.jpg">
   <link rel="icon" href="logo.svg" type="image/svg+xml">
-  <link rel="preload" href="fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
-  <style>
-    @font-face { font-family: "Geist"; src: url("fonts/geist-latin-wght-normal.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
-    @font-face { font-family: "Geist Mono"; src: url("fonts/geist-mono-latin-wght-normal.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
-    :root {
-      --bg: #0b0d11; --panel: #12151b; --raised: #181c24; --line: #232833; --text: #eef1f5; --text-2: #b6bdc9; --muted: #8790a0;
-      --accent: #c6f432; --accent-ink: #10140a; --good: #4fd18b; --bad: #e5534b; --radius: 16px;
-    }
-    * { box-sizing: border-box; }
-    html { scroll-behavior: smooth; }
-    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } * { transition: none !important; animation: none !important; } }
-    body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 "Geist", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
-    a { color: inherit; }
-    img { max-width: 100%; height: auto; display: block; }
-    .wrap { width: min(1160px, calc(100% - 32px)); margin: 0 auto; }
-    .mono { font-family: "Geist Mono", ui-monospace, monospace; }
-
-    /* nav */
-    header { position: sticky; top: 0; z-index: 10; backdrop-filter: blur(14px); background: color-mix(in srgb, var(--bg) 78%, transparent); border-bottom: 1px solid var(--line); }
-    .nav { display: flex; align-items: center; gap: 22px; height: 64px; }
-    .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; letter-spacing: 0.14em; font-size: 14px; text-decoration: none; }
-    .beta { font-size: 10px; font-weight: 800; letter-spacing: 0.08em; padding: 2px 7px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); }
-    .nav nav { display: flex; gap: 18px; margin-left: auto; }
-    .nav nav a { text-decoration: none; color: var(--text-2); font-size: 14px; }
-    .nav nav a:hover { color: var(--text); }
-    .btn { display: inline-flex; align-items: center; gap: 8px; padding: 11px 18px; border-radius: 12px; font-weight: 650; text-decoration: none; border: 1px solid var(--line); background: var(--raised); color: var(--text); transition: transform 0.2s, box-shadow 0.2s; }
-    .btn:hover { transform: translateY(-1px); }
-    .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; box-shadow: 0 10px 30px -10px color-mix(in srgb, var(--accent) 70%, transparent); }
-    .btn.small { padding: 8px 14px; font-size: 14px; }
-    @media (max-width: 760px) { .nav nav { display: none; } .nav .btn { margin-left: auto; } }
-
-    /* hero */
-    .hero { padding: 84px 0 40px; text-align: center; position: relative; overflow: hidden; }
-    .hero::before { content: ""; position: absolute; inset: -40% -10% auto; height: 620px; background: radial-gradient(closest-side, color-mix(in srgb, var(--accent) 16%, transparent), transparent); pointer-events: none; }
-    .hero h1 { font-size: clamp(36px, 6vw, 68px); line-height: 1.04; letter-spacing: -0.035em; margin: 18px auto 18px; max-width: 900px; }
-    .hero h1 em { font-style: normal; color: var(--accent); }
-    .hero p.lead { font-size: clamp(17px, 2vw, 20px); color: var(--text-2); max-width: 720px; margin: 0 auto 30px; }
-    .hero .ctas { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
-    .hero .fine { margin-top: 16px; color: var(--muted); font-size: 14px; }
-    .hero-shot { margin: 54px auto 0; border-radius: 18px; overflow: hidden; border: 1px solid var(--line); box-shadow: 0 40px 120px -30px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.03); max-width: 1100px; }
-    .pills { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
-    .pill { padding: 5px 12px; border-radius: 999px; border: 1px solid var(--line); color: var(--text-2); font-size: 13px; background: var(--panel); }
-
-    /* sections */
-    section { padding: 80px 0; }
-    .kicker { color: var(--accent); font-weight: 700; letter-spacing: 0.14em; font-size: 12px; text-transform: uppercase; }
-    h2 { font-size: clamp(28px, 4vw, 42px); letter-spacing: -0.025em; line-height: 1.1; margin: 10px 0 14px; }
-    .sub { color: var(--text-2); max-width: 720px; margin: 0 0 36px; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
-    .card { padding: 22px; border-radius: var(--radius); background: var(--panel); border: 1px solid var(--line); transition: border-color 0.2s, transform 0.2s; }
-    .card:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); transform: translateY(-2px); }
-    .card h3 { margin: 12px 0 6px; font-size: 17px; }
-    .card p { margin: 0; color: var(--text-2); font-size: 14.5px; }
-    .icon { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
-    .icon svg { width: 20px; height: 20px; }
-    .shots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
-    .shots figure { margin: 0; border-radius: 14px; overflow: hidden; border: 1px solid var(--line); background: var(--panel); }
-    .shots img { width: 100%; aspect-ratio: 2000 / 1175; object-fit: cover; object-position: top left; }
-    .shots figcaption { padding: 12px 14px; color: var(--text-2); font-size: 14px; }
-    @media (max-width: 900px) { .shots { grid-template-columns: 1fr; } }
-
-    /* compare */
-    .table-wrap { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--line); }
-    table { width: 100%; border-collapse: collapse; min-width: 640px; background: var(--panel); }
-    th, td { padding: 14px 16px; text-align: left; border-bottom: 1px solid var(--line); font-size: 14.5px; }
-    th { font-size: 13px; color: var(--muted); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
-    th.us, td.us { background: color-mix(in srgb, var(--accent) 7%, transparent); }
-    td.us { color: var(--text); font-weight: 600; }
-    tr:last-child td { border-bottom: 0; }
-    .yes { color: var(--good); font-weight: 700; }
-    .no { color: var(--muted); }
-    .note { color: var(--muted); font-size: 13px; margin-top: 12px; }
-
-    /* split */
-    .split { display: grid; grid-template-columns: 1.1fr 1fr; gap: 40px; align-items: center; }
-    .split ul { margin: 0; padding-left: 20px; color: var(--text-2); }
-    .split li { margin: 8px 0; }
-    @media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
-    .nas-art { border-radius: 18px; border: 1px solid var(--line); background: radial-gradient(120% 100% at 0% 0%, #1a2210, var(--panel)); padding: 26px; }
-    .flow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: center; }
-    .node { padding: 16px 18px; border-radius: 14px; background: var(--raised); border: 1px solid var(--line); text-align: center; min-width: 140px; }
-    .node b { display: block; }
-    .node small { color: var(--muted); }
-    .arrow { color: var(--accent); font-size: 22px; }
-    .check { display: flex; gap: 8px; margin-top: 18px; flex-wrap: wrap; justify-content: center; }
-    .check span { font-size: 12.5px; padding: 5px 10px; border-radius: 999px; background: color-mix(in srgb, var(--good) 12%, transparent); color: var(--good); }
-
-    /* faq */
-    details { border-bottom: 1px solid var(--line); padding: 16px 4px; }
-    summary { cursor: pointer; font-weight: 650; list-style: none; display: flex; justify-content: space-between; gap: 16px; }
-    summary::-webkit-details-marker { display: none; }
-    summary::after { content: "+"; color: var(--accent); font-weight: 800; transition: transform 0.2s; }
-    details[open] summary::after { transform: rotate(45deg); }
-    details p { color: var(--text-2); margin: 10px 0 0; }
-
-    .cta { text-align: center; padding: 70px 24px; border-radius: 24px; background: radial-gradient(80% 120% at 50% 0%, color-mix(in srgb, var(--accent) 18%, transparent), var(--panel)); border: 1px solid var(--line); }
-    footer { padding: 40px 0 60px; color: var(--muted); font-size: 14px; border-top: 1px solid var(--line); }
-    footer .row { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; }
-    footer a { color: var(--text-2); text-decoration: none; }
-    footer a:hover { color: var(--text); }
-    .reveal { opacity: 0; transform: translateY(14px); transition: opacity 0.6s, transform 0.6s cubic-bezier(0.22, 1, 0.36, 1); }
-    .reveal.in { opacity: 1; transform: none; }
-  </style>
+  <link rel="stylesheet" href="site.css">
 </head>
 <body>
-  <header>
-    <div class="wrap nav">
-      <a class="brand" href="#top"><img src="logo.svg" width="28" height="28" alt="">HINDSIGHT <span class="beta">BETA</span></a>
-      <nav>
+  <div class="frame">
+    <header class="panel top">
+      <a class="brand" href="./"><img src="logo.svg" width="26" height="26" alt="">Hindsight</a>
+      <nav aria-label="Site">
         <a href="#features">Features</a>
-        <a href="#compare">Compare</a>
         <a href="#nas">NAS</a>
-        <a href="#faq">FAQ</a>
+        <a href="#compare">Compare</a>
+        <a href="changelog.html">Changelog</a>
         <a href="https://github.com/aattiaibrahim/hindsight">GitHub</a>
       </nav>
       <a class="btn primary small" href="https://github.com/aattiaibrahim/hindsight/releases/latest">Download</a>
-    </div>
-  </header>
+    </header>
 
-  <main id="top">
-    <div class="hero">
-      <div class="wrap">
-        <div class="pills"><span class="pill">Free and open source</span><span class="pill">No account</span><span class="pill">Windows 10 / 11 · NVIDIA</span></div>
-        <h1>The game clipper that stays <em>out of your way.</em></h1>
-        <p class="lead">An always-on replay buffer on your NVIDIA GPU, a frame-exact editor, Discord on its own audio track, montages in a few clicks, and your whole library on your NAS. No account, no watermark, no ads.</p>
-        <div class="ctas">
-          <a class="btn primary" href="https://github.com/aattiaibrahim/hindsight/releases/latest">⬇ Download for Windows</a>
-          <a class="btn" href="#features">See what it does</a>
+    <main style="display:contents">
+      <section class="panel hero">
+        <div>
+          <h1>A free replay buffer and clip library for Windows</h1>
+          <p class="lead">Save the last two minutes with a key, trim it, share it, keep it on your NAS. No account, no watermark, no ads.</p>
+          <a class="btn primary" href="https://github.com/aattiaibrahim/hindsight/releases/latest" data-download-label>Download 0.1.30</a>
+          <div class="facts">
+            <span id="fact-version">Version 0.1.30</span>
+            <span id="fact-size">52 MB</span>
+            <span id="fact-date">Released November 7, 2026</span>
+            <span id="fact-downloads"></span>
+            <span>Windows 10 and 11 · NVIDIA GTX 10-series or newer</span>
+          </div>
         </div>
-        <p class="fine">About 3% of one CPU core at 1080p60. The installer isn't code-signed yet: if SmartScreen warns, click <b>More info → Run anyway</b>.</p>
-        <div class="hero-shot"><img src="img/studio.jpg" alt="Hindsight's editor: a clip open with the trim timeline, audio lanes, its NAS status and the share panel" width="2000" height="1175"></div>
-      </div>
-    </div>
-
-    <section id="features">
-      <div class="wrap">
-        <div class="kicker">Features</div>
-        <h2>Everything after the moment, done right.</h2>
-        <p class="sub">Press a key when something good happens. Hindsight keeps the last minutes ready in memory, saves them in under a second, and gives you everything to trim, fix, share and show off.</p>
-        <div class="grid">
-          <div class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg></div><h3>Light on your game</h3><p>Encodes on the GPU's own NVENC chip, about 2.5 ms a frame. The buffer lives in RAM, so no constant SSD writes, and saving a 2-minute clip takes under a second.</p></div>
-          <div class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10v4M10 9v6M14 11v2M18 10v4"/></svg></div><h3>Discord on its own track</h3><p>Game, mic and Discord are three separate tracks, picked out per app by Windows. Mute your friends and keep the game, or the other way round.</p></div>
-          <div class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3v18M18 3v18M3 8h18M3 16h18"/></svg></div><h3>Frame-exact editor</h3><p>Trims cut on the exact frame and copy the rest untouched, so they're instant and lossless. Waveforms per track, mute stretches, change volumes, export as MP3.</p></div>
-          <div class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg></div><h3>Links that play in Discord</h3><p>One click uploads to Catbox, Litterbox, Streamable or a Discord channel, converted so it plays inline for everyone. No Nitro needed.</p></div>
-          <div class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 14h20M7 4v10M12 4v10M17 4v10"/></svg></div><h3>Montages in a few clicks</h3><p>Pick a length and which clips (random, a date range, edited or not), then fine-tune on a Premiere-style timeline with your own song under it.</p></div>
-          <div class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01"/></svg></div><h3>Your NAS, built in</h3><p>Every clip is copied to your NAS once you're out of game and checked byte for byte. A badge on each clip shows if it's there yet. Free up space on your PC and keep watching every clip, here or on your phone.</p></div>
-          <div class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21.2l8.8-8.8a5.5 5.5 0 0 0 0-7.8z"/></svg></div><h3>Heals damaged clips</h3><p>Finds clips that won't play properly (a common NVIDIA and OBS problem after a crash). Repair them all into fixed copies, or cut one down to its good part after you've watched what's kept.</p></div>
-          <div class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></div><h3>On this day</h3><p>"1 year ago today": clips from this date in earlier years, at the top of your library, ready to watch straight through.</p></div>
-          <div class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h6l2 2h10v10H3z"/></svg></div><h3>One library for every recorder</h3><p>Clips from Medal, OBS, NVIDIA, Ascent, AMD, Xbox Game Bar and more, grouped by game with official logos from Steam. Duplicates and misspelled folders are spotted, and emptied old folders can go.</p></div>
-          <div class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.1 15.9M14.5 14.5 20 20M8.1 8.1 12 12"/></svg></div><h3>Knows what to trim</h3><p>To trim lists every clip you saved but never cut down, with how much space trimming each to its best 30 seconds would free. "Keep whole" takes a clip off the list.</p></div>
-          <div class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="m21 16-5-5-8 8"/></svg></div><h3>Finds the game for you</h3><p>For clips in folders that don't say which game (OBS, Desktop, imports), an optional image model on your PC looks at a few frames and suggests the game. You check before anything moves.</p></div>
-          <div class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19V5M4 19h16M8 15l4-4 3 3 5-6"/></svg></div><h3>Measures itself</h3><p>A built-in performance test turns OBS, NVIDIA and Medal on and off and measures what each costs in your game, on your PC.</p></div>
-          <div class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></div><h3>Stream Deck and hotkeys</h3><p>Save, record, pause and open from a Stream Deck plugin, hotkeys or the tray. The right encoder is picked for your GPU automatically.</p></div>
-          <div class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 6v6l4 2"/></svg></div><h3>Made with its testers</h3><p>It's in beta. A diagnostics report (with your name and paths left out) makes bugs quick to fix, and feature requests go straight on GitHub.</p></div>
+        <div class="demo">
+          <video src="img/demo.mp4" poster="img/demo-poster.jpg" autoplay muted loop playsinline width="1400" height="822" aria-label="Opening a clip in Hindsight, marking its start and end, and saving the trim"></video>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <section>
-      <div class="wrap shots">
-        <figure class="reveal"><img src="img/totrim.jpg" alt="To trim: the clips not trimmed yet, by game and day, with how much space trimming would free" width="2000" height="1175" loading="lazy"><figcaption>To trim: every clip you haven't cut down yet, and how much space trimming would free.</figcaption></figure>
-        <figure class="reveal"><img src="img/notifications.jpg" alt="The notifications page with folder merges, damaged clips and game suggestions" width="2000" height="1175" loading="lazy"><figcaption>One page for everything that needs a look: merges, damaged clips, duplicates, old folders.</figcaption></figure>
-        <figure class="reveal"><img src="img/appearance.jpg" alt="Appearance settings with four themes and thirteen accent colours" width="2000" height="1175" loading="lazy"><figcaption>Four themes and 13 accents, Windows blue by default, or follow your Windows accent.</figcaption></figure>
-      </div>
-    </section>
+      <section class="panel row" id="features">
+        <div class="text">
+          <h2>Save the moment</h2>
+          <p>Hindsight keeps the last few minutes in memory while you play. Press Alt+F10 and they're a clip in under a second, in a folder named after the game.</p>
+          <p>It records on the NVIDIA chip that's there for video, so it costs about 3% of one CPU core at 1080p60. Your game, your microphone and Discord are three separate audio tracks.</p>
+        </div>
+        <div class="shot"><img src="img/library.jpg" alt="Hindsight's library by day, with the status bar along the bottom: buffer on, AV1 at 1080p60, the NAS, and Save clip" width="2000" height="1175" loading="lazy"></div>
+      </section>
 
-    <section id="compare">
-      <div class="wrap">
-        <div class="kicker">Compare</div>
-        <h2>What sets Hindsight apart.</h2>
-        <p class="sub">The big recorders are good at recording. Hindsight is built for everything after: keeping clips safe, finding them again, fixing them and sharing them.</p>
-        <div class="table-wrap reveal">
+      <section class="panel row flip">
+        <div class="text">
+          <h2>Trim it exactly</h2>
+          <p>Set a start and an end and save. The cut lands on the frame you chose, and the rest of the video is copied as it is, so it's quick and keeps full quality.</p>
+          <p>Each audio track gets its own waveform: mute a stretch, turn your friends down, or save just the audio.</p>
+        </div>
+        <div class="shot"><img src="img/studio.jpg" alt="The editor: a clip with its trim timeline and two audio tracks" width="2000" height="1175" loading="lazy"></div>
+      </section>
+
+      <section class="panel row">
+        <div class="text">
+          <h2>A library that keeps itself tidy</h2>
+          <p>Your clips by game and by day, with the game's logo. To trim lists every clip you haven't cut down yet and how much space trimming would free.</p>
+          <p>Clips from Medal, OBS, NVIDIA and other recorders show up in the same place. Damaged clips, duplicates and folders spelled two ways are pointed out, never changed without asking.</p>
+        </div>
+        <div class="shot"><img src="img/totrim.jpg" alt="To trim: clips not trimmed yet, grouped by day, with how much space trimming would free" width="2000" height="1175" loading="lazy"></div>
+      </section>
+
+      <section class="panel row flip" id="nas">
+        <div class="text">
+          <h2>On your NAS, checked</h2>
+          <p>Clips save to your PC first, then copy to your NAS once you've closed the game. Each copy is read back and compared byte for byte before it counts.</p>
+          <p>The Hindsight Server app runs on TrueNAS or any Docker host and puts your library in the browser, on any phone or PC at home. <a href="https://github.com/aattiaibrahim/hindsight/tree/main/server">Set it up</a>.</p>
+        </div>
+        <div class="flow" aria-label="Your PC saves the clip, your NAS keeps a checked copy, and you watch it on a phone or laptop">
+          <div class="node"><b>Your PC</b><small>saves instantly</small></div>
+          <span class="arrow">→</span>
+          <div class="node"><b>Your NAS</b><small>checked copy</small></div>
+          <span class="arrow">→</span>
+          <div class="node"><b>Phone, laptop</b><small>watch and share</small></div>
+        </div>
+      </section>
+
+      <section class="panel row">
+        <div class="text">
+          <h2>Share to Discord</h2>
+          <p>Upload to Catbox, Litterbox, Streamable or a Discord channel and the link is copied. It's converted so it plays inside Discord for everyone, no Nitro needed.</p>
+          <p>Nothing leaves your PC unless you press Share.</p>
+        </div>
+        <div class="shot narrow"><img src="img/share.jpg" alt="The editor's side panel: the clip's details, Share with Upload and copy link, and the other ways to save it" width="440" height="1021" loading="lazy"></div>
+      </section>
+
+      <section class="panel" id="compare">
+        <h2>How it compares</h2>
+        <p style="margin-bottom:20px">Only the things that are different. What Hindsight can't do yet is in here too.</p>
+        <div class="table-wrap">
           <table>
             <thead>
               <tr><th></th><th class="us">Hindsight</th><th>Medal</th><th>NVIDIA App</th><th>OBS Studio</th></tr>
             </thead>
             <tbody>
-              <tr><td>Free and open source</td><td class="us"><span class="yes">✓</span> Free, open source</td><td class="no">Free, closed source</td><td class="no">Free, closed source</td><td><span class="yes">✓</span> Free, open source</td></tr>
-              <tr><td>Works without an account</td><td class="us"><span class="yes">✓</span></td><td class="no">Sign-in needed</td><td><span class="yes">✓</span></td><td><span class="yes">✓</span></td></tr>
-              <tr><td>Clip library with an editor</td><td class="us"><span class="yes">✓</span> Frame-exact, lossless</td><td><span class="yes">✓</span></td><td class="no">Basic</td><td class="no">None (files only)</td></tr>
-              <tr><td>Discord on its own audio track</td><td class="us"><span class="yes">✓</span> Automatic</td><td class="no">—</td><td class="no">—</td><td class="no">With manual setup</td></tr>
-              <tr><td>Copies clips to your own NAS</td><td class="us"><span class="yes">✓</span> Checked byte for byte</td><td class="no">Its own cloud</td><td class="no">—</td><td class="no">—</td></tr>
-              <tr><td>Finds and heals damaged clips</td><td class="us"><span class="yes">✓</span></td><td class="no">—</td><td class="no">—</td><td class="no">—</td></tr>
-              <tr><td>Measures its own cost in your game</td><td class="us"><span class="yes">✓</span> Against the others</td><td class="no">—</td><td class="no">—</td><td class="no">—</td></tr>
+              <tr><td>Source code</td><td class="us">Open</td><td>Closed</td><td>Closed</td><td>Open</td></tr>
+              <tr><td>Account needed</td><td class="us">No</td><td>Yes</td><td>No</td><td>No</td></tr>
+              <tr><td>Discord on its own audio track</td><td class="us"><span class="yes">Automatic</span></td><td>No</td><td>No</td><td>With manual setup</td></tr>
+              <tr><td>Copies clips to your own NAS</td><td class="us"><span class="yes">Yes, checked</span></td><td>No (its own cloud)</td><td>No</td><td>No</td></tr>
+              <tr><td>Finds and heals damaged clips</td><td class="us"><span class="yes">Yes</span></td><td>No</td><td>No</td><td>No</td></tr>
+              <tr><td>AMD and Intel graphics</td><td class="us">Not yet (NVIDIA only)</td><td>Yes</td><td>No (NVIDIA only)</td><td>Yes</td></tr>
+              <tr><td>Cloud backup</td><td class="us">No (your NAS instead)</td><td>Yes</td><td>No</td><td>No</td></tr>
             </tbody>
           </table>
         </div>
-        <p class="note">Based on each app's public features as of November 2026; "—" means we couldn't find it. Spotted something out of date? <a href="https://github.com/aattiaibrahim/hindsight/issues/new?template=bug_report.yml">Tell us</a> and we'll fix it.</p>
-      </div>
-    </section>
+        <p class="note">Last checked November 2026 against <a href="https://medal.tv">medal.tv</a>, <a href="https://www.nvidia.com/en-us/software/nvidia-app/">NVIDIA App</a> and <a href="https://obsproject.com">obsproject.com</a>. Something out of date? <a href="https://github.com/aattiaibrahim/hindsight/issues/new?template=bug_report.yml">Tell us</a>.</p>
+      </section>
 
-    <section id="nas">
-      <div class="wrap split">
-        <div class="reveal">
-          <div class="kicker">Hindsight on your NAS</div>
-          <h2>Every clip, safe at home. Watch them anywhere in the house.</h2>
-          <ul>
-            <li>Clips save to your PC first (instant, works offline), then copy to the NAS once you've closed your game.</li>
-            <li>Each copy is read back from the NAS and compared byte for byte before it counts. Freed-up copies go to the Recycle Bin.</li>
-            <li>The Hindsight Server app runs on TrueNAS (or any Docker host): your library in the browser, on any phone or PC at home.</li>
-            <li>Share links, montages and "On this day" right from the NAS page, and storage per game at a glance.</li>
-          </ul>
-          <p style="margin-top:20px"><a class="btn" href="https://github.com/aattiaibrahim/hindsight/tree/main/server">Set up the NAS app</a></p>
-        </div>
-        <div class="nas-art reveal">
-          <div class="flow">
-            <div class="node"><b>Your PC</b><small>saves instantly</small></div>
-            <div class="arrow">→</div>
-            <div class="node"><b>Your NAS</b><small>copied when you're done playing</small></div>
-            <div class="arrow">→</div>
-            <div class="node"><b>Phone, laptop</b><small>watch and share</small></div>
-          </div>
-          <div class="check"><span>✓ SHA-256 checked</span><span>✓ Same game folders</span><span>✓ Several PCs, one library</span><span>✓ Edits stay in step</span></div>
-        </div>
-      </div>
-    </section>
-
-    <section id="faq">
-      <div class="wrap">
-        <div class="kicker">FAQ</div>
+      <section class="panel" id="faq">
         <h2>Questions</h2>
-        <details><summary>Do I need an NVIDIA graphics card?</summary><p>Yes, for now: Hindsight records on NVIDIA's video encoder (NVENC), GTX 10-series or newer. It picks the best format your card has by itself: AV1 on an RTX 40 or 50 series, HEVC or H.264 on older cards.</p></details>
-        <details><summary>Is it really free? What's the catch?</summary><p>It's free and open source, with no account, ads or watermark. Your clips stay on your PC (and your NAS, if you add one). Nothing is uploaded unless you press Share.</p></details>
-        <details><summary>Windows says it "protected my PC". Is it safe?</summary><p>The installer isn't code-signed yet, so SmartScreen doesn't recognise it. Click <b>More info → Run anyway</b>. The source code is on GitHub for anyone to check.</p></details>
-        <details><summary>Will it slow my game down?</summary><p>Very little: about 3% of one CPU core at 1080p60, with encoding on the GPU's dedicated chip. Background jobs (NAS copying, thumbnails, damage checks) wait until you're out of game. You can measure it yourself with the built-in performance test.</p></details>
-        <details><summary>If I delete a clip on my PC, is it deleted on the NAS too?</summary><p>No. The NAS is your safe copy: deleting a clip on your PC (it goes to the Recycle Bin) leaves the NAS copy where it is, and freeing up space on your PC only removes the local copy once the NAS copy is checked. To delete it everywhere, delete it on the NAS too.</p></details>
-        <details><summary>Can I bring my clips from Medal, NVIDIA or OBS?</summary><p>Yes. Hindsight finds their folders, shows their clips in your library by game, and can move them into its own folders (with undo). Once a recorder's folder has no clips left, Hindsight offers to send it to the Recycle Bin.</p></details>
+        <details><summary>Do I need an NVIDIA graphics card?</summary><p>Yes, for now: a GTX 10-series or newer. Hindsight picks the best format your card has: AV1 on an RTX 40 or 50 series, HEVC or H.264 on older ones.</p></details>
+        <details><summary>Windows says it "protected my PC". Is it safe?</summary><p>The installer isn't code-signed yet, so SmartScreen doesn't recognise it. Click <b>More info</b>, then <b>Run anyway</b>. The source code is on GitHub for anyone to check.</p></details>
+        <details><summary>Will it slow my game down?</summary><p>Very little: about 3% of one CPU core at 1080p60, with encoding on the GPU's video chip. Copying to the NAS, thumbnails and damage checks wait until you're out of game.</p></details>
+        <details><summary>If I delete a clip on my PC, is it deleted on the NAS too?</summary><p>No. The NAS keeps your safe copy. Deleting on your PC sends the clip to the Recycle Bin and leaves the NAS copy alone.</p></details>
+        <details><summary>Can I bring my clips from Medal, NVIDIA or OBS?</summary><p>Yes. Hindsight shows their clips by game and can move them into its own folders, with undo. Once a recorder's folder has no clips left, it offers to send it to the Recycle Bin.</p></details>
         <details><summary>Something's broken, or I have an idea.</summary><p>Run <b>Settings → About → Run diagnostics</b> and attach the file to a <a href="https://github.com/aattiaibrahim/hindsight/issues/new?template=bug_report.yml">bug report</a>. Ideas go in a <a href="https://github.com/aattiaibrahim/hindsight/issues/new?template=feature_request.yml">feature request</a>.</p></details>
+      </section>
+    </main>
+
+    <footer class="panel foot">
+      <div>
+        <h3>What Hindsight sends over the internet</h3>
+        <ul>
+          <li>A check for updates, to GitHub.</li>
+          <li>Game folder names, to Steam's store search, for game logos. You can turn this off in Settings → Library.</li>
+          <li>Your clip, only when you press Share, to the host you pick.</li>
+          <li>The game finder's image model, only if you turn it on.</li>
+          <li>Nothing else: no accounts, no analytics, no telemetry.</li>
+        </ul>
       </div>
-    </section>
-
-    <section>
-      <div class="wrap cta reveal">
-        <h2>Never miss the moment again.</h2>
-        <p class="sub" style="margin: 0 auto 26px">Free for Windows 10 and 11 with an NVIDIA GPU. It updates itself.</p>
-        <a class="btn primary" href="https://github.com/aattiaibrahim/hindsight/releases/latest">⬇ Download Hindsight</a>
+      <div class="links">
+        <h3>Hindsight</h3>
+        <a href="https://github.com/aattiaibrahim/hindsight">Source code on GitHub</a>
+        <a href="changelog.html">Changelog</a>
+        <a href="https://github.com/aattiaibrahim/hindsight/issues/new?template=bug_report.yml">Report a bug</a>
+        <a href="https://github.com/aattiaibrahim/hindsight/blob/main/THIRD_PARTY_NOTICES.md">Licences</a>
+        <span class="muted">Free and open source, in beta. The installer isn't code-signed yet.</span>
       </div>
-    </section>
-  </main>
-
-  <footer>
-    <div class="wrap row">
-      <span>Hindsight is free and open source.</span>
-      <span style="flex:1"></span>
-      <a href="https://github.com/aattiaibrahim/hindsight">GitHub</a>
-      <a href="https://github.com/aattiaibrahim/hindsight/issues/new?template=bug_report.yml">Report a bug</a>
-      <a href="https://github.com/aattiaibrahim/hindsight/issues?q=is%3Aissue+label%3A%22feature+request%22">Feature requests</a>
-      <a href="https://github.com/aattiaibrahim/hindsight/blob/main/THIRD_PARTY_NOTICES.md">Licences</a>
-    </div>
-  </footer>
-
-  <script>
-    // Fade sections in as they scroll into view (everything shows at once with Reduce motion).
-    const io = "IntersectionObserver" in window && !matchMedia("(prefers-reduced-motion: reduce)").matches
-      ? new IntersectionObserver((es) => es.forEach((e) => e.isIntersecting && (e.target.classList.add("in"), io.unobserve(e.target))), { rootMargin: "0px 0px -8% 0px" })
-      : null;
-    document.querySelectorAll(".reveal").forEach((el) => (io ? io.observe(el) : el.classList.add("in")));
-  </script>
+    </footer>
+  </div>
+  <script src="site.js"></script>
 </body>
 </html>

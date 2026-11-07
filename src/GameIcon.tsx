@@ -1,18 +1,13 @@
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
 import { api } from "./api";
+import { Icon } from "./icons";
 
-/** Same colour for the same game, from its name. */
-function hue(name: string) {
-  let h = 0;
-  for (const c of name.toLowerCase()) h = (h * 31 + c.charCodeAt(0)) % 360;
-  return h;
-}
 
 /**
  * A game's logo: its own program icon when the game is installed or has been
- * played, else a coloured tile with its first letter. "Desktop" and recorder
- * folders get the letter tile too.
+ * played (or one you picked), else a plain gamepad on grey. "Desktop" and recorder
+ * folders get the gamepad too.
  */
 export function GameIcon({ name, size = 18 }: { name: string; size?: number }) {
   const [src, setSrc] = useState<string | null>(null);
@@ -33,14 +28,9 @@ export function GameIcon({ name, size = 18 }: { name: string; size?: number }) {
     };
   }, [name, version]);
   if (src) return <img className="game-icon" src={src} alt="" width={size} height={size} style={{ width: size, height: size }} />;
-  const letter = (name.match(/[A-Za-z0-9]/)?.[0] ?? "?").toUpperCase();
   return (
-    <span
-      className="game-icon letter"
-      aria-hidden="true"
-      style={{ width: size, height: size, fontSize: size * 0.58, background: `hsl(${hue(name)} 45% 32%)` }}
-    >
-      {letter}
+    <span className="game-icon none" aria-hidden="true" style={{ width: size, height: size }}>
+      <Icon name="game" size={Math.round(size * 0.68)} strokeWidth={2} />
     </span>
   );
 }

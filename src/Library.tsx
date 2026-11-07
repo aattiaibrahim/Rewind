@@ -12,6 +12,7 @@ import { OnThisDay } from "./OnThisDay";
 import { HealReview } from "./HealReview";
 import { NasBadge, nasStatus, useNasState } from "./NasProgress";
 import { SlidingPill } from "./SlidingPill";
+import { Icon } from "./icons";
 
 /** Where each list (all clips, damaged clips) was scrolled to, kept while you're in Studio (the page itself unmounts). */
 const memories: Record<string, { scroll: number; folder: string; query: string; filters?: Filters }> = {};
@@ -91,7 +92,7 @@ function ClipRow({
         <div className="card-title">{clip.name}</div>
         <div className="card-meta">
           {clip.folder} · {time}
-          {damage && damage.state !== "ok" && <span className="src-tag bad"> ⚠ Damaged</span>}
+          {damage && damage.state !== "ok" && <span className="src-tag bad with-icon"><Icon name="warn" size={12} />Damaged</span>}
           {clip.location === "linked" && <span className="src-tag">{clip.source}</span>}
           <NasBadge status={nasStatus(clip, nasOn, copying)} />
         </div>
@@ -194,7 +195,7 @@ function ClipCard({
             onToggle(e);
           }}
         >
-          {selected ? "✓" : ""}
+          {selected && <Icon name="check" size={15} strokeWidth={2.5} />}
         </span>
         {info && <span className="badge br">{fmtDuration(info.duration)}</span>}
         <div className="card-actions">
@@ -252,8 +253,9 @@ function ClipCard({
         {/* Status that matters at a glance stays visible; the rest shows on hover, like Immich. */}
         <div className="card-tags">
           {damage && damage.state !== "ok" && (
-            <span className="src-tag bad" title={damagedText(damage)}>
-              ⚠ Damaged
+            <span className="src-tag bad with-icon" title={damagedText(damage)}>
+              <Icon name="warn" size={12} />
+              Damaged
             </span>
           )}
           {upload && (
@@ -262,8 +264,9 @@ function ClipCard({
             </span>
           )}
           {!upload && link && (
-            <span className="src-tag ok" title={`Shared on ${link.host}: the link is in Studio`}>
-              🔗 {timeLeft(link) ? `${timeLeft(link)} left` : "Shared"}
+            <span className="src-tag ok with-icon" title={`Shared on ${link.host}: the link is in Studio`}>
+              <Icon name="link" size={12} />
+              {timeLeft(link) ? `${timeLeft(link)} left` : "Shared"}
             </span>
           )}
           {clip.location === "linked" && <span className="src-tag">{clip.source}</span>}

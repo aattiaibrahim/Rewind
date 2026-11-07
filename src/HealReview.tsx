@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, ClipFile, errText, fmtTime, Health } from "./api";
 import { useThumb } from "./hooks";
+import { Icon } from "./icons";
 
 const t = (s: number) => fmtTime(s).replace(/\.\d+$/, "");
 
@@ -131,7 +132,7 @@ export function HealReview({
           }}
         >
           <Slide key={clip.path} clip={clip} range={h.best} onSeen={() => setSeen((s) => (s.has(clip.path) ? s : new Set(s).add(clip.path)))} />
-          {done && <span className="heal-done">Healed ✓</span>}
+          {done && <span className="heal-done with-icon"><Icon name="check" size={15} />Healed</span>}
           <button className="del-nav prev round" aria-label="Previous clip (←)" disabled={i === 0} onClick={() => go(-1)}>
             ‹
           </button>

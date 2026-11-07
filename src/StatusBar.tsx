@@ -1,0 +1,109 @@
+import { useEffect, useRef, useState } from "react";
+import { api, codecLabel, errText, fmtDuration, Status } from "./api";
+import { audioLine, folderLine, RecordButton } from "./BufferCard";
+import { NasBadge, NasProgress, useNasState } from "./NasProgress";
+
+/**
+ * One thin line along the bottom of the window: the buffer, what it records,
+ * the NAS, and the save / record buttons. Replaces the big card that used to
+ * sit in the sidebar; its details open from the buffer part.
+ */
+export function StatusBar({ status, hotkey, recordHotkey, version }: { status: Status | null; hotkey: string; recordHotkey: string; version?: string }) {
+  const nas = useNasState();
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const wrap = useRef<HTMLDivElement>(null);
+  const on = !!status?.running;
+  const bufferOn = on && !!status?.enabled;
+  const problem = (status?.lastError && !on && status.enabled) || (on && status?.audioError);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => !wrap.current?.contains(e.target as Node) && setOpen(false);
+    const key = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    window.addEventListener("mousedown", close);
+    window.addEventListener("keydown", key);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", key);
+    };
+  }, [open]);
+
+  const save = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.saveClip();
+    } catch (e) {
+      setErr(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const bufferText = !status
+    ? "Starting…"
+    : bufferOn
+      ? `Buffer on · ${fmtDuration(status.bufferedSeconds)} of ${fmtDuration(status.bufferSeconds)}`
+      : status.enabled === false
+        ? "Buffer paused"
+        : "Buffer starting…";
+  const nasText = !nas?.enabled
+    ? null
+    : !nas.reachable
+      ? "Can't reach the NAS"
+      : nas.copying
+        ? `Copying to the NAS${nas.totalBytes ? ` · ${Math.round((nas.doneBytes / nas.totalBytes) * 100)}%` : "…"}`
+        : nas.paused && nas.pending
+          ? `${nas.pending} to copy after your game`
+          : nas.pending
+            ? `${nas.pending} waiting for the NAS`
+            : "NAS up to date";
+
+  return (
+    <footer className="statusbar">
+      <div className="sb-buffer" ref={wrap}>
+        <button className={`sb-item ${problem ? "bad" : ""}`} onClick={() => setOpen((o) => !o)} aria-expanded={open} title="Buffer details">
+          <span className={`dot ${bufferOn ? "on" : problem ? "err" : ""}`} />
+          {bufferText}
+        </button>
+        {open && (
+          <div className="sb-pop" role="dialog" aria-label="Buffer details">
+            <div className="meter" aria-hidden="true">
+              <div style={{ width: `${bufferOn && status?.bufferSeconds ? (status.bufferedSeconds / status.bufferSeconds) * 100 : 0}%` }} />
+            </div>
+            <div className="buffer-meta">
+              {status && bufferOn ? (status.inRam ? `${status.bufferMb} MB in RAM` : "Held on disk") : "Not recording right now"}
+              <br />
+              {audioLine(status) ?? "No audio"}
+              <br />
+              {folderLine(status)}
+            </div>
+            <NasProgress n={nas} compact />
+            {status?.lastError && !on && status.enabled && <div className="err-text">{status.lastError}</div>}
+            {on && status?.audioError && <div className="err-text">{status.audioError}</div>}
+          </div>
+        )}
+      </div>
+      {on && (
+        <span className="sb-item quiet">
+          {codecLabel(status!.encoder)} · {status!.height}p{status!.fps}
+        </span>
+      )}
+      {nasText && (
+        <span className={`sb-item quiet ${nas && !nas.reachable ? "bad" : ""}`} title={nas?.lastError ?? undefined}>
+          <NasBadge status={nas?.copying ? "copying" : nas?.pending ? "not-synced" : "synced"} />
+          {nasText}
+        </span>
+      )}
+      <span style={{ flex: 1 }} />
+      {err && <span className="sb-item bad">{err}</span>}
+      {version && <span className="sb-item quiet">v{version} beta</span>}
+      <RecordButton status={status} hotkey={recordHotkey} className="small" />
+      <button className="btn small primary" disabled={!bufferOn || busy} onClick={save} title={`Save the last ${status ? fmtDuration(status.bufferSeconds) : "moments"} (${hotkey})`}>
+        {busy ? "Saving…" : `Save clip · ${hotkey}`}
+      </button>
+    </footer>
+  );
+}

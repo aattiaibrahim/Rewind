@@ -3,6 +3,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useCallback, useEffect, useState } from "react";
 import { api, errText, fmtSize, Reach, Settings, Upload, UPLOAD_HOSTS, UploadHost, UploadProgress } from "./api";
 import { ConfirmDialog } from "./ConfirmUpdate";
+import { Icon } from "./icons";
 
 /** Live upload progress for every clip, plus each clip's past links. */
 export function useUploads() {
@@ -365,7 +366,7 @@ export function SharingSettings({
         </span>
         {have.discordWebhook ? (
           <div className="row" style={{ gap: 8 }}>
-            <span className="src-tag ok">✓ Connected{s.discordWebhookName ? ` as “${s.discordWebhookName}”` : ""}</span>
+            <span className="src-tag ok with-icon"><Icon name="check" size={12} />Connected{s.discordWebhookName ? ` as “${s.discordWebhookName}”` : ""}</span>
             <span style={{ flex: 1 }} />
             <button className="btn small" disabled={busy === "hook"} onClick={() => saveHook("")}>
               Remove

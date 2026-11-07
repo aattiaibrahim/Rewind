@@ -6,7 +6,8 @@ import type { UploadProgress } from "./api";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import { api, errText } from "./api";
-import { BufferCard } from "./BufferCard";
+import { StatusBar } from "./StatusBar";
+import { Icon, IconName } from "./icons";
 import { Cleanup } from "./Cleanup";
 import { ConfirmDelete } from "./ConfirmDelete";
 import { ConfirmUpdate, updateInterrupts } from "./ConfirmUpdate";
@@ -384,23 +385,24 @@ export default function App() {
 
   return (
     <div className="shell">
-      <nav className="nav">
+      {/* A slim rail of icons; each one's name shows on hover or keyboard focus. */}
+      <nav className="nav" aria-label="Hindsight">
         <SlidingPill selector=".nav-item.on" />
-        <div className="brand">
-          <img src={logo} alt="" width={26} height={26} />
-          HINDSIGHT
-          <span className="beta-tag" title="Hindsight is in beta: thanks for testing it">
-            BETA
-          </span>
-          {upd?.current && <span className="brand-version">v{upd.current}</span>}
+        <div className="brand" title={`Hindsight${upd?.current ? ` ${upd.current}` : ""} (beta)`}>
+          <img src={logo} alt="Hindsight" width={28} height={28} />
         </div>
         {nav.map(([id, label, sub]) => (
           <button
             key={id}
-            className={`nav-item ${sub ? "nav-sub" : ""} ${navOn(id) ? "on" : ""}`}
+            className={`nav-item ${sub ? "nav-sub" : ""} ${navOn(id) ? "on" : ""} ${id === "settings" ? "nav-bottom" : ""}`}
             onClick={() => (id === view && isList(id) ? window.dispatchEvent(new Event("rewind-top")) : setView(id))}
+            aria-label={label}
+            aria-current={navOn(id) ? "page" : undefined}
           >
-            {label}
+            <Icon name={id as IconName} size={sub ? 17 : 20} />
+            <span className="nav-label" role="tooltip">
+              {label}
+            </span>
             {id === "totrim" && !!trimClips?.length && (
               <span className="nav-badge quiet" title={`${trimClips.length} clip${trimClips.length === 1 ? "" : "s"} not trimmed yet`}>
                 {trimClips.length}
@@ -418,8 +420,6 @@ export default function App() {
             )}
           </button>
         ))}
-        <div className="nav-spacer" />
-        <BufferCard status={status} hotkey={settings?.hotkey ?? "Alt+F10"} recordHotkey={settings?.recordHotkey ?? "Alt+F9"} />
       </nav>
       <main className="main">
         {(isList(view) || view === "studio") && (
@@ -496,6 +496,7 @@ export default function App() {
           />
         )}
       </main>
+      <StatusBar status={status} hotkey={settings?.hotkey ?? "Alt+F10"} recordHotkey={settings?.recordHotkey ?? "Alt+F9"} version={upd?.current} />
       {shareReq && settings && (
         <ShareConfirm
           req={shareReq}

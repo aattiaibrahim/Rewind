@@ -2,6 +2,23 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  ArrowLeftFromLine,
+  ArrowRightFromLine,
+  ChevronLeft,
+  Maximize,
+  Minimize,
+  PanelRight,
+  Pause,
+  Play,
+  RectangleHorizontal,
+  RotateCcw,
+  RotateCw,
+  Undo2,
+  Volume1,
+  Volume2,
+  VolumeX,
+} from "lucide-react";
 import { api, ClipFile, codecLabel, errText, fmtSize, fmtTime, Health, PreviewAudio, Probe, Settings, TrackEdit, Upload, UploadProgress, Waveform } from "./api";
 import { AudioLanes, hasAudioEdits, isMutedAt } from "./AudioLanes";
 import { useThumb } from "./hooks";
@@ -51,89 +68,25 @@ function save(key: string, value: number) {
 
 /** Speaker with 0, 1 or 2 sound waves, or a cross when muted. */
 function SpeakerIcon({ level }: { level: number }) {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M11 5 6 9H2v6h4l5 4V5z" fill="currentColor" />
-      {level === 0 ? (
-        <>
-          <line x1="22" y1="9" x2="16" y2="15" />
-          <line x1="16" y1="9" x2="22" y2="15" />
-        </>
-      ) : (
-        <>
-          <path d="M15.5 8.5a5 5 0 0 1 0 7" />
-          {level > 0.5 && <path d="M18.5 5.5a9 9 0 0 1 0 13" />}
-        </>
-      )}
-    </svg>
-  );
+  const C = level === 0 ? VolumeX : level > 0.5 ? Volume2 : Volume1;
+  return <C size={18} strokeWidth={2} aria-hidden="true" />;
 }
 type Result = { text: string; path?: string; err?: boolean } | null;
 
+// The player's icons, from the same set as the rest of the app.
+const ic = { strokeWidth: 2, "aria-hidden": true } as const;
 const Icon = {
-  play: (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z" fill="currentColor" />
-    </svg>
-  ),
-  pause: (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <rect x="6" y="5" width="4.2" height="14" rx="1.2" fill="currentColor" />
-      <rect x="13.8" y="5" width="4.2" height="14" rx="1.2" fill="currentColor" />
-    </svg>
-  ),
-  fullscreen: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />
-    </svg>
-  ),
-  exitFullscreen: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" />
-    </svg>
-  ),
-  theater: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" aria-hidden="true">
-      <rect x="2.5" y="6" width="19" height="12" rx="2" />
-    </svg>
-  ),
-  theaterOff: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" aria-hidden="true">
-      <rect x="2.5" y="6" width="19" height="12" rx="2" />
-      <path d="M15 6v12" />
-    </svg>
-  ),
-  back5: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3" />
-      <path d="M4.5 4.5v3.2h3.2" />
-      <text x="12" y="15.2" textAnchor="middle" fontSize="7.5" fontWeight="700" fill="currentColor" stroke="none">5</text>
-    </svg>
-  ),
-  fwd5: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3" />
-      <path d="M19.5 4.5v3.2h-3.2" />
-      <text x="12" y="15.2" textAnchor="middle" fontSize="7.5" fontWeight="700" fill="currentColor" stroke="none">5</text>
-    </svg>
-  ),
-  markIn: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M10 5H7v14h3" />
-      <path d="M13 12h5M15.5 9.5 18 12l-2.5 2.5" />
-    </svg>
-  ),
-  markOut: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M14 5h3v14h-3" />
-      <path d="M11 12H6M8.5 9.5 6 12l2.5 2.5" />
-    </svg>
-  ),
-  reset: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v4h4" />
-    </svg>
-  ),
+  play: <Play {...ic} fill="currentColor" />,
+  pause: <Pause {...ic} fill="currentColor" />,
+  fullscreen: <Maximize {...ic} />,
+  exitFullscreen: <Minimize {...ic} />,
+  theater: <RectangleHorizontal {...ic} />,
+  theaterOff: <PanelRight {...ic} />,
+  back5: <RotateCcw {...ic} />,
+  fwd5: <RotateCw {...ic} />,
+  markIn: <ArrowRightFromLine {...ic} />,
+  markOut: <ArrowLeftFromLine {...ic} />,
+  reset: <Undo2 {...ic} />,
 };
 
 /** Tick spacing for the ruler: a labelled tick every `major` seconds, small ones every `minor`. */
@@ -679,9 +632,7 @@ export function Studio({
     <div className="studio">
       <div className="studio-top">
         <button className="btn back" onClick={onBack} title="Back to your clips (Esc)">
-          <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M10 3 5 8l5 5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
+          <ChevronLeft size={16} strokeWidth={2} aria-hidden="true" />
           Clips
         </button>
         <div className="studio-title" style={{ flex: 1 }} title={path}>

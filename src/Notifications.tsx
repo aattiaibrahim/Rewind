@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Icon, IconName } from "./icons";
 
 export type NoticeKind = "update" | "folders" | "damaged" | "dupes" | "sort" | "nas";
 
@@ -59,23 +60,12 @@ const GROUPS: [Group, string][] = [
   ["updates", "Updates"],
 ];
 
-/** Tabler-style outline icons, one per kind of notice. */
+const KIND_ICON: Record<NoticeKind, IconName> = { update: "download", folders: "folders", damaged: "damaged", dupes: "copy", sort: "cleanup", nas: "nas" };
+
 function KindIcon({ kind }: { kind: NoticeKind }) {
-  const paths: Record<NoticeKind, string[]> = {
-    update: ["M12 3v12", "M7 10l5 5 5-5", "M5 21h14"],
-    folders: ["M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z", "M8 13h8"],
-    damaged: ["M12 9v4", "M12 17h.01", "M10.3 3.9L2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"],
-    dupes: ["M8 8h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2z", "M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"],
-    sort: ["M12 3l1.9 4.6L19 9l-4 3.4L16 18l-4-2.6L8 18l1-5.6L5 9l5.1-1.4z"],
-    nas: ["M4 5h16v6H4z", "M4 13h16v6H4z", "M8 8h.01", "M8 16h.01"],
-  };
   return (
     <span className={`notif-icon ${kind}`} aria-hidden="true">
-      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        {paths[kind].map((d) => (
-          <path key={d} d={d} />
-        ))}
-      </svg>
+      <Icon name={KIND_ICON[kind]} size={18} />
     </span>
   );
 }
@@ -134,9 +124,7 @@ export function NotificationsPage({ state }: { state: ReturnType<typeof useNotic
                 ))}
               </div>
               <button className="notif-x" onClick={() => hide(n.id)} title="Hide this until it changes" aria-label={`Hide “${n.title}”`}>
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-                  <path d="M6 6l12 12M18 6L6 18" />
-                </svg>
+                <Icon name="close" size={16} />
               </button>
             </div>
           ))}

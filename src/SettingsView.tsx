@@ -29,10 +29,10 @@ function hotkeyFrom(e: React.KeyboardEvent): string | null {
 
 // Preview colours for each theme card (bg, panel, line).
 const THEMES: { id: Theme; label: string; c: [string, string, string] }[] = [
-  { id: "tinted", label: "Tinted", c: ["#0e1116", "#1c222b", "#2a323e"] },
-  { id: "midnight", label: "Midnight", c: ["#0e1014", "#1d222b", "#2b323d"] },
-  { id: "graphite", label: "Graphite", c: ["#121212", "#252525", "#343434"] },
-  { id: "oled", label: "OLED black", c: ["#000000", "#171717", "#262626"] },
+  { id: "tinted", label: "Tinted", c: ["#000000", "#1a1d21", "#2a2e33"] },
+  { id: "midnight", label: "Midnight", c: ["#000000", "#181818", "#2a2a2a"] },
+  { id: "graphite", label: "Graphite", c: ["#0e0e0e", "#1f1f1f", "#313131"] },
+  { id: "oled", label: "OLED black", c: ["#000000", "#0a0a0a", "#1c1c1c"] },
 ];
 
 const ACCENTS: { id: Accent; label: string; c: string }[] = [
@@ -657,7 +657,7 @@ export function SettingsView({
             <span>
               Detected monitors
               <small>
-                {monitors.map((m) => `${m.name.replace("\\\\.\\", "")} ${m.width}×${m.height}${m.primary ? " ★" : ""}`).join(" · ") ||
+                {monitors.map((m) => `${m.name.replace("\\\\.\\", "")} ${m.width}×${m.height}${m.primary ? " (main)" : ""}`).join(" · ") ||
                   "—"}
               </small>
             </span>

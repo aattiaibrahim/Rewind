@@ -1,6 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
 import { api, ClipFile, errText, fmtTime, Health, HealthProgress } from "./api";
+import { Icon } from "./icons";
 
 /** Health results for the clips on screen (only ones already checked). */
 export function useHealth(clips: ClipFile[] | null) {
@@ -59,7 +60,7 @@ export function HealthNotice({
   };
   return (
     <div className="health-notice">
-      <strong>⚠ {damagedText(health)}</strong>
+      <strong className="with-icon"><Icon name="warn" size={16} />{damagedText(health)}</strong>
       <small>
         The file was already like this when it was saved (it's common with NVIDIA and OBS MP4s after a driver hiccup or a
         crash). Hindsight's own clips are saved as MKV, which survives crashes, so they're far less likely to be hit.

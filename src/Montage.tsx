@@ -6,6 +6,7 @@ import { api, ClipFile, errText, fmtDb, fmtTime, Waveform } from "./api";
 import { GameIcon } from "./GameIcon";
 import { useThumb } from "./hooks";
 import { Slider } from "./Slider";
+import { Music } from "lucide-react";
 
 /** One piece of the montage: part of a clip. */
 type Piece = { id: number; clip: ClipFile; start: number; end: number; length: number };
@@ -640,7 +641,7 @@ function Editor({
                 {song ? (
                   <div className="song-block" style={{ width: Math.max(40, length * px) }} title={song.name}>
                     <SongWave wave={song.wave} width={Math.max(40, length * px)} />
-                    <span className="song-name">♪ {song.name}</span>
+                    <span className="song-name with-icon"><Music size={12} aria-hidden="true" />{song.name}</span>
                     <button className="song-x" onClick={() => setSong(null)} aria-label="Remove the song">
                       ×
                     </button>
