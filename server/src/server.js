@@ -1,4 +1,5 @@
-// HTTP API and static files. Read-only towards the clips folder.
+// HTTP API and static files. Writes to the clips folder only for cleanup and
+// the editor, and only with ALLOW_CHANGES=1.
 
 import { createReadStream } from "node:fs";
 import { createWriteStream } from "node:fs";
@@ -9,6 +10,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { gamesOf } from "../public/group.js";
 import { Media } from "./media.js";
+import { probe as probeTracks, waveforms } from "./edit.js";
+import { GAMEPAD_SVG } from "./logos.js";
+import { hideNotice, mergeFolders, notices } from "./notices.js";
 
 export const VERSION = (process.env.REWIND_SERVER_VERSION || "dev").slice(0, 7);
 const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "public");
@@ -119,8 +123,17 @@ async function jsonBody(req) {
   return text ? JSON.parse(text) : {};
 }
 
-export async function createServer({ library, media, cleanup = null, shares = null, montages = null }) {
-  const withMeta = (c) => ({ ...c, ...(media.meta(c) ?? {}) });
+export async function createServer({ library, media, cleanup = null, shares = null, montages = null, store = null, logos = null, edits = null }) {
+  const withMeta = (c) => {
+    const out = { ...c, ...(media.meta(c) ?? {}) };
+    if (store) {
+      out.toTrim = store.toTrim(c);
+      out.nasOnly = store.nasOnly(c);
+      out.keptWhole = !!store.data.keepWhole[c.rel.toLowerCase()];
+    }
+    return out;
+  };
+  const fileOf = (clip) => path.join(library.root, ...clip.rel.split("/"));
   const fail = (res, e) => send(res, e.status || 500, { error: String(e.message || e).slice(-500) });
   const post = (req) => req.method === "POST";
 
@@ -212,11 +225,89 @@ export async function createServer({ library, media, cleanup = null, shares = nu
       }
     }
 
+    // ---- game logos ----
+    if (url.pathname === "/api/logo") {
+      const file = logos ? await logos.get(url.searchParams.get("game") || "").catch(() => null) : null;
+      if (file) return sendFile(req, res, file, { type: "image/jpeg", cache: "public, max-age=604800" });
+      return send(res, 200, GAMEPAD_SVG, { "content-type": "image/svg+xml", "cache-control": "public, max-age=3600" });
+    }
+
+    // ---- notifications ----
+    if (store && url.pathname === "/api/notices") {
+      return send(res, 200, { notices: await notices(library.clips.map(withMeta), { store, cleanup }), canChange: !!cleanup?.canChange }, { "cache-control": "no-cache" });
+    }
+    if (store && url.pathname === "/api/notices/hide" && post(req)) {
+      const body = await jsonBody(req);
+      await hideNotice(String(body.id || ""), store);
+      return send(res, 200, { ok: true });
+    }
+    if (store && url.pathname === "/api/notices/act" && post(req)) {
+      try {
+        const body = await jsonBody(req);
+        const list = await notices(library.clips.map(withMeta), { store, cleanup });
+        const n = list.find((x) => x.id === body.id);
+        if (!n) return send(res, 404, { error: "That notice is gone already." });
+        if (!cleanup) throw Object.assign(new Error("Changes are off on this server."), { status: 403 });
+        cleanup.needChange();
+        let done = 0;
+        if (n.action.do === "merge") done = await mergeFolders(library.clips, n.action.game, library.root);
+        else if (n.action.do === "dedupe") {
+          for (const id of n.action.ids) {
+            const c = library.byId.get(id);
+            if (c) {
+              await cleanup.toTrash(c, "a duplicate copy");
+              done++;
+            }
+          }
+        } else return send(res, 400, { error: "That notice has nothing to do on the server." });
+        await library.rescan();
+        return send(res, 200, { ok: true, done });
+      } catch (e) {
+        return fail(res, e);
+      }
+    }
+
+    // ---- editor ----
+    if (url.pathname === "/api/waveform") {
+      const clip = library.byId.get(url.searchParams.get("id") || "");
+      if (!clip) return send(res, 404, { error: "unknown clip" });
+      try {
+        return send(res, 200, { tracks: await waveforms(fileOf(clip), media.key(clip), media.cacheDir) }, { "cache-control": "private, max-age=3600" });
+      } catch (e) {
+        return fail(res, e);
+      }
+    }
+    if (edits && url.pathname === "/api/edit" && post(req)) {
+      try {
+        const body = await jsonBody(req);
+        const clip = library.byId.get(body.id);
+        if (!clip) return send(res, 404, { error: "That clip isn't on the NAS any more." });
+        // The editor needs the tracks' names too (for "Clip (Microphone).mp3").
+        const info = await probeTracks(fileOf(clip));
+        return send(res, 200, edits.start(clip, info, body));
+      } catch (e) {
+        return fail(res, e);
+      }
+    }
+    if (edits && url.pathname === "/api/edit/jobs") return send(res, 200, { jobs: edits.list(), canChange: !!cleanup?.canChange }, { "cache-control": "no-cache" });
+    if (edits && parts[0] === "api" && parts[1] === "edit" && parts[2] === "jobs" && parts[3]) {
+      try {
+        if (parts[4] === "file") {
+          const file = edits.file(parts[3]);
+          const ext = path.extname(file).toLowerCase();
+          return sendFile(req, res, file, { type: ext === ".mp3" ? "audio/mpeg" : ext === ".mp4" ? "video/mp4" : "video/x-matroska", download: path.basename(file) });
+        }
+        return send(res, 200, edits.status(parts[3]), { "cache-control": "no-cache" });
+      } catch (e) {
+        return fail(res, e);
+      }
+    }
+
     if (url.pathname === "/healthz") return send(res, 200, { ok: true, version: VERSION, release: RELEASE, clips: library.clips.length });
 
     if (url.pathname === "/api/clips") {
       // Changes when clips come or go, and as durations / damage checks come in.
-      const etag = `"v${library.version}-m${media.metaVersion}"`;
+      const etag = `"v${library.version}-m${media.metaVersion}-s${store?.version ?? 0}"`;
       if (req.headers["if-none-match"] === etag) {
         res.writeHead(304, { etag });
         return res.end();
@@ -273,6 +364,10 @@ export async function createServer({ library, media, cleanup = null, shares = nu
             type: "video/mp4",
             download: url.searchParams.has("download") ? `${base} (phone).mp4` : null,
           });
+        }
+        if (store && action === "keep-whole" && post(req)) {
+          await store.keepWhole(clip.rel, url.searchParams.get("on") !== "0");
+          return send(res, 200, { ok: true });
         }
         if (cleanup && action === "keep" && post(req)) {
           await cleanup.keep(clip);

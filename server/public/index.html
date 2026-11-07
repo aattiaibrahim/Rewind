@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0f1217" id="theme-color">
+  <meta name="theme-color" content="#000000">
   <script>
     // The saved colour scheme, before anything is drawn (no flash of the default).
     try {
@@ -12,7 +12,7 @@
     } catch (e) {}
   </script>
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <title>Hindsight</title>
   <link rel="icon" href="logo.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="logo.svg">
@@ -21,49 +21,44 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="app">
-    <header class="appbar">
-      <div class="brand" id="brand">
-        <img src="logo.svg" alt="" width="26" height="26">
-        <span class="word">HINDSIGHT</span>
-        <span class="nas-tag">NAS</span>
-      </div>
-      <nav class="tabs" aria-label="Views">
-        <button class="tab on" data-view="clips">Clips</button>
-        <button class="tab" data-view="montage">Montage</button>
-        <button class="tab" data-view="cleanup">Cleanup</button>
-        <button class="tab" data-view="trash">Trash <small id="trash-count"></small></button>
-      </nav>
-      <div class="scheme">
-        <button class="btn scheme-btn" id="scheme-btn" title="Colour scheme" aria-label="Colour scheme" aria-haspopup="true" aria-expanded="false"><i></i></button>
-        <div class="scheme-pop" id="scheme-pop" hidden>
-          <span class="flabel">Colour</span>
-          <div class="swatches" id="swatches"></div>
-          <div class="scheme-name" id="scheme-name"></div>
-        </div>
-      </div>
-      <button class="btn storage-btn" id="storage-btn" title="Space used on the NAS">
-        <span class="meter" aria-hidden="true"><i id="storage-fill"></i></span>
-        <span id="storage-text">Storage</span>
-      </button>
-    </header>
+  <div class="frame">
+    <nav class="rail" id="rail-nav" aria-label="Views">
+      <div class="rail-brand" id="brand"><img src="logo.svg" alt="Hindsight" width="28" height="28"></div>
+      <button class="nav" data-view="home"><span class="nav-ic" data-icon="home"></span><span class="nav-label">Home</span></button>
+      <button class="nav" data-view="totrim"><span class="nav-ic" data-icon="scissors"></span><span class="nav-label">To trim</span><b class="nav-count" id="count-totrim" hidden></b></button>
+      <button class="nav" data-view="notices"><span class="nav-ic" data-icon="bell"></span><span class="nav-label">Notifications</span><b class="nav-count" id="count-notices" hidden></b></button>
+      <button class="nav" data-view="montage"><span class="nav-ic" data-icon="clapperboard"></span><span class="nav-label">Montage</span></button>
+      <button class="nav" data-view="cleanup"><span class="nav-ic" data-icon="drive"></span><span class="nav-label">Cleanup</span></button>
+      <button class="nav" data-view="trash"><span class="nav-ic" data-icon="trash"></span><span class="nav-label">Trash</span><b class="nav-count" id="trash-count" hidden></b></button>
+      <span class="rail-grow"></span>
+      <button class="nav" data-view="settings"><span class="nav-ic" data-icon="settings"></span><span class="nav-label">Settings</span></button>
+    </nav>
 
-    <div class="lib">
-      <main class="page lib-page" id="scroller">
-        <section class="view" id="view-clips">
-          <div class="summary" id="summary" hidden></div>
+    <div class="main">
+      <main class="page" id="scroller">
+        <section class="view" id="view-home">
           <div class="toolbar">
-            <h1 id="clips-title">Clips</h1>
+            <h1 id="home-title">Home</h1>
+            <span class="grow"></span>
             <label class="search">
-              <span class="muted">Search</span>
-              <input id="search" type="search" placeholder="clips, games…" autocomplete="off" aria-label="Search clips">
+              <span class="search-ic" data-icon="search"></span>
+              <input id="search" type="search" placeholder="Search clips, games, PCs" autocomplete="off" aria-label="Search clips">
             </label>
-            <div class="seg" role="group" aria-label="View">
-              <button data-mode="gallery" class="on" title="Gallery: thumbnails by day">Gallery</button>
-              <button data-mode="folders" title="Folders: one per game">Folders</button>
-              <button data-mode="list" title="List: one row per clip">List</button>
+            <button class="btn" id="filters-btn" aria-expanded="false" aria-controls="filters"><span data-icon="sliders"></span>Filters <span class="count" id="filters-count" hidden></span></button>
+          </div>
+          <div class="filters" id="filters" hidden></div>
+          <div id="home-list" aria-live="polite"></div>
+        </section>
+
+        <section class="view" id="view-game" hidden>
+          <div class="toolbar">
+            <button class="btn icon-only" id="game-back" aria-label="Back to Home" title="Back to Home"><span data-icon="arrowLeft"></span></button>
+            <img class="game-logo big" id="game-logo" alt="">
+            <div class="title-block">
+              <h1 id="game-title"></h1>
+              <span class="muted" id="game-sub"></span>
             </div>
-            <button class="btn" id="filters-btn" aria-expanded="false" aria-controls="filters">Filters <span class="count" id="filters-count" hidden></span></button>
+            <span class="grow"></span>
             <label class="select-wrap" title="Sort">
               <select id="sort" aria-label="Sort">
                 <option value="new">Newest first</option>
@@ -73,9 +68,19 @@
               </select>
             </label>
           </div>
-          <div class="filters" id="filters" hidden></div>
-          <div class="chips" id="chips"></div>
-          <div id="list" aria-live="polite"></div>
+          <div class="chips" id="pc-chips"></div>
+          <div id="game-list" aria-live="polite"></div>
+        </section>
+
+        <section class="view" id="view-totrim" hidden>
+          <div class="toolbar"><h1>To trim</h1></div>
+          <p class="lead" id="totrim-lead"></p>
+          <div id="totrim-list"></div>
+        </section>
+
+        <section class="view" id="view-notices" hidden>
+          <div class="toolbar"><h1>Notifications</h1></div>
+          <div class="rows" id="notices-list"></div>
         </section>
 
         <section class="view" id="view-montage" hidden>
@@ -86,6 +91,7 @@
         <section class="view" id="view-cleanup" hidden>
           <div class="toolbar">
             <h1>Cleanup</h1>
+            <span class="grow"></span>
             <button class="btn primary" id="check" title="List every clip again, including the ones you kept">Run cleanup check</button>
           </div>
           <p class="lead" id="cleanup-lead"></p>
@@ -99,10 +105,35 @@
         <section class="view" id="view-trash" hidden>
           <div class="toolbar">
             <h1>Trash</h1>
+            <span class="grow"></span>
             <button class="btn danger" id="empty-trash" hidden>Empty trash</button>
           </div>
           <p class="lead" id="trash-lead"></p>
           <div class="rows" id="trash-list"></div>
+        </section>
+
+        <section class="view" id="view-settings" hidden>
+          <div class="toolbar"><h1>Settings</h1></div>
+          <div class="settings">
+            <section class="card">
+              <h2>Colour</h2>
+              <p class="muted">Used for selection, progress and focus. Saved in this browser.</p>
+              <div class="swatches" id="swatches"></div>
+            </section>
+            <section class="card" id="storage-card">
+              <h2>Storage</h2>
+              <p class="muted" id="storage-sub"></p>
+              <div id="storage-body"></div>
+            </section>
+            <section class="card">
+              <h2>About</h2>
+              <p class="muted" id="about"></p>
+            </section>
+          </div>
+        </section>
+
+        <section class="view editor-view" id="view-editor" hidden>
+          <div id="editor-root"></div>
         </section>
       </main>
       <div class="timeline-rail empty-rail" id="rail" role="scrollbar" aria-label="Jump to a date" aria-orientation="vertical"></div>
@@ -111,11 +142,12 @@
 
   <dialog id="player" class="modal player" aria-labelledby="player-title">
     <div class="player-head">
-      <div>
+      <img class="game-logo" id="player-logo" alt="">
+      <div class="title-block">
         <h2 id="player-title"></h2>
         <p id="player-meta" class="meta"></p>
       </div>
-      <button id="close" class="round" aria-label="Close">&#x2715;</button>
+      <button id="close" class="btn icon-only" aria-label="Close"><span data-icon="x"></span></button>
     </div>
     <div class="stage">
       <video id="video" controls playsinline preload="metadata"></video>
@@ -125,41 +157,30 @@
       </div>
     </div>
     <div class="actions">
-      <a id="dl-original" class="btn primary" href="#" download>Download original</a>
-      <a id="dl-web" class="btn" href="#" download hidden>Download phone version</a>
+      <button id="edit-clip" class="btn primary"><span data-icon="scissors"></span>Edit</button>
+      <a id="dl-original" class="btn" href="#" download><span data-icon="download"></span>Original</a>
+      <a id="dl-web" class="btn" href="#" download hidden><span data-icon="download"></span>Phone version</a>
       <button id="convert" class="btn" hidden>Make phone version</button>
       <button id="try-original" class="btn" hidden>Play original</button>
+      <button id="keep-whole" class="btn" hidden><span data-icon="check"></span>Keep whole</button>
       <span class="grow"></span>
-      <button id="prev-clip" class="btn" hidden>‹ Previous</button>
-      <button id="next-clip" class="btn" hidden>Next ›</button>
+      <button id="prev-clip" class="btn icon-only" aria-label="Previous clip" hidden><span data-icon="chevronLeft"></span></button>
+      <button id="next-clip" class="btn icon-only" aria-label="Next clip" hidden><span data-icon="chevronRight"></span></button>
     </div>
     <div class="share-row">
-      <span class="meta">Share a link that plays in Discord and on phones:</span>
+      <span class="meta">Share a link that plays in Discord and on phones</span>
+      <span class="grow"></span>
       <select id="share-host" aria-label="Where to upload">
         <option value="catbox">Catbox (kept, up to 200 MB)</option>
         <option value="litterbox">Litterbox (72 hours, up to 1 GB)</option>
       </select>
-      <button id="share" class="btn">Share link</button>
+      <button id="share" class="btn"><span data-icon="share"></span>Share link</button>
     </div>
     <div class="share-out" id="share-out" hidden>
       <input id="share-url" readonly aria-label="Share link">
       <button id="share-copy" class="btn small">Copy</button>
     </div>
     <p id="note" class="meta note" hidden></p>
-  </dialog>
-
-  <dialog id="storage" class="modal storage" aria-labelledby="storage-title">
-    <div class="player-head">
-      <div>
-        <h2 id="storage-title">Storage</h2>
-        <p class="meta" id="storage-sub"></p>
-      </div>
-      <button id="storage-close" class="round" aria-label="Close">&#x2715;</button>
-    </div>
-    <div id="storage-body"></div>
-    <div class="actions">
-      <button class="btn" id="storage-cleanup">Free up space…</button>
-    </div>
   </dialog>
 
   <script type="module" src="app.js"></script>

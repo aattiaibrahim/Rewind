@@ -2,6 +2,8 @@
 // which clips, how much of each), then an editable list (order, in / out,
 // remove), a song, volumes, and a download when it's made on the NAS.
 
+import { icon } from "./icons.js";
+
 const el = (tag, props = {}, ...kids) => {
   const n = document.createElement(tag);
   for (const [k, v] of Object.entries(props)) {
@@ -182,9 +184,9 @@ export function montage(root, getClips) {
         el(
           "div",
           { class: "mrow-btns" },
-          el("button", { class: "round", title: "Earlier", disabled: i === 0 || null, onclick: () => (pieces.splice(i - 1, 0, pieces.splice(i, 1)[0]), draw()) }, "↑"),
-          el("button", { class: "round", title: "Later", disabled: i === pieces.length - 1 || null, onclick: () => (pieces.splice(i + 1, 0, pieces.splice(i, 1)[0]), draw()) }, "↓"),
-          el("button", { class: "round", title: "Remove", onclick: () => (pieces.splice(i, 1), draw()) }, "✕"),
+          el("button", { class: "round", title: "Earlier", "aria-label": "Earlier", disabled: i === 0 || null, onclick: () => (pieces.splice(i - 1, 0, pieces.splice(i, 1)[0]), draw()) }, icon("chevronUp", 16)),
+          el("button", { class: "round", title: "Later", "aria-label": "Later", disabled: i === pieces.length - 1 || null, onclick: () => (pieces.splice(i + 1, 0, pieces.splice(i, 1)[0]), draw()) }, icon("chevronDown", 16)),
+          el("button", { class: "round", title: "Remove", "aria-label": "Remove", onclick: () => (pieces.splice(i, 1), draw()) }, icon("x", 16)),
         ),
       ),
     );
@@ -195,7 +197,7 @@ export function montage(root, getClips) {
       el(
         "div",
         { class: "row" },
-        el("button", { class: "btn small", onclick: () => ((pieces = null), (job = null), draw()) }, "← Start over"),
+        el("button", { class: "btn small", onclick: () => ((pieces = null), (job = null), draw()) }, icon("arrowLeft", 16), "Start over"),
         el("span", { class: "muted", text: `${pieces.length} clips · ${t(total(pieces))}` }),
       ),
       el("div", { class: "montage-top" }, preview, el("p", { class: "muted", text: "Tap a thumbnail to watch that part." })),
@@ -207,7 +209,7 @@ export function montage(root, getClips) {
         el(
           "div",
           { class: "row" },
-          song ? el("span", { text: `♪ ${song.name}` }) : el("span", { class: "muted song-status", text: "No song" }),
+          song ? el("span", { class: "row" }, icon("music", 16), song.name) : el("span", { class: "muted song-status", text: "No song" }),
           songInput,
           el("button", { class: "btn small", onclick: () => songInput.click() }, song ? "Change song" : "Add a song"),
           song && el("button", { class: "btn small", onclick: () => ((song = null), draw()) }, "Remove"),

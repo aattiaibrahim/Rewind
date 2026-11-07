@@ -10,6 +10,7 @@
 //   MAX_CACHE_GB   cap for converted copies, 0 = none  default 20
 //   TRANSCODE_JOBS conversions at once                 default 1
 //   H264_ENCODER   ffmpeg encoder                      default libx264
+//   HINDSIGHT_ONLINE_LOGOS  0 = no game logos from Steam   default on
 
 import path from "node:path";
 import { Library } from "./state.js";
@@ -18,6 +19,9 @@ import { Media } from "./media.js";
 import { createServer, VERSION } from "./server.js";
 import { Montages } from "./montage.js";
 import { Shares } from "./share.js";
+import { Edits } from "./edit.js";
+import { Logos } from "./logos.js";
+import { Store } from "./store.js";
 
 const env = process.env;
 const clipsDir = env.CLIPS_DIR || "/clips";
@@ -45,9 +49,21 @@ setInterval(() => cleanup.canChange && cleanup.purge().catch((e) => console.erro
 const fileOf = (clip) => path.join(clipsDir, ...clip.rel.split("/"));
 library.onChange = (clips) => media.scanMeta(clips, fileOf);
 await library.start();
+const store = new Store(cacheDir);
+await store.init();
+const logos = new Logos({ dir: path.join(cacheDir, "logos"), online: env.HINDSIGHT_ONLINE_LOGOS !== "0" && env.HINDSIGHT_ONLINE_LOGOS !== "false" });
+const edits = new Edits({
+  root: clipsDir,
+  cacheDir,
+  store,
+  canChange: () => cleanup.canChange,
+  encoder: env.H264_ENCODER || "libx264",
+  onSaved: () => library.rescan(),
+});
+await edits.init();
 const shares = new Shares(cacheDir);
 const montages = new Montages(cacheDir, { encoder: env.H264_ENCODER || "libx264" });
-const server = await createServer({ library, media, cleanup, shares, montages });
+const server = await createServer({ library, media, cleanup, shares, montages, store, logos, edits });
 server.listen(port, () => {
   console.log(`Hindsight Server ${VERSION}: ${library.clips.length} clips in ${clipsDir}, listening on :${port}`);
 });

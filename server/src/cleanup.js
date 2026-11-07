@@ -9,6 +9,9 @@
 // - "Keep" hides a clip from the list until the next cleanup check.
 
 import { constants } from "node:fs";
+import { createHash } from "node:crypto";
+import { open } from "node:fs/promises";
+import { gameKey } from "./library.js";
 import { access, copyFile, mkdir, readFile, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -25,7 +28,7 @@ async function exists(p) {
 }
 
 /** `dir/name`, or `dir/stem (2).ext`… if that's taken. */
-async function freePath(dir, name) {
+export async function freePath(dir, name) {
   const ext = path.extname(name);
   const stem = name.slice(0, name.length - ext.length);
   let p = path.join(dir, name);
@@ -80,6 +83,57 @@ export class Cleanup {
       shownBytes: shown.reduce((n, c) => n + c.size, 0),
       clips: shown,
     };
+  }
+
+  /**
+   * Copies of the same clip: same game, same size and length, and the same bytes
+   * at the start and the end. -> [{ game, size, clips: [kept, ...extra] }], the
+   * first clip (the plainest name) is the one to keep.
+   */
+  async duplicates(clips) {
+    const bySize = new Map();
+    for (const c of clips) {
+      if (c.damaged) continue;
+      const key = `${gameKey(c.game)}|${c.size}|${c.duration ? c.duration.toFixed(1) : ""}`;
+      bySize.set(key, [...(bySize.get(key) ?? []), c]);
+    }
+    const out = [];
+    for (const group of bySize.values()) {
+      if (group.length < 2) continue;
+      const byHash = new Map();
+      for (const c of group) {
+        const h = await this.edgeHash(c).catch(() => null);
+        if (h) byHash.set(h, [...(byHash.get(h) ?? []), c]);
+      }
+      for (const same of byHash.values()) {
+        if (same.length < 2) continue;
+        same.sort((a, b) => a.name.length - b.name.length || a.mtime - b.mtime || a.rel.localeCompare(b.rel));
+        out.push({ game: same[0].game, size: same[0].size, clips: same });
+      }
+    }
+    return out;
+  }
+
+  /** SHA-1 of the first and last MB (kept per clip version). */
+  async edgeHash(clip) {
+    this.hashes ??= new Map();
+    const id = `${clip.rel}|${clip.size}|${clip.mtime}`;
+    if (this.hashes.has(id)) return this.hashes.get(id);
+    const f = await open(path.join(this.root, ...clip.rel.split("/")), "r");
+    try {
+      const n = Math.min(1 << 20, clip.size);
+      const buf = Buffer.alloc(n);
+      const h = createHash("sha1");
+      await f.read(buf, 0, n, 0);
+      h.update(buf);
+      await f.read(buf, 0, n, Math.max(0, clip.size - n));
+      h.update(buf);
+      const out = h.digest("hex");
+      this.hashes.set(id, out);
+      return out;
+    } finally {
+      await f.close();
+    }
   }
 
   async keep(clip) {

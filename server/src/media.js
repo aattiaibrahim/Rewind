@@ -52,6 +52,7 @@ async function exists(p) {
 
 export class Media {
   constructor({ cacheDir, thumbJobs = 2, transcodeJobs = 1, maxCacheBytes = 0 }) {
+    this.cacheDir = cacheDir;
     this.thumbDir = path.join(cacheDir, "thumbs");
     this.webDir = path.join(cacheDir, "web");
     this.maxCacheBytes = maxCacheBytes;
