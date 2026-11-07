@@ -38,7 +38,7 @@ impl App {
     fn matches(self, exe: &str) -> bool {
         let e = exe.to_ascii_lowercase();
         match self {
-            App::Rewind => e == "rewind.exe",
+            App::Rewind => e == "hindsight.exe" || e == "rewind.exe",
             App::Obs => e == "obs64.exe" || e == "obs-ffmpeg-mux.exe",
             App::Nvidia => matches!(
                 e.as_str(),

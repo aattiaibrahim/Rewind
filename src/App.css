@@ -35,6 +35,8 @@
   --primary: #fff;
   --on-primary: #000;
   --primary-hover: #e2e2e2;
+  /* The selected tab, chip or view: a lighter grey, text stays white. */
+  --pill-on: color-mix(in srgb, var(--text) 24%, var(--bg));
   --radius: 10px;
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
   --fast: 0.14s;
@@ -542,7 +544,7 @@ h1 { letter-spacing: -0.02em; }
 .btn.back { height: 32px; padding: 0 12px 0 8px; font-size: 12.5px; color: var(--text-2); }
 .chip { border: 0; background: var(--raised); color: var(--text); box-shadow: none; transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease); }
 .chip:hover:not(.on) { background: color-mix(in srgb, var(--text) 14%, var(--raised)); border-color: transparent; }
-.chip.on { background: var(--primary); color: var(--on-primary); box-shadow: none; }
+.chip.on { background: var(--pill-on); color: var(--text); box-shadow: none; }
 
 /* Surfaces: plain fills on the panel. */
 .group, .buffer-card { border-radius: var(--r-lg); background: var(--panel); border-color: transparent; box-shadow: none; }
@@ -566,7 +568,7 @@ h1 { letter-spacing: -0.02em; }
   color: var(--text); font-size: 13px; font-weight: 500; transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease);
 }
 .tab:hover:not(.on) { background: color-mix(in srgb, var(--text) 14%, var(--raised)); }
-.tab.on { background: var(--primary); color: var(--on-primary); box-shadow: none; font-weight: 600; }
+.tab.on { background: var(--pill-on); color: var(--text); box-shadow: none; font-weight: 600; }
 
 /* Toggles: flat switch, accent when on. */
 input.switch {
@@ -886,7 +888,7 @@ button.sb-item:hover { background: var(--bg); color: var(--text); }
 }
 .seg button { height: 30px; padding: 0 12px; border: 0; border-radius: 7px; background: none; color: var(--muted); font-size: 12.5px; }
 .seg button:hover:not(.on) { color: var(--text); }
-.seg button.on { background: var(--primary); color: var(--on-primary); }
+.seg button.on { background: var(--pill-on); color: var(--text); font-weight: 600; }
 .btn .count {
   min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--accent); color: var(--on-accent);
   font-size: 11px; font-weight: 700; display: inline-grid; place-items: center;
@@ -965,9 +967,11 @@ button.sb-item:hover { background: var(--bg); color: var(--text); }
 :root[data-motion="reduce"] .slide-pill { transition: none; }
 /* The pill now draws the selected background; the option itself stays clear. */
 .has-pill > .on { background: transparent !important; box-shadow: none !important; border-color: transparent !important; }
-.chips > .slide-pill, .fgroup > .slide-pill, .row > .slide-pill { background: var(--text); }
-.tabs > .slide-pill, .seg > .slide-pill { background: var(--primary); }
-.tabs > .tab.on, .seg > button.on { color: var(--on-primary) !important; }
+/* A lighter grey with white text: the label reads the same under the moving
+   highlight as beside it (a white highlight made labels vanish as it slid by). */
+.chips > .slide-pill, .fgroup > .slide-pill, .row > .slide-pill,
+.tabs > .slide-pill, .seg > .slide-pill { background: var(--pill-on); }
+.has-pill > .chip.on, .has-pill > .tab.on, .seg > button.on { color: var(--text) !important; font-weight: 600; }
 .nav > .slide-pill { background: var(--raised); }
 /* Options keep their colours; only the moving background is shared. */
 .chips > .chip, .fgroup > .chip, .row > .chip { transition: color 0.2s, border-color 0.2s; }

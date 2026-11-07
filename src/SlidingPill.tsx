@@ -16,24 +16,33 @@ export function SlidingPill({ selector = ".on" }: { selector?: string }) {
     box.classList.add("has-pill");
     let first = true;
     let frame = 0;
+    let last: { x: number; y: number } | null = null;
     const place = () => {
       const on = box.querySelector<HTMLElement>(`:scope > ${selector}`);
       if (!on) {
         pill.style.opacity = "0";
+        last = null;
         return;
       }
-      // The first placement jumps straight there; after that it glides.
-      if (first) pill.style.transition = "none";
+      const x = on.offsetLeft;
+      const y = on.offsetTop;
+      // The first placement jumps straight there; after that it glides to a
+      // neighbour. A long jump (the sidebar from the top to Settings) snaps
+      // instead: gliding across a gap looks like something going wrong.
+      const far = !!last && Math.abs(x - last.x) + Math.abs(y - last.y) > 150;
+      const jump = first || far;
+      if (jump) pill.style.transition = "none";
       pill.style.opacity = "1";
-      pill.style.transform = `translate(${on.offsetLeft}px, ${on.offsetTop}px)`;
+      pill.style.transform = `translate(${x}px, ${y}px)`;
       pill.style.width = `${on.offsetWidth}px`;
       pill.style.height = `${on.offsetHeight}px`;
       pill.style.borderRadius = getComputedStyle(on).borderRadius;
-      if (first) {
+      if (jump) {
         void pill.offsetWidth;
         pill.style.transition = "";
         first = false;
       }
+      last = { x, y };
     };
     const soon = () => {
       cancelAnimationFrame(frame);

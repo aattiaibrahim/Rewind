@@ -1,8 +1,7 @@
-import { convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, ClipFile, errText, fmtDb, fmtTime, Waveform } from "./api";
+import { api, ClipFile, errText, fmtDb, fmtTime, Waveform, mediaSrc } from "./api";
 import { GameIcon } from "./GameIcon";
 import { useThumb } from "./hooks";
 import { Slider } from "./Slider";
@@ -304,7 +303,7 @@ function Editor({
       const at = locate(t);
       if (!v || !at) return;
       const p = pieces[at.i];
-      const src = convertFileSrc(p.clip.path);
+      const src = mediaSrc(p.clip.path);
       if (playingIdx.current !== at.i || !v.src.endsWith(encodeURI(src).split("/").pop() ?? "")) {
         playingIdx.current = at.i;
         v.src = src;
@@ -477,7 +476,7 @@ function Editor({
         </div>
         <div className="me-monitor">
           <video ref={video} className="me-video" onTimeUpdate={onTime} playsInline />
-          {song && <audio ref={audio} src={convertFileSrc(song.path)} loop preload="auto" />}
+          {song && <audio ref={audio} src={mediaSrc(song.path)} loop preload="auto" />}
           <div className="row me-transport">
             <button className="btn small" onClick={() => seek(0)} title="To the start">
               ⏮

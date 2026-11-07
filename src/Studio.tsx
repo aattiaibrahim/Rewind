@@ -1,4 +1,3 @@
-import { convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -19,7 +18,7 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react";
-import { api, ClipFile, codecLabel, errText, fmtSize, fmtTime, Health, PreviewAudio, Probe, Settings, TrackEdit, Upload, UploadProgress, Waveform } from "./api";
+import { api, ClipFile, codecLabel, errText, fmtSize, fmtTime, Health, PreviewAudio, Probe, Settings, TrackEdit, Upload, UploadProgress, Waveform, mediaSrc } from "./api";
 import { AudioLanes, hasAudioEdits, isMutedAt } from "./AudioLanes";
 import { useThumb } from "./hooks";
 import { SharePanel, ShareRequest } from "./Share";
@@ -679,7 +678,7 @@ export function Studio({
               poster={poster ?? undefined}
               // The version tag makes the player load the file fresh after an edit replaced it
               // in place (same name); otherwise WebView2 can reuse its cached copy of the old file.
-              src={`${convertFileSrc(path)}?v=${(clips ?? []).find((c) => c.path === path)?.modified ?? 0}-${reload}`}
+              src={mediaSrc(path, `${(clips ?? []).find((c) => c.path === path)?.modified ?? 0}-${reload}`)}
               onLoadedMetadata={(e) => {
                 const d = e.currentTarget.duration;
                 const { videoWidth: vw, videoHeight: vh } = e.currentTarget;
@@ -947,7 +946,7 @@ export function Studio({
                     if (el) extraAudio.current.set(t.index, el);
                     else extraAudio.current.delete(t.index);
                   }}
-                  src={convertFileSrc(t.path)}
+                  src={mediaSrc(t.path)}
                   preload="auto"
                   onLoadedData={() => syncExtra(true)}
                 />

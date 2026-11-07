@@ -314,6 +314,19 @@ const thumbReady = new Map<string, string>();
 const iconCache = new Map<string, Promise<string | null>>();
 const probeCache = new Map<string, Promise<Probe>>();
 
+// The app's player loads clips from a local server that streams only what it
+// needs (Tauri's file protocol read whole 400 MB clips into memory first).
+let mediaBase: string | null = null;
+invoke<string | null>("media_base")
+  .then((b) => (mediaBase = typeof b === "string" ? b : null))
+  .catch(() => {});
+
+/** The address the player loads a clip (or audio track) from. */
+export function mediaSrc(path: string, bust?: string | number) {
+  if (mediaBase) return `${mediaBase}${encodeURIComponent(path)}${bust != null ? `&v=${encodeURIComponent(String(bust))}` : ""}`;
+  return `${convertFileSrc(path)}${bust != null ? `?v=${bust}` : ""}`;
+}
+
 export const api = {
   getSettings: () => invoke<Settings>("get_settings"),
   setSettings: (settings: Settings) => invoke<void>("set_settings", { settings }),

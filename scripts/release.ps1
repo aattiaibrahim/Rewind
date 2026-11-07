@@ -32,13 +32,14 @@ pnpm tauri build
 if ($LASTEXITCODE -ne 0) { throw "Build failed" }
 Remove-Item Env:\TAURI_SIGNING_PRIVATE_KEY, Env:\TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
 
-# The build still comes out as "Rewind_…" (the app's internal name, kept so
-# updates install over the same app); it's published under Hindsight's name.
-# The signature covers the file's contents, so renaming the file is fine.
-$built = "src-tauri\target\release\bundle\nsis\Rewind_${version}_x64-setup.exe"
+# The build is "Hindsight_<ver>_x64-setup.exe" (builds before 0.1.32 were
+# named "Rewind_…" and are copied to the new name; the signature covers the
+# contents, so the name doesn't matter to it).
 $exeName = "Hindsight_${version}_x64-setup.exe"
 $exe = "src-tauri\target\release\bundle\nsis\$exeName"
-Copy-Item $built $exe -Force
+$built = $exe
+$old = "src-tauri\target\release\bundle\nsis\Rewind_${version}_x64-setup.exe"
+if (-not (Test-Path $exe) -and (Test-Path $old)) { $built = $old; Copy-Item $old $exe -Force }
 $sig = Get-Content "$built.sig" -Raw
 $manifest = [ordered]@{
     version   = $version

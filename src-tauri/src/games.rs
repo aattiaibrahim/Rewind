@@ -23,7 +23,7 @@ use windows::core::PWSTR;
 pub const DESKTOP_FOLDER: &str = "Desktop";
 
 const NOT_GAMES: &[&str] = &[
-    "explorer", "rewind", "searchhost", "shellexperiencehost", "startmenuexperiencehost",
+    "explorer", "hindsight", "rewind", "searchhost", "shellexperiencehost", "startmenuexperiencehost",
     "applicationframehost", "lockapp", "textinputhost", "taskmgr", "systemsettings",
     "chrome", "msedge", "firefox", "opera", "opera_gx", "brave", "vivaldi", "arc", "zen",
     "discord", "discordptb", "discordcanary", "slack", "teams", "ms-teams", "zoom", "telegram", "whatsapp",

@@ -1,7 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Rewind",
-  "version": "0.1.31",
+  "productName": "Hindsight",
+  "mainBinaryName": "Hindsight",
+  "version": "0.1.32",
   "identifier": "com.rewind.app",
   "build": {
     "beforeDevCommand": "pnpm dev",

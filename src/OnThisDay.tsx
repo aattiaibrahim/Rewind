@@ -1,7 +1,6 @@
-import { convertFileSrc } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ClipFile } from "./api";
+import { ClipFile, mediaSrc } from "./api";
 import { useNearView, useThumb } from "./hooks";
 
 export type Memory = { label: string; years: number; clips: ClipFile[] };
@@ -193,7 +192,7 @@ function MemorySlide({ clip, muted, onEnded }: { clip: ClipFile; muted: boolean;
   return (
     <video
       className="del-media"
-      src={convertFileSrc(clip.path)}
+      src={mediaSrc(clip.path)}
       poster={thumb ?? undefined}
       autoPlay
       muted={muted}

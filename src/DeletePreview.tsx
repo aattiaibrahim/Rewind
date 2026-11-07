@@ -1,7 +1,6 @@
-import { convertFileSrc } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ClipFile, fmtSize } from "./api";
+import { ClipFile, fmtSize, mediaSrc } from "./api";
 import { useThumb } from "./hooks";
 
 /**
@@ -122,7 +121,7 @@ function Slide({ clip }: { clip: ClipFile }) {
   ) : (
     <video
       className="del-media"
-      src={convertFileSrc(clip.path)}
+      src={mediaSrc(clip.path)}
       poster={thumb ?? undefined}
       autoPlay
       muted

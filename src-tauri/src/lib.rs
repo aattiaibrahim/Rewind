@@ -19,6 +19,7 @@ mod games;
 mod health;
 mod library;
 mod monitors;
+mod media_server;
 mod nas;
 mod old_folders;
 mod native;
@@ -1183,6 +1184,13 @@ async fn find_duplicates(app: AppHandle) -> Result<Vec<Vec<String>>, String> {
     .await
 }
 
+/// Where the app's player loads clips from (a local server that streams only
+/// the bytes it asks for), or None to use the file protocol.
+#[tauri::command]
+fn media_base() -> Option<String> {
+    media_server::base()
+}
+
 /// Use a picture as a game's logo, or `None` to go back to the automatic one.
 #[tauri::command]
 async fn set_game_logo(app: AppHandle, name: String, picture: Option<String>) -> Result<(), String> {
@@ -1533,6 +1541,7 @@ pub fn run() {
                 );
             }
             control::start(handle.clone());
+            media_server::start();
 
             if let Err(e) = apply_hotkeys(&handle, &s.hotkey, &s.record_hotkey) {
                 crate::log!("{e}");
@@ -1672,6 +1681,7 @@ pub fn run() {
             gpu_encoders,
             game_icon,
             set_game_logo,
+            media_base,
             old_folders,
             remove_old_folder,
             find_duplicates,

@@ -130,6 +130,7 @@ export function installDevMock() {
     find_duplicates: () => [],
     edited_clips: () => [],
     system_accent: () => "#4cc2ff",
+    media_base: () => null,
     old_folders: () => [{ path: "C:\\Users\\you\\Videos\\Medal", label: "Medal", moved: 42, files: 3, bytes: 18_400_000 }],
     remove_old_folder: () => null,
     set_game_logo: () => null,
